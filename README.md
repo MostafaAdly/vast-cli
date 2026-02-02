@@ -31,16 +31,16 @@ Run GitHub Actions workflows for Vast-menu repositories.
 
 ```bash
 # Trigger workflow for staging
-vast workflow Vast-menu-payments --version 999.0.0-test --branch staging
+vast workflow Vast-menu-payments --target-version 999.0.0-test --branch staging
 
 # List available workflows
 vast workflow VastmenuPwa --list
 
 # Dry run to validate parameters
-vast workflow Vastmenu-Dashboard --version 1.2.3 --branch production --dry-run
+vast workflow Vastmenu-Dashboard --target-version 1.2.3 --branch production --dry-run
 
 # With watch mode (coming soon)
-vast workflow Vastmenu-Backend --version 2.0.0 --branch main --watch
+vast workflow Vastmenu-Backend --target-version 2.0.0 --branch main --watch
 ```
 
 ### Available Repositories
@@ -64,6 +64,8 @@ vast workflow Vastmenu-Backend --version 2.0.0 --branch main --watch
 | `-n, --dry-run` | Validate without triggering |
 | `--verbose` | Show detailed output |
 | `--watch` | Watch workflow run (WIP) |
+| `-a, --approve` | Auto-merge the resulting PR |
+| `-i, --inputs <pairs...>` | Additional workflow inputs (key=value) |
 
 ## Development
 
