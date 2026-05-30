@@ -4,7 +4,7 @@
  * Wrapper around the `gh` CLI for interacting with GitHub workflows
  * and repositories in the Vast-menu organization.
  */
-import type { GitHubWorkflow, WorkflowRunParams, WorkflowRunResult } from '../types/index.js';
+import type { GitHubWorkflow, WorkflowRunParams, WorkflowRunResult } from "../types/index.js";
 /**
  * Check if the gh CLI is installed and authenticated
  * @returns Promise<boolean> - true if gh is available and ready
@@ -58,7 +58,7 @@ export declare function waitForWorkflowCompletion(repo: string, branch: string, 
  * Get list of valid repositories in the organization
  * These are the repositories available for workflow management
  */
-export declare const VALID_REPOSITORIES: readonly ["VastmenuPwa", "VastmenuPwaV2", "Vastmenu-Dashboard", "Vastmenu-Backend", "VastpayPwa", "Vastpay-Dashboard", "Vastpay-Backend", "Vast-menu-payments"];
+export declare const VALID_REPOSITORIES: readonly ["VastmenuPwa", "VastmenuPwaV2", "Vastmenu-Dashboard", "Vastmenu-Backend", "VastpayPwa", "VastpayPwaV2", "Vastpay-Dashboard", "Vastpay-Backend", "Vast-menu-payments"];
 /** Type for valid repository names */
 export type ValidRepository = (typeof VALID_REPOSITORIES)[number];
 /**

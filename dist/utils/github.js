@@ -4,19 +4,19 @@
  * Wrapper around the `gh` CLI for interacting with GitHub workflows
  * and repositories in the Vast-menu organization.
  */
-import { execSync } from 'child_process';
-import chalk from 'chalk';
-import { createSpinner, log } from './ui.js';
+import { execSync } from "child_process";
+import chalk from "chalk";
+import { createSpinner, log } from "./ui.js";
 /** Vast-menu organization name */
-const ORG_NAME = 'Vast-menu';
+const ORG_NAME = "Vast-menu";
 /**
  * Check if the gh CLI is installed and authenticated
  * @returns Promise<boolean> - true if gh is available and ready
  */
 export async function checkGhCli() {
     try {
-        execSync('gh --version', { stdio: 'pipe' });
-        execSync('gh auth status', { stdio: 'pipe' });
+        execSync("gh --version", { stdio: "pipe" });
+        execSync("gh auth status", { stdio: "pipe" });
         return true;
     }
     catch {
@@ -32,7 +32,7 @@ export async function getWorkflows(repo) {
     const spinner = createSpinner(`Fetching workflows for ${ORG_NAME}/${repo}...`);
     spinner.start();
     try {
-        const output = execSync(`gh workflow list --repo ${ORG_NAME}/${repo} --json name,id,path,state`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+        const output = execSync(`gh workflow list --repo ${ORG_NAME}/${repo} --json name,id,path,state`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
         spinner.succeed(`Found workflows for ${repo}`);
         return JSON.parse(output);
     }
@@ -61,7 +61,7 @@ export async function listWorkflows(repo) {
     log.highlight(`Workflows in ${ORG_NAME}/${repo}:`);
     log.newline();
     for (const wf of workflows) {
-        const statusIcon = wf.state === 'active' ? '🟢' : '⚪';
+        const statusIcon = wf.state === "active" ? "🟢" : "⚪";
         console.log(`  ${statusIcon} ${wf.name}`);
         console.log(`     ${log.muted(`ID: ${wf.id} | Path: ${wf.path}`)}`);
     }
@@ -97,7 +97,7 @@ export async function runWorkflow(params) {
                 // If multiple workflows exist, we can't guess which one to run
                 // We could prompt the user, but for now let's throw an error
                 // listing the available workflows
-                const workflowNames = workflows.map(w => w.name).join(', ');
+                const workflowNames = workflows.map((w) => w.name).join(", ");
                 throw new Error(`Multiple workflows found: ${workflowNames}. Please specify one with --workflow.`);
             }
         }
@@ -111,8 +111,8 @@ export async function runWorkflow(params) {
         }
         // Execute the command
         execSync(cmd, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
         });
         spinner.succeed(`Workflow triggered successfully!`);
         return {
@@ -121,12 +121,12 @@ export async function runWorkflow(params) {
         };
     }
     catch (error) {
-        spinner.fail('Failed to trigger workflow');
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        spinner.fail("Failed to trigger workflow");
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         return {
             success: false,
             error: errorMessage,
-            message: 'Failed to trigger workflow',
+            message: "Failed to trigger workflow",
         };
     }
 }
@@ -137,8 +137,8 @@ export async function runWorkflow(params) {
  */
 export function getEnvName(branch) {
     const map = {
-        'staging': 'stage',
-        'production': 'prod',
+        staging: "stage",
+        production: "prod",
     };
     return map[branch.toLowerCase()] || branch;
 }
@@ -153,7 +153,10 @@ export async function findPullRequest(repo, title) {
         // Escape quotes in title for the search query
         const escapedTitle = title.replace(/"/g, '\\"');
         const cmd = `gh pr list --repo ${ORG_NAME}/${repo} --search "${escapedTitle} in:title" --state open --json number --limit 1`;
-        const output = execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+        const output = execSync(cmd, {
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+        });
         const prs = JSON.parse(output);
         return prs.length > 0 ? prs[0].number : null;
     }
@@ -168,7 +171,7 @@ export async function findPullRequest(repo, title) {
  */
 export async function mergePullRequest(repo, prNumber) {
     const cmd = `gh pr merge ${prNumber} --repo ${ORG_NAME}/${repo} --merge --delete-branch`;
-    execSync(cmd, { stdio: ['pipe', 'pipe', 'pipe'] });
+    execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
 }
 /**
  * Wait for the latest workflow run to complete
@@ -188,7 +191,10 @@ export async function waitForWorkflowCompletion(repo, branch, workflowName) {
             if (workflowName) {
                 cmd += ` --workflow "${workflowName}"`;
             }
-            const output = execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const output = execSync(cmd, {
+                encoding: "utf-8",
+                stdio: ["pipe", "pipe", "pipe"],
+            });
             const runs = JSON.parse(output);
             if (runs.length > 0) {
                 // Check if created recently (within last 2 minutes)
@@ -203,7 +209,7 @@ export async function waitForWorkflowCompletion(repo, branch, workflowName) {
             // Ignore errors while searching
         }
         if (!runId) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 3000));
             attempts++;
         }
     }
@@ -214,7 +220,7 @@ export async function waitForWorkflowCompletion(repo, branch, workflowName) {
     try {
         // We use `gh run watch` which blocks until completion
         execSync(`gh run watch ${runId} --repo ${ORG_NAME}/${repo} --exit-status`, {
-            stdio: 'inherit' // Let the user see the output
+            stdio: "inherit", // Let the user see the output
         });
         return true;
     }
@@ -227,14 +233,15 @@ export async function waitForWorkflowCompletion(repo, branch, workflowName) {
  * These are the repositories available for workflow management
  */
 export const VALID_REPOSITORIES = [
-    'VastmenuPwa',
-    'VastmenuPwaV2',
-    'Vastmenu-Dashboard',
-    'Vastmenu-Backend',
-    'VastpayPwa',
-    'Vastpay-Dashboard',
-    'Vastpay-Backend',
-    'Vast-menu-payments',
+    "VastmenuPwa",
+    "VastmenuPwaV2",
+    "Vastmenu-Dashboard",
+    "Vastmenu-Backend",
+    "VastpayPwa",
+    "VastpayPwaV2",
+    "Vastpay-Dashboard",
+    "Vastpay-Backend",
+    "Vast-menu-payments",
 ];
 /**
  * Validate if a repository name is in the allowed list
@@ -242,6 +249,6 @@ export const VALID_REPOSITORIES = [
  * @returns true if valid
  */
 export function isValidRepository(repo) {
-    return VALID_REPOSITORIES.some(r => r.toLowerCase() === repo.toLowerCase());
+    return VALID_REPOSITORIES.some((r) => r.toLowerCase() === repo.toLowerCase());
 }
 //# sourceMappingURL=github.js.map
