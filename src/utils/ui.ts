@@ -102,8 +102,14 @@ export const log = {
   /** Error message */
   error: (message: string): void => { console.error(colors.error(`✗ ${message}`)); },
   
-  /** Muted/secondary info - for use as string */
-  muted: (message: string): string => colors.muted(message),
+  /**
+   * Muted/secondary info.
+   *
+   * This used to return the string instead of printing it, unlike every other
+   * method here — so `log.muted('...')` as a statement silently printed
+   * nothing. Use `dim()` when you need the styled string to embed elsewhere.
+   */
+  muted: (message: string): void => { console.log(colors.muted(message)); },
   
   /** Highlighted/important info */
   highlight: (message: string): void => { console.log(colors.highlight(message)); },
@@ -113,6 +119,9 @@ export const log = {
   
   /** New line */
   newline: (): void => { console.log(''); },
+
+  /** Muted text as a string, for embedding inside another line. */
+  dim: (message: string): string => colors.muted(message),
 };
 
 /** Format a list of items with bullets */

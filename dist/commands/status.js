@@ -1,0 +1,84 @@
+/**
+ * Status Command
+ *
+ * Read-only. Reports, per repo, what is deployed to staging and production and
+ * how far apart the long-lived branches have drifted — replacing the
+ * checkout-pull-look loop.
+ */
+import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import { REPOS, getRepo } from '../config/repos.js';
+import { readDeployedTag } from '../utils/helm.js';
+import { fetch as gitFetch, aheadBehind } from '../utils/git.js';
+import { createHeader, log } from '../utils/ui.js';
+export const WORKSPACE = join(homedir(), 'Workshop', 'Work', 'vastgroup');
+export function repoDir(repo, override) {
+    return override ?? join(WORKSPACE, repo.localDir);
+}
+function inspect(repo, dir) {
+    if (!existsSync(join(dir, '.git'))) {
+        return { name: repo.name, staging: '—', production: '—', drift: 'not cloned' };
+    }
+    try {
+        gitFetch(dir);
+    }
+    catch {
+        return { name: repo.name, staging: '?', production: '?', drift: 'fetch failed' };
+    }
+    const tag = (env) => {
+        const path = repo.helm[env];
+        if (!path)
+            return 'n/a';
+        try {
+            return readDeployedTag(dir, `origin/${env}`, path);
+        }
+        catch {
+            return '?';
+        }
+    };
+    let drift;
+    const source = repo.promoteFrom.staging;
+    if (!source) {
+        drift = 'no develop';
+    }
+    else {
+        try {
+            const { ahead } = aheadBehind(dir, `origin/${source}`, 'origin/staging');
+            drift = ahead === 0 ? 'in sync' : `${source} +${ahead}`;
+        }
+        catch {
+            drift = '?';
+        }
+    }
+    return { name: repo.name, staging: tag('staging'), production: tag('production'), drift };
+}
+async function executeStatus(repoName, options) {
+    const targets = repoName
+        ? [getRepo(repoName)].filter((r) => Boolean(r))
+        : options.all
+            ? REPOS
+            : [];
+    if (targets.length === 0) {
+        log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
+        process.exit(1);
+    }
+    console.log(createHeader('Release Status', 'Vast Group'));
+    const rows = targets.map((r) => inspect(r, repoDir(r, options.dir)));
+    const width = Math.max(...rows.map((r) => r.name.length), 4);
+    console.log(`  ${'REPO'.padEnd(width)}  ${'STAGING'.padEnd(14)}  ${'PRODUCTION'.padEnd(14)}  DRIFT`);
+    for (const r of rows) {
+        console.log(`  ${r.name.padEnd(width)}  ${r.staging.padEnd(14)}  ${r.production.padEnd(14)}  ${r.drift}`);
+    }
+    log.newline();
+}
+export function registerStatusCommand(program) {
+    program
+        .command('status')
+        .description('Show deployed versions and branch drift across repos')
+        .argument('[repository]', 'Repository name (omit and pass --all for every repo)')
+        .option('-a, --all', 'Report on every configured repo', false)
+        .option('--dir <path>', 'Override the local checkout path')
+        .action(executeStatus);
+}
+//# sourceMappingURL=status.js.map

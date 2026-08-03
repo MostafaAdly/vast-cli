@@ -47,24 +47,16 @@ export declare function findPullRequest(repo: string, title: string): Promise<nu
  */
 export declare function mergePullRequest(repo: string, prNumber: number): Promise<void>;
 /**
- * Wait for the latest workflow run to complete
+ * Watch a specific run to completion.
+ *
+ * Takes the run id returned by runWorkflow rather than rediscovering it. The
+ * previous "newest run on the branch, created under 2 minutes ago" heuristic
+ * could attach to a concurrent deploy's run — and then a bump PR would be
+ * merged on the strength of an unrelated run's success.
+ *
  * @param repo - Repository name
- * @param branch - Branch name
- * @param workflowName - Optional workflow name
- * @returns true if successful, false otherwise
+ * @param runId - The run id returned by runWorkflow
+ * @returns true if the run concluded successfully
  */
-export declare function waitForWorkflowCompletion(repo: string, branch: string, workflowName?: string): Promise<boolean>;
-/**
- * Get list of valid repositories in the organization
- * These are the repositories available for workflow management
- */
-export declare const VALID_REPOSITORIES: readonly ["VastmenuPwa", "VastmenuPwaV2", "Vastmenu-Dashboard", "Vastmenu-Backend", "VastpayPwa", "VastpayPwaV2", "Vastpay-Dashboard", "Vastpay-Backend", "Vast-menu-payments"];
-/** Type for valid repository names */
-export type ValidRepository = (typeof VALID_REPOSITORIES)[number];
-/**
- * Validate if a repository name is in the allowed list
- * @param repo - Repository name to validate
- * @returns true if valid
- */
-export declare function isValidRepository(repo: string): boolean;
+export declare function waitForWorkflowCompletion(repo: string, runId: number): Promise<boolean>;
 //# sourceMappingURL=github.d.ts.map
