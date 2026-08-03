@@ -85,10 +85,11 @@ async function executeRelease(
       createErrorBox(
         `\`release\` only targets staging`,
         'Production has a human review gate in the middle, so it is two steps:\n\n' +
-          '    vast promote <repo> --to production    open release/X.Y.Z -> production\n' +
+          '    vast promote <repo> --to production    cut release/X.Y.Z + PR\n' +
           '    # review and merge that PR\n' +
           '    vast deploy  <repo> --to production    build and ship it\n\n' +
-          'Production is also locked by default — see `vast production status`.',
+          'Add `--as hotfix` to the promote for a hotfix/X.Y.Z branch instead.\n' +
+          'The promote works any time; only the deploy needs `vast production enable`.',
       ),
     );
     process.exit(1);

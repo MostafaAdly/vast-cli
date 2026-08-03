@@ -50,11 +50,13 @@ export function disableProduction() {
 }
 /** Human-readable refusal, shared by every production code path. */
 export const PRODUCTION_LOCKED_MESSAGE = [
-    'Production is locked.',
+    'Production deploys are locked. Nothing was built or shipped.',
     '',
-    'Nothing was merged, pushed, or deployed.',
+    'Preparing a release is NOT locked — you can still run:',
+    '  vast promote <repo> --to production              cut release/X.Y.Z + PR',
+    '  vast promote <repo> --to production --as hotfix  cut hotfix/X.Y.Z + PR',
     '',
-    'Lift the lock:   vast production enable',
-    'Check the state: vast production status',
+    'Lift the deploy lock: vast production enable',
+    'Check the state:      vast production status',
 ].join('\n');
 //# sourceMappingURL=production-lock.js.map

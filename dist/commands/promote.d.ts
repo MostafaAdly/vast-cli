@@ -13,8 +13,9 @@
  */
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
+import { type ReleaseKind } from '../utils/release-branch.js';
 export declare function defaultRepoDir(repo: RepoConfig): string;
 /** @returns true when the promotion completed (or would have, under dryRun). */
-export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean): boolean;
+export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string): boolean;
 export declare function registerPromoteCommand(program: Command): void;
 //# sourceMappingURL=promote.d.ts.map

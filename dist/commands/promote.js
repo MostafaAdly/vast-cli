@@ -14,22 +14,19 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo } from '../config/repos.js';
-import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
 import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush } from '../utils/git.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { stripRc } from '../utils/version.js';
-import { cutReleaseBranch } from '../utils/release-branch.js';
+import { cutReleaseBranch, RELEASE_KINDS } from '../utils/release-branch.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { WORKSPACE } from './status.js';
 export function defaultRepoDir(repo) {
     return join(WORKSPACE, repo.localDir);
 }
 /** @returns true when the promotion completed (or would have, under dryRun). */
-export function promote(repo, dir, to, dryRun) {
-    if (to === 'production' && !isProductionEnabled()) {
-        console.log(createErrorBox(`Cannot promote ${repo.name} to production`, PRODUCTION_LOCKED_MESSAGE));
-        return false;
-    }
+export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion) {
+    // Deliberately NOT gated on the production lock. Cutting a branch and opening
+    // a PR ships nothing; the lock guards the deploy that follows the merge.
     if (!existsSync(join(dir, '.git'))) {
         console.log(createErrorBox(`${repo.name} is not cloned`, `Expected a checkout at ${dir}`));
         return false;
@@ -50,9 +47,23 @@ export function promote(repo, dir, to, dryRun) {
             log.info(`${repo.name}: production already contains staging. Nothing to release.`);
             return true;
         }
-        const version = stripRc(readDeployedTag(dir, 'origin/staging', helm));
-        log.info(`${repo.name}: ${ahead} commit(s) staging → production, release ${version}`);
-        return cutReleaseBranch(dir, repo.name, version, dryRun) !== null || dryRun;
+        let version;
+        if (targetVersion) {
+            version = targetVersion;
+        }
+        else {
+            try {
+                version = stripRc(readDeployedTag(dir, 'origin/staging', helm));
+            }
+            catch (error) {
+                console.log(createErrorBox(`${repo.name}: cannot derive a release version`, `${error instanceof Error ? error.message : String(error)}\n\n` +
+                    `Re-run with an explicit version:\n` +
+                    `    vast promote ${repo.name} --to production --target-version X.Y.Z`));
+                return false;
+            }
+        }
+        log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
+        return cutReleaseBranch(dir, repo.name, kind, version, dryRun) !== null || dryRun;
     }
     const from = repo.promoteFrom.staging;
     if (!from) {
@@ -92,10 +103,15 @@ async function executePromote(repoName, options) {
         log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
         process.exit(1);
     }
-    console.log(createHeader('Promote', `${repo.name} | → ${options.to}`));
-    if (!promote(repo, options.dir ?? defaultRepoDir(repo), options.to, options.dryRun)) {
+    if (!RELEASE_KINDS.includes(options.as)) {
+        log.error(`Invalid --as value: ${options.as}. Use ${RELEASE_KINDS.join(' or ')}.`);
         process.exit(1);
     }
+    const label = options.to === 'production' ? `→ production (${options.as})` : '→ staging';
+    console.log(createHeader('Promote', `${repo.name} | ${label}`));
+    const ok = promote(repo, options.dir ?? defaultRepoDir(repo), options.to, options.dryRun, options.as, options.targetVersion);
+    if (!ok)
+        process.exit(1);
 }
 export function registerPromoteCommand(program) {
     program
@@ -103,16 +119,20 @@ export function registerPromoteCommand(program) {
         .description('Merge develop into staging, or open a release PR into production')
         .argument('<repository>', 'Repository name')
         .option('-t, --to <env>', 'Target environment: staging or production', 'staging')
+        .option('--as <kind>', 'Production branch kind: release or hotfix', 'release')
+        .option('-v, --target-version <version>', 'Override the derived release version')
         .option('--dir <path>', 'Override the local checkout path')
         .option('-n, --dry-run', 'Report what would happen without merging', false)
         .addHelpText('after', `
 Examples:
-  $ vast promote VastPayPwa                      develop -> staging, push
-  $ vast promote VastPayPwa --dry-run            check for conflicts, change nothing
-  $ vast promote VastPayPwa --to production      open release/X.Y.Z -> production PR
+  $ vast promote VastPayPwa                             develop -> staging, push
+  $ vast promote VastPayPwa --dry-run                   check conflicts, change nothing
+  $ vast promote VastPayPwa --to production             cut release/X.Y.Z + PR
+  $ vast promote VastPayPwa --to production --as hotfix cut hotfix/X.Y.Z + PR
 
-Production requires the lock to be lifted first (vast production enable), and
-the release PR is opened for review — never merged by this tool.
+Preparing a production release is NOT gated on the production lock — cutting a
+branch and opening a PR ships nothing. The PR is opened for review and is never
+merged by this tool; the deploy that follows is what the lock guards.
 `)
         .action(executePromote);
 }

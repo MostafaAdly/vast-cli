@@ -141,7 +141,7 @@ async function executeWorkflow(
       formatKeyValue('Workflow', options.workflow || '(default)'),
       ...(Object.entries(parsedInputs).map(([k, v]) => formatKeyValue(`Input: ${k}`, v))),
     ]));
-    console.log(log.muted('\nNo workflow was triggered (dry-run mode)'));
+    log.muted('\nNo workflow was triggered (dry-run mode)');
     return;
   }
 

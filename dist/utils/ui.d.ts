@@ -25,14 +25,22 @@ export declare const log: {
     warn: (message: string) => void;
     /** Error message */
     error: (message: string) => void;
-    /** Muted/secondary info - for use as string */
-    muted: (message: string) => string;
+    /**
+     * Muted/secondary info.
+     *
+     * This used to return the string instead of printing it, unlike every other
+     * method here — so `log.muted('...')` as a statement silently printed
+     * nothing. Use `dim()` when you need the styled string to embed elsewhere.
+     */
+    muted: (message: string) => void;
     /** Highlighted/important info */
     highlight: (message: string) => void;
     /** Primary brand color */
     primary: (message: string) => void;
     /** New line */
     newline: () => void;
+    /** Muted text as a string, for embedding inside another line. */
+    dim: (message: string) => string;
 };
 /** Format a list of items with bullets */
 export declare function formatList(items: string[]): string;

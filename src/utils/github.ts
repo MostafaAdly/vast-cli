@@ -80,7 +80,7 @@ export async function listWorkflows(repo: string): Promise<void> {
   for (const wf of workflows) {
     const statusIcon = wf.state === "active" ? "🟢" : "⚪";
     console.log(`  ${statusIcon} ${wf.name}`);
-    console.log(`     ${log.muted(`ID: ${wf.id} | Path: ${wf.path}`)}`);
+    console.log(`     ${log.dim(`ID: ${wf.id} | Path: ${wf.path}`)}`);
   }
 
   log.newline();
