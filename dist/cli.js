@@ -8,6 +8,11 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { registerWorkflowCommand } from './commands/workflow.js';
+import { registerStatusCommand } from './commands/status.js';
+import { registerPromoteCommand } from './commands/promote.js';
+import { registerDeployCommand } from './commands/deploy.js';
+import { registerReleaseCommand } from './commands/release.js';
+import { registerProductionCommand } from './commands/production.js';
 import { log } from './utils/ui.js';
 /** CLI version */
 const VERSION = '1.0.0';
@@ -45,16 +50,18 @@ export class VastCli {
         this.program.option('--verbose', 'Enable verbose output');
     }
     /**
-     * Register all available commands
-     * New commands are added here
+     * Register all available commands.
+     *
+     * Every command registered here appears in `vast --help`. Ordered by the
+     * everyday release flow rather than alphabetically: look, promote, ship.
      */
     registerCommands() {
-        // Register the workflow command
+        registerStatusCommand(this.program);
+        registerPromoteCommand(this.program);
+        registerReleaseCommand(this.program);
+        registerDeployCommand(this.program);
         registerWorkflowCommand(this.program);
-        // Future commands can be registered here:
-        // registerDeployCommand(this.program);
-        // registerStatusCommand(this.program);
-        // registerLogsCommand(this.program);
+        registerProductionCommand(this.program);
     }
     /**
      * Display custom banner/help

@@ -7,7 +7,10 @@
  * Usage: vast workflow <repository> --version <version> --branch <branch> [options]
  */
 import chalk from 'chalk';
-import { runWorkflow, listWorkflows, checkGhCli, isValidRepository, VALID_REPOSITORIES, getEnvName, findPullRequest, mergePullRequest, waitForWorkflowCompletion, } from '../utils/github.js';
+import { runWorkflow, listWorkflows, checkGhCli, getEnvName, findPullRequest, mergePullRequest, waitForWorkflowCompletion, } from '../utils/github.js';
+import { getRepo, repoNames } from '../config/repos.js';
+import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
+import { confirmProduction } from './deploy.js';
 import { createHeader, createSuccessBox, createErrorBox, createInfoBox, createSpinner, log, formatKeyValue, formatList, } from '../utils/ui.js';
 /** Command metadata */
 export const COMMAND_NAME = 'workflow';
@@ -27,11 +30,11 @@ async function executeWorkflow(repo, options) {
     }
     // Validate repository
     if (!repo) {
-        console.log(createErrorBox('Repository name is required', `Usage: vast workflow <repository> --version <version> --branch <branch>\n\nAvailable repositories:\n${formatList([...VALID_REPOSITORIES])}`));
+        console.log(createErrorBox('Repository name is required', `Usage: vast workflow <repository> --target-version <version> --branch <branch>\n\nAvailable repositories:\n${formatList(repoNames())}`));
         process.exit(1);
     }
-    if (!isValidRepository(repo)) {
-        console.log(createErrorBox(`Invalid repository: ${repo}`, `Valid repositories:\n${formatList([...VALID_REPOSITORIES])}`));
+    if (!getRepo(repo)) {
+        console.log(createErrorBox(`Invalid repository: ${repo}`, `Valid repositories:\n${formatList(repoNames())}`));
         process.exit(1);
     }
     // List mode: show workflows and exit
@@ -75,12 +78,18 @@ async function executeWorkflow(repo, options) {
         console.log(log.muted('\nNo workflow was triggered (dry-run mode)'));
         return;
     }
-    // Confirm for staging/production branches
+    // Production is locked by default and requires an explicit confirmation.
     const protectedBranches = ['production', 'prod', 'main'];
     if (protectedBranches.includes(options.branch.toLowerCase())) {
+        if (!isProductionEnabled()) {
+            console.log(createErrorBox(`Refusing to dispatch on ${options.branch}`, PRODUCTION_LOCKED_MESSAGE));
+            process.exit(1);
+        }
         log.warn(`⚠️  You are targeting the ${chalk.bold(options.branch)} branch!`);
-        // In a real implementation, you might add a confirmation prompt here
-        // using inquirer for interactive confirmation
+        if (!(await confirmProduction(repo, options.targetVersion))) {
+            log.info('Aborted.');
+            process.exit(0);
+        }
     }
     // Execute the workflow
     const result = await runWorkflow({
@@ -92,15 +101,15 @@ async function executeWorkflow(repo, options) {
     });
     if (result.success) {
         console.log(createSuccessBox('Workflow triggered successfully!', `Repository: ${repo}\nVersion: ${options.targetVersion}\nBranch: ${options.branch}`));
-        if (options.watch) {
-            log.info('\nWatching workflow run... (Feature coming soon)');
-            // Future: Implement watch mode with gh run watch
-        }
         // Auto-approve logic
         if (options.approve) {
             log.newline();
             log.info('Waiting for workflow to complete to merge PR...');
-            const workflowSuccess = await waitForWorkflowCompletion(repo, options.branch, options.workflow);
+            if (!result.runId) {
+                log.error('Could not identify the dispatched run. Not merging.');
+                process.exit(1);
+            }
+            const workflowSuccess = await waitForWorkflowCompletion(repo, result.runId);
             if (!workflowSuccess) {
                 log.error('Workflow failed or could not be found. Cannot merge PR.');
                 process.exit(1);
@@ -183,8 +192,7 @@ export function registerWorkflowCommand(program) {
         .option('-l, --list', 'List available workflows instead of running', false)
         .option('-n, --dry-run', 'Validate parameters without triggering workflow', false)
         .option('--verbose', 'Show detailed output', false)
-        .option('--watch', 'Watch the workflow run after triggering (WIP)', false)
-        .option('-a, --approve', 'Auto-merge the resulting PR', false)
+        .option('-a, --approve', 'Wait for the run, then merge the resulting bump PR', false)
         .option('-i, --inputs <pairs...>', 'Additional workflow inputs (key=value)')
         .addHelpText('after', `
 Examples:
@@ -200,8 +208,11 @@ Examples:
   # With additional inputs
   $ vast workflow Vastmenu-Backend --target-version 2.0.0 --branch main --inputs environment=prod debug=true
 
+Prefer \`vast release\` for the everyday staging flow — it promotes, derives the
+version from the deployed Helm tag, and deploys in one command.
+
 Available Repositories:
-${VALID_REPOSITORIES.map(r => `  • ${r}`).join('\n')}
+${repoNames().map(r => `  • ${r}`).join('\n')}
     `)
         .action(executeWorkflow);
 }

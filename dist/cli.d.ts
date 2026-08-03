@@ -12,8 +12,10 @@ export declare class VastCli {
      */
     private configure;
     /**
-     * Register all available commands
-     * New commands are added here
+     * Register all available commands.
+     *
+     * Every command registered here appears in `vast --help`. Ordered by the
+     * everyday release flow rather than alphabetically: look, promote, ship.
      */
     private registerCommands;
     /**

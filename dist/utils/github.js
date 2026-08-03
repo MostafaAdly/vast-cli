@@ -77,30 +77,40 @@ export async function runWorkflow(params) {
     const spinner = createSpinner(`Triggering workflow for ${repository} @ ${version} (${branch})...`);
     spinner.start();
     try {
-        // Build the gh command
-        let cmd = `gh workflow run`;
-        // If a specific workflow name is provided, use it
+        // Resolve the workflow name first — it is needed both to dispatch and to
+        // identify the run we create.
+        let resolvedWorkflow;
         if (workflowName) {
-            cmd += ` "${workflowName}"`;
+            resolvedWorkflow = workflowName;
         }
         else {
-            // If no workflow name is provided, try to find a default one
             const workflows = await getWorkflows(repository);
             if (workflows.length === 0) {
                 throw new Error(`No workflows found for ${repository}`);
             }
             else if (workflows.length === 1) {
-                cmd += ` "${workflows[0].name}"`;
-                log.info(`Using workflow: ${workflows[0].name}`);
+                resolvedWorkflow = workflows[0].name;
+                log.info(`Using workflow: ${resolvedWorkflow}`);
             }
             else {
-                // If multiple workflows exist, we can't guess which one to run
-                // We could prompt the user, but for now let's throw an error
-                // listing the available workflows
                 const workflowNames = workflows.map((w) => w.name).join(", ");
                 throw new Error(`Multiple workflows found: ${workflowNames}. Please specify one with --workflow.`);
             }
         }
+        // Newest run id BEFORE dispatch, so the run we create can be identified
+        // precisely. Matching "newest on the branch" instead would attach to a
+        // concurrent deploy's run and merge the bump PR on its result.
+        const newestRunId = () => {
+            try {
+                const out = execSync(`gh run list --repo ${ORG_NAME}/${repository} --workflow "${resolvedWorkflow}" --limit 1 --json databaseId`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+                return JSON.parse(out)[0]?.databaseId ?? 0;
+            }
+            catch {
+                return 0;
+            }
+        };
+        const priorRunId = newestRunId();
+        let cmd = `gh workflow run "${resolvedWorkflow}"`;
         cmd += ` --repo ${ORG_NAME}/${repository}`;
         cmd += ` --ref ${branch}`;
         // Add version as input
@@ -114,9 +124,18 @@ export async function runWorkflow(params) {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
         });
+        // Poll for a run newer than the one seen before dispatching.
+        let runId;
+        for (let i = 0; i < 20 && runId === undefined; i++) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const newest = newestRunId();
+            if (newest && newest !== priorRunId)
+                runId = newest;
+        }
         spinner.succeed(`Workflow triggered successfully!`);
         return {
             success: true,
+            runId,
             message: `Workflow triggered for ${repository} with version ${version} on branch ${branch}`,
         };
     }
@@ -174,81 +193,30 @@ export async function mergePullRequest(repo, prNumber) {
     execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
 }
 /**
- * Wait for the latest workflow run to complete
+ * Watch a specific run to completion.
+ *
+ * Takes the run id returned by runWorkflow rather than rediscovering it. The
+ * previous "newest run on the branch, created under 2 minutes ago" heuristic
+ * could attach to a concurrent deploy's run — and then a bump PR would be
+ * merged on the strength of an unrelated run's success.
+ *
  * @param repo - Repository name
- * @param branch - Branch name
- * @param workflowName - Optional workflow name
- * @returns true if successful, false otherwise
+ * @param runId - The run id returned by runWorkflow
+ * @returns true if the run concluded successfully
  */
-export async function waitForWorkflowCompletion(repo, branch, workflowName) {
-    // 1. Find the run ID
-    let runId = null;
-    let attempts = 0;
-    // Try to find the run for up to 30 seconds
-    while (!runId && attempts < 10) {
-        try {
-            let cmd = `gh run list --repo ${ORG_NAME}/${repo} --branch ${branch} --limit 1 --json databaseId,status,conclusion,createdAt`;
-            if (workflowName) {
-                cmd += ` --workflow "${workflowName}"`;
-            }
-            const output = execSync(cmd, {
-                encoding: "utf-8",
-                stdio: ["pipe", "pipe", "pipe"],
-            });
-            const runs = JSON.parse(output);
-            if (runs.length > 0) {
-                // Check if created recently (within last 2 minutes)
-                const createdAt = new Date(runs[0].createdAt).getTime();
-                const now = Date.now();
-                if (now - createdAt < 120000) {
-                    runId = runs[0].databaseId;
-                }
-            }
-        }
-        catch (e) {
-            // Ignore errors while searching
-        }
-        if (!runId) {
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-            attempts++;
-        }
-    }
-    if (!runId) {
-        return false; // Could not find the run
-    }
-    // 2. Watch the run
+export async function waitForWorkflowCompletion(repo, runId) {
     try {
-        // We use `gh run watch` which blocks until completion
         execSync(`gh run watch ${runId} --repo ${ORG_NAME}/${repo} --exit-status`, {
             stdio: "inherit", // Let the user see the output
         });
         return true;
     }
-    catch (e) {
+    catch {
         return false; // Non-zero exit code means failure
     }
 }
-/**
- * Get list of valid repositories in the organization
- * These are the repositories available for workflow management
- */
-export const VALID_REPOSITORIES = [
-    "VastmenuPwa",
-    "VastmenuPwaV2",
-    "Vastmenu-Dashboard",
-    "Vastmenu-Backend",
-    "VastpayPwa",
-    "VastpayPwaV2",
-    "Vastpay-Dashboard",
-    "Vastpay-Backend",
-    "Vast-menu-payments",
-];
-/**
- * Validate if a repository name is in the allowed list
- * @param repo - Repository name to validate
- * @returns true if valid
- */
-export function isValidRepository(repo) {
-    return VALID_REPOSITORIES.some((r) => r.toLowerCase() === repo.toLowerCase());
-}
+// The repository list moved to src/config/repos.ts, which carries canonical
+// GitHub spellings, per-repo workflow names, Helm paths, and branch models —
+// and is drift-tested against vast-routines/scripts/repos.txt. The old
+// VALID_REPOSITORIES array here was missing Vast-Finance entirely.
 //# sourceMappingURL=github.js.map
