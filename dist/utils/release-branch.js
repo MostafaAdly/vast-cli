@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { stripRc } from './version.js';
 import { trialMerge } from './git.js';
+import { releaseBody } from './changelog.js';
 import { log } from './ui.js';
 const ORG_NAME = 'Vast-menu';
 /**
@@ -46,7 +47,7 @@ export function releaseBranchName(kind, version) {
     return `${kind}/${stripRc(version)}`;
 }
 /** @returns the PR URL, or null if nothing was opened. */
-export function cutReleaseBranch(dir, repo, kind, version, dryRun) {
+export function cutReleaseBranch(dir, repo, kind, version, dryRun, withChangelog = true) {
     const branch = releaseBranchName(kind, version);
     const finalVersion = stripRc(version);
     const trial = trialMerge(dir, 'origin/production', 'origin/staging');
@@ -99,9 +100,9 @@ export function cutReleaseBranch(dir, repo, kind, version, dryRun) {
         '--title',
         `${kind}: ${finalVersion} to production`,
         '--body',
-        `Promotes \`staging\` to \`production\` as ${kind} ${finalVersion}.\n\n` +
-            `After merging, deploy with:\n\n    vast deploy ${repo} --to production\n\n` +
-            `(Production deploys are locked by default — \`vast production enable\` first.)\n`,
+        // The audience is every reviewer on the team, most of whom do not use
+        // this CLI. No tool instructions, no branding, no provenance note.
+        releaseBody(dir, 'origin/production', branch, withChangelog),
     ], { encoding: 'utf-8' }).trim();
     log.success(`${repo}: opened ${url}`);
     return url;

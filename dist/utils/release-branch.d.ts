@@ -22,6 +22,6 @@ export type ReleaseKind = 'release' | 'hotfix';
 export declare const RELEASE_KINDS: ReleaseKind[];
 export declare function releaseBranchName(kind: ReleaseKind, version: string): string;
 /** @returns the PR URL, or null if nothing was opened. */
-export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean): string | null;
+export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, withChangelog?: boolean): string | null;
 export {};
 //# sourceMappingURL=release-branch.d.ts.map

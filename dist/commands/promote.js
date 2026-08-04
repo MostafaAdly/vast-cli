@@ -24,7 +24,7 @@ export function defaultRepoDir(repo) {
     return join(WORKSPACE, repo.localDir);
 }
 /** @returns true when the promotion completed (or would have, under dryRun). */
-export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion) {
+export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, withChangelog = true) {
     // Deliberately NOT gated on the production lock. Cutting a branch and opening
     // a PR ships nothing; the lock guards the deploy that follows the merge.
     if (!existsSync(join(dir, '.git'))) {
@@ -63,7 +63,7 @@ export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion) 
             }
         }
         log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-        return cutReleaseBranch(dir, repo.name, kind, version, dryRun) !== null || dryRun;
+        return cutReleaseBranch(dir, repo.name, kind, version, dryRun, withChangelog) !== null || dryRun;
     }
     const from = repo.promoteFrom.staging;
     if (!from) {
@@ -109,7 +109,7 @@ async function executePromote(repoName, options) {
     }
     const label = options.to === 'production' ? `→ production (${options.as})` : '→ staging';
     console.log(createHeader('Promote', `${repo.name} | ${label}`));
-    const ok = promote(repo, options.dir ?? defaultRepoDir(repo), options.to, options.dryRun, options.as, options.targetVersion);
+    const ok = promote(repo, options.dir ?? defaultRepoDir(repo), options.to, options.dryRun, options.as, options.targetVersion, options.changelog);
     if (!ok)
         process.exit(1);
 }
@@ -121,6 +121,7 @@ export function registerPromoteCommand(program) {
         .option('-t, --to <env>', 'Target environment: staging or production', 'staging')
         .option('--as <kind>', 'Production branch kind: release or hotfix', 'release')
         .option('-v, --target-version <version>', 'Override the derived release version')
+        .option('--no-changelog', 'Open the PR with a bare description, no change summary')
         .option('--dir <path>', 'Override the local checkout path')
         .option('-n, --dry-run', 'Report what would happen without merging', false)
         .addHelpText('after', `
@@ -129,6 +130,11 @@ Examples:
   $ vast promote VastPayPwa --dry-run                   check conflicts, change nothing
   $ vast promote VastPayPwa --to production             cut release/X.Y.Z + PR
   $ vast promote VastPayPwa --to production --as hotfix cut hotfix/X.Y.Z + PR
+  $ vast promote VastPayPwa --to production --no-changelog   bare PR description
+
+The release PR description is built from the commit subjects being promoted,
+grouped into Features / Fixes / Improvements / Maintenance. Pass --no-changelog
+for a one-line description instead.
 
 Preparing a production release is NOT gated on the production lock — cutting a
 branch and opening a PR ships nothing. The PR is opened for review and is never

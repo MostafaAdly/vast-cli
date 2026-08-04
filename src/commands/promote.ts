@@ -35,6 +35,7 @@ export function promote(
   dryRun: boolean,
   kind: ReleaseKind = 'release',
   targetVersion?: string,
+  withChangelog = true,
 ): boolean {
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
   // a PR ships nothing; the lock guards the deploy that follows the merge.
@@ -85,7 +86,7 @@ export function promote(
     }
 
     log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-    return cutReleaseBranch(dir, repo.name, kind, version, dryRun) !== null || dryRun;
+    return cutReleaseBranch(dir, repo.name, kind, version, dryRun, withChangelog) !== null || dryRun;
   }
 
   const from = repo.promoteFrom.staging;
@@ -139,6 +140,8 @@ async function executePromote(
     as: ReleaseKind;
     dir?: string;
     targetVersion?: string;
+    /** Commander sets this false when --no-changelog is passed. */
+    changelog: boolean;
     dryRun: boolean;
   },
 ): Promise<void> {
@@ -167,6 +170,7 @@ async function executePromote(
     options.dryRun,
     options.as,
     options.targetVersion,
+    options.changelog,
   );
   if (!ok) process.exit(1);
 }
@@ -179,6 +183,7 @@ export function registerPromoteCommand(program: Command): void {
     .option('-t, --to <env>', 'Target environment: staging or production', 'staging')
     .option('--as <kind>', 'Production branch kind: release or hotfix', 'release')
     .option('-v, --target-version <version>', 'Override the derived release version')
+    .option('--no-changelog', 'Open the PR with a bare description, no change summary')
     .option('--dir <path>', 'Override the local checkout path')
     .option('-n, --dry-run', 'Report what would happen without merging', false)
     .addHelpText(
@@ -189,6 +194,11 @@ Examples:
   $ vast promote VastPayPwa --dry-run                   check conflicts, change nothing
   $ vast promote VastPayPwa --to production             cut release/X.Y.Z + PR
   $ vast promote VastPayPwa --to production --as hotfix cut hotfix/X.Y.Z + PR
+  $ vast promote VastPayPwa --to production --no-changelog   bare PR description
+
+The release PR description is built from the commit subjects being promoted,
+grouped into Features / Fixes / Improvements / Maintenance. Pass --no-changelog
+for a one-line description instead.
 
 Preparing a production release is NOT gated on the production lock — cutting a
 branch and opening a PR ships nothing. The PR is opened for review and is never
