@@ -15,6 +15,29 @@
 export declare const NEVER_PUSH: string[];
 export declare function isClean(dir: string): boolean;
 export declare function fetch(dir: string): void;
+/**
+ * Refspecs that update only the remote-tracking branches we actually read.
+ *
+ * A bare `git fetch origin` pulls every branch and tag. These repos carry
+ * dozens of stale release/* and hotfix/* branches, none of which any command
+ * here looks at.
+ */
+export declare function refspecsFor(branches: string[]): string[];
+/**
+ * Fetch specific branches, without blocking on the rest of the remote.
+ *
+ * Async so callers can run many repos concurrently — fetching is network-bound,
+ * so N repos in parallel costs roughly one repo's latency instead of N.
+ *
+ * A refspec naming a branch the remote does not have aborts the whole fetch
+ * ("couldn't find remote ref"), and not every repo has every branch —
+ * Vast-Finance has no `staging` or `production` at all. So the combined fetch
+ * is a fast path, and on failure each branch is retried on its own and the
+ * missing ones are skipped.
+ *
+ * @returns true if at least one branch was updated.
+ */
+export declare function fetchBranches(dir: string, branches: string[]): Promise<boolean>;
 /** Commits `a` has that `b` lacks, and vice versa. */
 export declare function aheadBehind(dir: string, a: string, b: string): {
     ahead: number;

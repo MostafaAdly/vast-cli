@@ -4,7 +4,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { trialMerge, aheadBehind, isClean, mergeAndPush, NEVER_PUSH } from '../src/utils/git.js';
+import {
+  trialMerge,
+  aheadBehind,
+  isClean,
+  mergeAndPush,
+  refspecsFor,
+  NEVER_PUSH,
+} from '../src/utils/git.js';
 
 function fixture(): string {
   const dir = mkdtempSync(join(tmpdir(), 'vast-git-'));
@@ -91,4 +98,17 @@ test('protected branch check is case-insensitive', () => {
   withFixture((dir) => {
     assert.throws(() => mergeAndPush(dir, 'PRODUCTION', 'origin/staging'), /Refusing to push to/);
   });
+});
+
+// Narrowing the fetch is what keeps `status --all` off the dozens of stale
+// release/* and hotfix/* branches these repos carry.
+test('refspecs map branches onto their remote-tracking refs', () => {
+  assert.deepEqual(refspecsFor(['staging', 'develop']), [
+    '+refs/heads/staging:refs/remotes/origin/staging',
+    '+refs/heads/develop:refs/remotes/origin/develop',
+  ]);
+});
+
+test('refspecs for no branches is empty, not a wildcard', () => {
+  assert.deepEqual(refspecsFor([]), []);
 });
