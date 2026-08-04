@@ -47,7 +47,7 @@ export function releaseBranchName(kind, version) {
     return `${kind}/${stripRc(version)}`;
 }
 /** @returns the PR URL, or null if nothing was opened. */
-export function cutReleaseBranch(dir, repo, kind, version, dryRun, withChangelog = true) {
+export function cutReleaseBranch(dir, repo, kind, version, dryRun, bodyMode = 'changelog') {
     const branch = releaseBranchName(kind, version);
     const finalVersion = stripRc(version);
     const trial = trialMerge(dir, 'origin/production', 'origin/staging');
@@ -102,7 +102,7 @@ export function cutReleaseBranch(dir, repo, kind, version, dryRun, withChangelog
         '--body',
         // The audience is every reviewer on the team, most of whom do not use
         // this CLI. No tool instructions, no branding, no provenance note.
-        releaseBody(dir, 'origin/production', branch, withChangelog),
+        releaseBody(dir, 'origin/production', branch, bodyMode),
     ], { encoding: 'utf-8' }).trim();
     log.success(`${repo}: opened ${url}`);
     return url;

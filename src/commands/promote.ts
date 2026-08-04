@@ -12,7 +12,7 @@
  * lock being lifted.
  */
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo, type RepoConfig } from '../config/repos.js';
@@ -20,6 +20,7 @@ import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush } fro
 import { readDeployedTag } from '../utils/helm.js';
 import { stripRc } from '../utils/version.js';
 import { cutReleaseBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
+import type { BodyMode } from '../utils/changelog.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { WORKSPACE } from './status.js';
 
@@ -35,7 +36,7 @@ export function promote(
   dryRun: boolean,
   kind: ReleaseKind = 'release',
   targetVersion?: string,
-  withChangelog = true,
+  bodyMode: BodyMode = 'changelog',
 ): boolean {
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
   // a PR ships nothing; the lock guards the deploy that follows the merge.
@@ -86,7 +87,7 @@ export function promote(
     }
 
     log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-    return cutReleaseBranch(dir, repo.name, kind, version, dryRun, withChangelog) !== null || dryRun;
+    return cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode) !== null || dryRun;
   }
 
   const from = repo.promoteFrom.staging;
@@ -142,6 +143,9 @@ async function executePromote(
     targetVersion?: string;
     /** Commander sets this false when --no-changelog is passed. */
     changelog: boolean;
+    summarize?: boolean;
+    /** Hidden alias for --summarize. */
+    llm?: boolean;
     dryRun: boolean;
   },
 ): Promise<void> {
@@ -163,6 +167,14 @@ async function executePromote(
 
   const label = options.to === 'production' ? `→ production (${options.as})` : '→ staging';
   console.log(createHeader('Promote', `${repo.name} | ${label}`));
+  // --no-changelog wins over --summarize: asking for no description at all is
+  // the more specific request.
+  const bodyMode: BodyMode = !options.changelog
+    ? 'bare'
+    : options.summarize || options.llm
+      ? 'summarize'
+      : 'changelog';
+
   const ok = promote(
     repo,
     options.dir ?? defaultRepoDir(repo),
@@ -170,7 +182,7 @@ async function executePromote(
     options.dryRun,
     options.as,
     options.targetVersion,
-    options.changelog,
+    bodyMode,
   );
   if (!ok) process.exit(1);
 }
@@ -184,6 +196,8 @@ export function registerPromoteCommand(program: Command): void {
     .option('--as <kind>', 'Production branch kind: release or hotfix', 'release')
     .option('-v, --target-version <version>', 'Override the derived release version')
     .option('--no-changelog', 'Open the PR with a bare description, no change summary')
+    .option('-s, --summarize', 'Describe the diff with a small local model instead of commits')
+    .addOption(new Option('--llm').hideHelp())
     .option('--dir <path>', 'Override the local checkout path')
     .option('-n, --dry-run', 'Report what would happen without merging', false)
     .addHelpText(
@@ -196,9 +210,17 @@ Examples:
   $ vast promote VastPayPwa --to production --as hotfix cut hotfix/X.Y.Z + PR
   $ vast promote VastPayPwa --to production --no-changelog   bare PR description
 
-The release PR description is built from the commit subjects being promoted,
-grouped into Features / Fixes / Improvements / Maintenance. Pass --no-changelog
-for a one-line description instead.
+PR description (production only):
+  default          bullets from the commit subjects being promoted, grouped
+                   into Features / Fixes / Improvements / Maintenance
+  --summarize      a small local model reads the diff and describes it instead;
+                   slower and not reproducible, but catches changes nobody
+                   wrote a good commit message for. Falls back to the default
+                   if it is unavailable or the output fails screening.
+  --no-changelog   a one-line description
+
+Descriptions never contain tool instructions or any note about how they were
+produced — the whole team reads them.
 
 Preparing a production release is NOT gated on the production lock — cutting a
 branch and opening a PR ships nothing. The PR is opened for review and is never

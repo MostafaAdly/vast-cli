@@ -11,6 +11,7 @@
  */
 
 import { execFileSync } from 'child_process';
+import { summarizeDiff } from './summarize.js';
 
 /** Conventional-commit type -> the section it lands in. */
 const SECTIONS: Array<{ title: string; types: string[] }> = [
@@ -128,22 +129,39 @@ export function diffStat(dir: string, base: string, head: string): string | null
   }
 }
 
+export type BodyMode = 'changelog' | 'summarize' | 'bare';
+
 /**
  * The full PR body.
  *
  * Deliberately contains no instructions for the release manager — the audience
  * is every reviewer on the team, and most of them do not use this tool.
+ *
+ * `summarize` falls back to `changelog` whenever the model summary cannot be
+ * produced or does not pass screening, so the body is never left empty.
  */
-export function releaseBody(dir: string, base: string, head: string, withChangelog: boolean): string {
+export function releaseBody(dir: string, base: string, head: string, mode: BodyMode): string {
   const heading = `Promotes \`staging\` to \`production\`.`;
-  if (!withChangelog) return heading;
+  if (mode === 'bare') return heading;
 
-  const changelog = buildChangelog(commitSubjects(dir, base, head));
+  const subjects = commitSubjects(dir, base, head);
   const stat = diffStat(dir, base, head);
 
+  let section: string | null = null;
+  let title = "What's included";
+
+  if (mode === 'summarize') {
+    section = summarizeDiff(dir, base, head, subjects);
+    if (section) title = 'Summary';
+  }
+  if (!section) {
+    section = buildChangelog(subjects);
+    title = "What's included";
+  }
+
   const parts = [heading, ''];
-  if (changelog) {
-    parts.push("## What's included", '', changelog);
+  if (section) {
+    parts.push(`## ${title}`, '', section);
   }
   if (stat) {
     parts.push('', '---', `<sub>${stat}</sub>`);

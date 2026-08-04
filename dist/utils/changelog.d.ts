@@ -22,12 +22,16 @@ export declare function buildChangelog(subjects: string[]): string;
 export declare function commitSubjects(dir: string, base: string, head: string): string[];
 /** Files changed and insertion/deletion counts, for a one-line footer. */
 export declare function diffStat(dir: string, base: string, head: string): string | null;
+export type BodyMode = 'changelog' | 'summarize' | 'bare';
 /**
  * The full PR body.
  *
  * Deliberately contains no instructions for the release manager — the audience
  * is every reviewer on the team, and most of them do not use this tool.
+ *
+ * `summarize` falls back to `changelog` whenever the model summary cannot be
+ * produced or does not pass screening, so the body is never left empty.
  */
-export declare function releaseBody(dir: string, base: string, head: string, withChangelog: boolean): string;
+export declare function releaseBody(dir: string, base: string, head: string, mode: BodyMode): string;
 export {};
 //# sourceMappingURL=changelog.d.ts.map

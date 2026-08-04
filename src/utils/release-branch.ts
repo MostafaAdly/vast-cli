@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { stripRc } from './version.js';
 import { trialMerge } from './git.js';
-import { releaseBody } from './changelog.js';
+import { releaseBody, type BodyMode } from './changelog.js';
 import { log } from './ui.js';
 
 const ORG_NAME = 'Vast-menu';
@@ -66,7 +66,7 @@ export function cutReleaseBranch(
   kind: ReleaseKind,
   version: string,
   dryRun: boolean,
-  withChangelog = true,
+  bodyMode: BodyMode = 'changelog',
 ): string | null {
   const branch = releaseBranchName(kind, version);
   const finalVersion = stripRc(version);
@@ -134,7 +134,7 @@ export function cutReleaseBranch(
       '--body',
       // The audience is every reviewer on the team, most of whom do not use
       // this CLI. No tool instructions, no branding, no provenance note.
-      releaseBody(dir, 'origin/production', branch, withChangelog),
+      releaseBody(dir, 'origin/production', branch, bodyMode),
     ],
     { encoding: 'utf-8' },
   ).trim();

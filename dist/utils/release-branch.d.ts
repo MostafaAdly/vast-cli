@@ -10,6 +10,7 @@
  * a branch and opening a PR ships nothing. The lock guards the deploy that
  * comes after the PR is merged.
  */
+import { type BodyMode } from './changelog.js';
 declare function readVersionField(json: string): string | null;
 declare function setVersionField(json: string, version: string): string;
 /** Exported for tests only — these are internals, not API. */
@@ -22,6 +23,6 @@ export type ReleaseKind = 'release' | 'hotfix';
 export declare const RELEASE_KINDS: ReleaseKind[];
 export declare function releaseBranchName(kind: ReleaseKind, version: string): string;
 /** @returns the PR URL, or null if nothing was opened. */
-export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, withChangelog?: boolean): string | null;
+export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, bodyMode?: BodyMode): string | null;
 export {};
 //# sourceMappingURL=release-branch.d.ts.map
