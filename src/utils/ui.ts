@@ -13,7 +13,7 @@ import boxen from 'boxen';
  * Brand colors for Vast CLI 
  * Using a consistent color palette across the application
  */
-const colors = {
+export const colors = {
   primary: chalk.hex('#6366F1'),    // Indigo
   success: chalk.hex('#10B981'),    // Emerald
   warning: chalk.hex('#F59E0B'),    // Amber

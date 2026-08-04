@@ -4,9 +4,9 @@
  * Bootstraps the Vast CLI application, registers all commands,
  * and handles global error handling and help text.
  */
-import { Command } from 'commander';
+import { Command, Help } from 'commander';
 import chalk from 'chalk';
-import boxen from 'boxen';
+import { renderRootHelp } from './utils/help.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerPromoteCommand } from './commands/promote.js';
@@ -39,6 +39,15 @@ export class VastCli {
             writeErr: (str) => process.stderr.write(str),
             writeOut: (str) => process.stdout.write(str),
         })
+            // configureHelp is INHERITED by subcommands, so this must render the
+            // custom screen for the root only and hand everything else back to
+            // Commander's default formatter — otherwise `vast release --help` would
+            // print the root screen too.
+            .configureHelp({
+            formatHelp: (cmd, helper) => cmd.parent === null
+                ? renderRootHelp(VERSION)
+                : Help.prototype.formatHelp.call(helper, cmd, helper),
+        })
             .hook('preAction', (thisCommand) => {
             // Global pre-action hook for any setup needed before commands run
             const verbose = thisCommand.opts().verbose;
@@ -64,29 +73,15 @@ export class VastCli {
         registerProductionCommand(this.program);
     }
     /**
-     * Display custom banner/help
-     */
-    displayBanner() {
-        const banner = boxen(chalk.hex('#6366F1').bold(' Vast CLI ') + chalk.hex('#8B5CF6')('v' + VERSION) + '\n' +
-            chalk.gray('Manage Vast-menu workflows with ease'), {
-            padding: 1,
-            borderStyle: 'round',
-            borderColor: '#6366F1',
-            dimBorder: false,
-            textAlignment: 'center',
-        });
-        console.log(banner);
-        console.log();
-    }
-    /**
      * Run the CLI
      */
     async run() {
         try {
-            // Display banner for top-level help or when no args provided
-            const args = process.argv.slice(2);
-            if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-                this.displayBanner();
+            // Bare `vast` shows the same screen as `vast --help`. The header lives
+            // inside that screen, so there is no separate banner to print.
+            if (process.argv.slice(2).length === 0) {
+                this.program.outputHelp();
+                return;
             }
             await this.program.parseAsync(process.argv);
         }

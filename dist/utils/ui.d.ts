@@ -5,6 +5,19 @@
  * for all CLI output. Uses Chalk for colors and Ora for loading states.
  */
 import { type Ora } from 'ora';
+/**
+ * Brand colors for Vast CLI
+ * Using a consistent color palette across the application
+ */
+export declare const colors: {
+    primary: import("chalk").ChalkInstance;
+    success: import("chalk").ChalkInstance;
+    warning: import("chalk").ChalkInstance;
+    error: import("chalk").ChalkInstance;
+    info: import("chalk").ChalkInstance;
+    muted: import("chalk").ChalkInstance;
+    highlight: import("chalk").ChalkInstance;
+};
 /** Create a styled header for command output */
 export declare function createHeader(title: string, subtitle?: string): string;
 /** Create a success message box */

@@ -71,7 +71,28 @@ function disable(): void {
 export function registerProductionCommand(program: Command): void {
   const cmd = program
     .command('production')
-    .description('Show or change the production deploy lock (locked by default)');
+    .description('Show or change the production deploy lock (locked by default)')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ vast production            show the current state (same as: status)
+  $ vast production enable     allow production deploys
+  $ vast production disable    refuse them again
+
+What the lock does and does not cover:
+
+  LOCKED blocks    vast deploy --to production
+                   vast workflow --branch production
+
+  Always allowed   vast promote --to production            cut release/X.Y.Z + PR
+                   vast promote --to production --as hotfix
+
+Preparing a release ships nothing, so it is never gated. Independently of the
+lock, this CLI never pushes to production at all — production is reached only
+by merging the reviewed release PR.
+`,
+    );
 
   cmd
     .command('status', { isDefault: true })

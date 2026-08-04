@@ -101,5 +101,21 @@ export function registerStatusCommand(program: Command): void {
     .argument('[repository]', 'Repository name (omit and pass --all for every repo)')
     .option('-a, --all', 'Report on every configured repo', false)
     .option('--dir <path>', 'Override the local checkout path')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ vast status --all              every repo, one screen
+  $ vast status VastPayPwa         one repo
+
+Reads only — it fetches and reports, and changes nothing.
+
+Columns:
+  STAGING / PRODUCTION   the image tag deployed to each, from Helm values
+  DRIFT                  commits waiting on develop that staging lacks
+                         "no develop" means the repo has no promotion source
+                         "n/a" means the repo has no Helm values to read
+`,
+    )
     .action(executeStatus);
 }

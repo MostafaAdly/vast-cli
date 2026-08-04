@@ -19,10 +19,6 @@ export declare class VastCli {
      */
     private registerCommands;
     /**
-     * Display custom banner/help
-     */
-    private displayBanner;
-    /**
      * Run the CLI
      */
     run(): Promise<void>;
