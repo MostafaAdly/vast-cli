@@ -8,6 +8,7 @@
 import { Command, Help } from 'commander';
 import chalk from 'chalk';
 import { renderRootHelp } from './utils/help.js';
+import { registerInitCommand } from './commands/init.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerPromoteCommand } from './commands/promote.js';
@@ -74,6 +75,7 @@ export class VastCli {
    * everyday release flow rather than alphabetically: look, promote, ship.
    */
   private registerCommands(): void {
+    registerInitCommand(this.program);
     registerStatusCommand(this.program);
     registerPromoteCommand(this.program);
     registerReleaseCommand(this.program);
