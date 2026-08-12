@@ -11,8 +11,8 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
+import { vastHome } from './workspace.js';
 
 /** Hard-coded default. Production is off until a file says otherwise. */
 const PRODUCTION_ENABLED_BY_DEFAULT = false;
@@ -23,8 +23,7 @@ const PRODUCTION_ENABLED_BY_DEFAULT = false;
  * lifted, which is exactly the state this module exists to prevent.
  */
 export function lockFile(): string {
-  const home = process.env.VAST_CLI_HOME ?? join(homedir(), '.vast-cli');
-  return join(home, 'production-enabled');
+  return join(vastHome(), 'production-enabled');
 }
 
 export function isProductionEnabled(): boolean {
