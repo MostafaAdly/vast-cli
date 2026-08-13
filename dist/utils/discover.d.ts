@@ -35,4 +35,21 @@ export declare function discover(roots: string[]): Map<string, string[]>;
 export declare function pickShortest(candidates: string[]): string;
 /** $HOME-relative likely roots, as absolute paths that exist. */
 export declare function defaultRoots(): string[];
+/**
+ * Directories too broad to scan from. Walking `/` or `$HOME` at depth 4 sweeps
+ * an entire machine, so the current directory is only added as a search root
+ * when it is somewhere specific.
+ */
+export declare function isTooBroadToScan(dir: string): boolean;
+/**
+ * Search roots for a scan, given extra roots the user named and where they are
+ * standing.
+ *
+ * The current directory is included because `cd` into your repos and run
+ * `vast init` is what people actually try — and without it the command ignores
+ * where you are entirely, which reads as "it found nothing and I don't know
+ * why". Explicit --root paths are always honoured, even broad ones: asking for
+ * a directory by name is a deliberate act.
+ */
+export declare function rootsFor(extra: string[], cwd: string, base: string[]): string[];
 //# sourceMappingURL=discover.d.ts.map

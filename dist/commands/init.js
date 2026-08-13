@@ -9,7 +9,7 @@ import { dirname } from 'path';
 import inquirer from 'inquirer';
 import { REPOS } from '../config/repos.js';
 import { readConfig, writeConfig } from '../config/workspace.js';
-import { discover, defaultRoots, originOf, pickShortest } from '../utils/discover.js';
+import { discover, defaultRoots, originOf, pickShortest, rootsFor } from '../utils/discover.js';
 import { canonicalRepoName } from '../utils/remote.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 /**
@@ -61,7 +61,8 @@ export async function resolveCandidates(map, interactive) {
 async function executeInit(options) {
     console.log(createHeader('Init', 'locating your Vast repos'));
     const existing = readConfig();
-    const roots = !options.rescan && existing.searchRoots.length ? existing.searchRoots : defaultRoots();
+    const base = !options.rescan && existing.searchRoots.length ? existing.searchRoots : defaultRoots();
+    const roots = rootsFor(options.root ?? [], process.cwd(), base);
     const spinner = process.stdout.isTTY ? createSpinner('Scanning for checkouts...').start() : null;
     const map = discover(roots);
     spinner?.stop();
@@ -78,7 +79,16 @@ async function executeInit(options) {
     });
     if (Object.keys(resolved).length === 0) {
         log.warn('No Vast repos found.');
-        log.info('Clone what your team needs with:  vast clone --team frontend');
+        log.newline();
+        log.muted(`  Searched: ${roots.join(', ')}`);
+        log.newline();
+        // Naming --root here is what makes it discoverable. This message is the
+        // exact moment someone with repos outside the usual places needs it.
+        log.info('If your repos live somewhere else, point at it:');
+        log.muted('    vast init --root /path/to/your/repos');
+        log.newline();
+        log.info('Or clone what your team needs:');
+        log.muted('    vast clone --team frontend');
         return;
     }
     const found = Object.keys(resolved).length;
@@ -98,12 +108,18 @@ export function registerInitCommand(program) {
         .command('init')
         .description('Find your Vast checkouts and remember where they are')
         .option('--rescan', 'Search from scratch instead of known roots', false)
+        .option('-r, --root <path...>', 'Also search these directories (remembered for next time)')
         .addHelpText('after', `
 Repos are matched by their origin remote, not their folder name, so it does not
 matter what you called them or where you put them.
 
-  $ vast init             scan and remember
-  $ vast init --rescan    search everywhere again, e.g. after moving a repo
+  $ vast init                        scan the usual places and where you are
+  $ vast init --root /opt/work       also search there, and remember it
+  $ vast init --rescan               search from scratch, e.g. after moving a repo
+
+Searches ~/Workshop, ~/work, ~/projects, ~/Developer, ~/src, ~/Desktop and
+similar, plus your current directory. Use --root for anywhere else; it is saved,
+so you only pass it once.
 `)
         .action(executeInit);
 }

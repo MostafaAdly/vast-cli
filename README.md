@@ -31,6 +31,14 @@ That scans your disk for Vast checkouts and remembers where each one lives. It m
 repos by their `origin` remote, not by folder name, so it does not matter what you called
 them or where you put them — including several different places.
 
+It searches the usual spots (`~/Workshop`, `~/work`, `~/projects`, `~/Developer`, `~/src`,
+`~/Desktop` and similar) **plus whatever directory you are standing in**. Keep them
+somewhere else?
+
+```bash
+vast init --root /opt/work    # searched now, and remembered for next time
+```
+
 Missing some?
 
 ```bash
@@ -198,7 +206,9 @@ Everything lives in `~/.vast-cli/`:
 | `version` | The installed release tag |
 | `update-check.json` | Cached result of the daily release check |
 
-Re-scan with `vast init --rescan` after moving a repo somewhere new.
+Re-scan with `vast init --rescan` after moving a repo somewhere new, or
+`vast init --root <path>` to teach it a location it does not know. Roots you name are
+saved, so you only pass them once.
 
 ---
 
