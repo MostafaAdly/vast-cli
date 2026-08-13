@@ -7,9 +7,13 @@
  * that value against the latest release tag, every user would have been told
  * they were out of date forever — including right after upgrading.
  *
- * Runs before build and bundle. tests/version-sync.test.ts fails if the
- * generated file drifts from package.json, so a bump without a rebuild is
- * caught rather than shipped.
+ * Runs three times over: before build, before bundle, and — via the `version`
+ * npm lifecycle hook — after `npm version` bumps package.json but before it
+ * commits, so the generated file is staged into the version commit itself.
+ *
+ * That last one matters. Without it `npm version patch && git push
+ * --follow-tags` tags a commit whose version.ts is already stale, and the
+ * release fails on tests/version-sync.test.ts. v1.1.1 failed exactly that way.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';

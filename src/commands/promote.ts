@@ -17,12 +17,45 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo, type RepoConfig } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
-import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush } from '../utils/git.js';
+import {
+  isClean,
+  fetch as gitFetch,
+  aheadBehind,
+  trialMerge,
+  mergeAndPush,
+  syncLocalBranch,
+} from '../utils/git.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { stripRc } from '../utils/version.js';
 import { cutReleaseBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
 import type { BodyMode } from '../utils/changelog.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
+
+/**
+ * Fast-forward the local branches this promotion reads, and say what came in.
+ *
+ * A branch that has diverged locally is reported and skipped rather than
+ * aborting: the promotion merges `origin/*`, so its correctness never depended
+ * on the local ref being current.
+ */
+function syncBranches(repo: RepoConfig, dir: string, to: 'staging' | 'production'): void {
+  const branches =
+    to === 'production'
+      ? ['staging', 'production']
+      : [repo.promoteFrom.staging, 'staging'].filter((b): b is string => Boolean(b));
+
+  for (const branch of branches) {
+    try {
+      const gained = syncLocalBranch(dir, branch);
+      if (gained > 0) log.muted(`  pulled ${gained} new commit(s) into ${branch}`);
+    } catch {
+      log.warn(
+        `${branch} has local commits that are not on origin/${branch} — leaving it alone. ` +
+          `The promotion still uses origin/${branch}.`,
+      );
+    }
+  }
+}
 
 /** @returns true when the promotion completed (or would have, under dryRun). */
 export function promote(
@@ -49,6 +82,11 @@ export function promote(
   }
 
   gitFetch(dir);
+
+  // Bring the local branches up to date with what was just fetched. The merge
+  // below reads origin/* either way, so this is about not leaving the checkout
+  // sitting on a stale develop after the promotion.
+  syncBranches(repo, dir, to);
 
   if (to === 'production') {
     const helm = repo.helm.staging;

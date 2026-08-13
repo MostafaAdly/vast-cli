@@ -26,6 +26,44 @@ function git(dir, args) {
 export function isClean(dir) {
     return git(dir, ['status', '--porcelain']).trim() === '';
 }
+export function currentBranch(dir) {
+    return git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+}
+/**
+ * Fast-forward a local branch to its remote counterpart.
+ *
+ * The promotion itself merges `origin/<branch>`, so the merged content was
+ * always current — but the local branches were left untouched, so after a
+ * promote you were looking at a stale `develop`. On this machine local develop
+ * sat 24 commits behind origin/develop.
+ *
+ * Fast-forward only. If the local branch has its own commits this refuses
+ * rather than rewriting anything, and the caller carries on: the promotion does
+ * not depend on the local ref.
+ *
+ * @returns commits gained, or 0 if there was nothing to do.
+ * @throws when the local branch has diverged from its remote.
+ */
+export function syncLocalBranch(dir, branch) {
+    try {
+        git(dir, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+    }
+    catch {
+        return 0; // no local branch — nothing to sync
+    }
+    const { ahead: gained } = aheadBehind(dir, `origin/${branch}`, branch);
+    if (gained === 0)
+        return 0;
+    if (currentBranch(dir) === branch) {
+        git(dir, ['merge', '--ff-only', `origin/${branch}`]);
+    }
+    else {
+        // Updates a branch that is not checked out. Without a leading '+' this
+        // refspec is fast-forward-only, so divergence fails instead of clobbering.
+        git(dir, ['fetch', 'origin', `${branch}:${branch}`]);
+    }
+    return gained;
+}
 export function fetch(dir) {
     git(dir, ['fetch', '--prune', 'origin']);
 }

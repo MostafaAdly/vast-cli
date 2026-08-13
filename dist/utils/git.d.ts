@@ -14,6 +14,23 @@
  */
 export declare const NEVER_PUSH: string[];
 export declare function isClean(dir: string): boolean;
+export declare function currentBranch(dir: string): string;
+/**
+ * Fast-forward a local branch to its remote counterpart.
+ *
+ * The promotion itself merges `origin/<branch>`, so the merged content was
+ * always current — but the local branches were left untouched, so after a
+ * promote you were looking at a stale `develop`. On this machine local develop
+ * sat 24 commits behind origin/develop.
+ *
+ * Fast-forward only. If the local branch has its own commits this refuses
+ * rather than rewriting anything, and the caller carries on: the promotion does
+ * not depend on the local ref.
+ *
+ * @returns commits gained, or 0 if there was nothing to do.
+ * @throws when the local branch has diverged from its remote.
+ */
+export declare function syncLocalBranch(dir: string, branch: string): number;
 export declare function fetch(dir: string): void;
 /**
  * Refspecs that update only the remote-tracking branches we actually read.
