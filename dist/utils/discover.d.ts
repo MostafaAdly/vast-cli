@@ -42,6 +42,18 @@ export declare function defaultRoots(): string[];
  */
 export declare function isTooBroadToScan(dir: string): boolean;
 /**
+ * The roots a scan starts from, before the current directory and any --root.
+ *
+ * The defaults are ALWAYS included. Previously, once a scan had saved any roots
+ * those replaced the defaults entirely — so cloning a repo into a normal place
+ * like ~/projects went unnoticed by a plain `vast init`, and the only cure was a
+ * flag the user had no reason to suspect they needed.
+ *
+ * `--rescan` drops the saved roots, which is how you forget locations you have
+ * moved away from. It cannot drop the defaults; nothing should.
+ */
+export declare function baseRoots(saved: string[], rescan: boolean): string[];
+/**
  * Search roots for a scan, given extra roots the user named and where they are
  * standing.
  *

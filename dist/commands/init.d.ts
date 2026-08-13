@@ -15,6 +15,6 @@ import { Command } from 'commander';
  * that repo, so genuinely stale entries are still cleared out.
  */
 export declare function mergeRepos(existing: Record<string, string>, discovered: Record<string, string>): Record<string, string>;
-export declare function resolveCandidates(map: Map<string, string[]>, interactive: boolean): Promise<Record<string, string>>;
+export declare function resolveCandidates(map: Map<string, string[]>, interactive: boolean, pinned?: Record<string, string>): Promise<Record<string, string>>;
 export declare function registerInitCommand(program: Command): void;
 //# sourceMappingURL=init.d.ts.map

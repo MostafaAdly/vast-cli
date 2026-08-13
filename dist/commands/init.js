@@ -9,7 +9,7 @@ import { dirname } from 'path';
 import inquirer from 'inquirer';
 import { REPOS } from '../config/repos.js';
 import { readConfig, writeConfig } from '../config/workspace.js';
-import { discover, defaultRoots, originOf, pickShortest, rootsFor } from '../utils/discover.js';
+import { discover, baseRoots, originOf, pickShortest, rootsFor } from '../utils/discover.js';
 import { canonicalRepoName } from '../utils/remote.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 /**
@@ -34,11 +34,19 @@ export function mergeRepos(existing, discovered) {
     }
     return merged;
 }
-export async function resolveCandidates(map, interactive) {
+export async function resolveCandidates(map, interactive, pinned = {}) {
     const resolved = {};
     for (const [name, candidates] of [...map].sort(([a], [b]) => a.localeCompare(b))) {
         if (candidates.length === 1) {
             resolved[name] = candidates[0];
+            continue;
+        }
+        // An earlier run already settled this one. Now that every scan sweeps the
+        // default roots, a second checkout in a default location would otherwise
+        // silently override a deliberate choice — asking again, or re-picking the
+        // shortest path, would undo the pin the user made precisely to stop that.
+        if (pinned[name] && candidates.includes(pinned[name])) {
+            resolved[name] = pinned[name];
             continue;
         }
         if (!interactive) {
@@ -61,12 +69,11 @@ export async function resolveCandidates(map, interactive) {
 async function executeInit(options) {
     console.log(createHeader('Init', 'locating your Vast repos'));
     const existing = readConfig();
-    const base = !options.rescan && existing.searchRoots.length ? existing.searchRoots : defaultRoots();
-    const roots = rootsFor(options.root ?? [], process.cwd(), base);
+    const roots = rootsFor(options.root ?? [], process.cwd(), baseRoots(existing.searchRoots, options.rescan));
     const spinner = process.stdout.isTTY ? createSpinner('Scanning for checkouts...').start() : null;
     const map = discover(roots);
     spinner?.stop();
-    const scanned = await resolveCandidates(map, Boolean(process.stdout.isTTY));
+    const scanned = await resolveCandidates(map, Boolean(process.stdout.isTTY), existing.repos);
     const resolved = mergeRepos(existing.repos, scanned);
     // Remember only roots that actually contain something — including the ones
     // surviving entries live in, which is how a `--into` destination stays known.
@@ -107,19 +114,23 @@ export function registerInitCommand(program) {
     program
         .command('init')
         .description('Find your Vast checkouts and remember where they are')
-        .option('--rescan', 'Search from scratch instead of known roots', false)
+        .option('--rescan', 'Forget saved roots and search only the usual places', false)
         .option('-r, --root <path...>', 'Also search these directories (remembered for next time)')
         .addHelpText('after', `
 Repos are matched by their origin remote, not their folder name, so it does not
 matter what you called them or where you put them.
 
-  $ vast init                        scan the usual places and where you are
+  $ vast init                        the usual places, your saved roots, and where you are
   $ vast init --root /opt/work       also search there, and remember it
-  $ vast init --rescan               search from scratch, e.g. after moving a repo
+  $ vast init --rescan               forget saved roots, keep the usual places
 
-Searches ~/Workshop, ~/work, ~/projects, ~/Developer, ~/src, ~/Desktop and
-similar, plus your current directory. Use --root for anywhere else; it is saved,
-so you only pass it once.
+Every run searches ~/Workshop, ~/work, ~/projects, ~/Developer, ~/src, ~/Desktop
+and similar, plus your current directory and anywhere you have named with
+--root. Those defaults are never dropped, so a repo cloned into a normal place
+is always picked up.
+
+--rescan is for after you have moved things: it forgets the roots a previous
+scan saved, in case they no longer exist or no longer matter.
 `)
         .action(executeInit);
 }
