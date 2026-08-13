@@ -5,17 +5,39 @@
  * machine regardless of where repos were cloned or what they were named.
  */
 
+import { existsSync } from 'fs';
 import { dirname } from 'path';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { REPOS } from '../config/repos.js';
 import { readConfig, writeConfig } from '../config/workspace.js';
-import { discover, defaultRoots } from '../utils/discover.js';
+import { discover, defaultRoots, originOf, pickShortest } from '../utils/discover.js';
+import { canonicalRepoName } from '../utils/remote.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 
-/** Deterministic fallback: shortest path, ties broken by sort order. */
-export function pickShortest(candidates: string[]): string {
-  return [...candidates].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+/**
+ * Fold this scan's results into what was already known.
+ *
+ * A scan sees only `searchRoots`, so replacing the map wholesale deletes every
+ * repo that lives outside them — `vast clone --into ~/side` followed by a plain
+ * `vast init` used to lose the lot. Discovery wins for what it found; anything
+ * it did not find survives only if that path still exists AND still resolves to
+ * that repo, so genuinely stale entries are still cleared out.
+ */
+export function mergeRepos(
+  existing: Record<string, string>,
+  discovered: Record<string, string>,
+): Record<string, string> {
+  const merged: Record<string, string> = { ...discovered };
+
+  for (const [name, dir] of Object.entries(existing)) {
+    if (merged[name]) continue;
+    if (!existsSync(dir)) continue;
+    const origin = originOf(dir);
+    if (origin && canonicalRepoName(origin) === name) merged[name] = dir;
+  }
+
+  return merged;
 }
 
 export async function resolveCandidates(
@@ -60,25 +82,28 @@ async function executeInit(options: { rescan: boolean }): Promise<void> {
   const map = discover(roots);
   spinner?.stop();
 
-  if (map.size === 0) {
-    log.warn('No Vast repos found.');
-    log.info('Clone what your team needs with:  vast clone --team frontend');
-    writeConfig({ repos: {}, searchRoots: roots, discoveredAt: new Date().toISOString() });
-    return;
-  }
+  const scanned = await resolveCandidates(map, Boolean(process.stdout.isTTY));
+  const resolved = mergeRepos(existing.repos, scanned);
 
-  const resolved = await resolveCandidates(map, Boolean(process.stdout.isTTY));
-
+  // Remember only roots that actually contain something — including the ones
+  // surviving entries live in, which is how a `--into` destination stays known.
+  // With nothing found at all, keep what we swept so the next run is no blinder.
+  const parents = [...new Set(Object.values(resolved).map((p) => dirname(p)))];
   writeConfig({
     repos: resolved,
-    // Remember only roots that actually contained something.
-    searchRoots: [...new Set(Object.values(resolved).map((p) => dirname(p)))],
+    searchRoots: parents.length ? parents : roots,
     discoveredAt: new Date().toISOString(),
   });
 
+  if (Object.keys(resolved).length === 0) {
+    log.warn('No Vast repos found.');
+    log.info('Clone what your team needs with:  vast clone --team frontend');
+    return;
+  }
+
   const found = Object.keys(resolved).length;
   log.success(`Found ${found} of ${REPOS.length} repos`);
-  for (const [name, dir] of Object.entries(resolved)) {
+  for (const [name, dir] of Object.entries(resolved).sort(([a], [b]) => a.localeCompare(b))) {
     console.log(`  ${name.padEnd(22)} ${log.dim(dir)}`);
   }
 

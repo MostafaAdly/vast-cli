@@ -25,13 +25,32 @@ import {
   getEnvName,
 } from '../utils/github.js';
 import { createHeader, createErrorBox, createSpinner, log } from '../utils/ui.js';
-import { defaultRepoDir } from './promote.js';
+import { repoDir } from '../config/workspace.js';
 
 export interface DeployOutcome {
   repo: string;
   version: string;
   status: 'released' | 'skipped' | 'failed';
   detail: string;
+}
+
+/**
+ * The outcome for a repo that is not on this machine.
+ *
+ * Not being cloned is a normal state on a portable CLI — a frontend teammate
+ * has no backend checkouts — so a sweep skips it. Naming that repo explicitly
+ * is different: the user asked for something specific they do not have, and
+ * that IS an error.
+ */
+export function notClonedOutcome(repo: string, all: boolean): DeployOutcome {
+  return {
+    repo,
+    version: '—',
+    status: all ? 'skipped' : 'failed',
+    detail: all
+      ? 'not cloned — get it with `vast clone`'
+      : 'not cloned — run `vast init`, or clone it with `vast clone`',
+  };
 }
 
 /**
@@ -182,14 +201,9 @@ async function executeDeploy(repoName: string | undefined, options: DeployOption
 
   const outcomes: DeployOutcome[] = [];
   for (const repo of targets) {
-    const dir = options.dir ?? defaultRepoDir(repo);
+    const dir = repoDir(repo, options.dir);
     if (!dir) {
-      outcomes.push({
-        repo: repo.name,
-        version: '—',
-        status: 'failed',
-        detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
-      });
+      outcomes.push(notClonedOutcome(repo.name, options.all));
       continue;
     }
     const stagingHelm = repo.helm.staging;

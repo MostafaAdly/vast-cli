@@ -15,7 +15,6 @@ import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
 import { type ReleaseKind } from '../utils/release-branch.js';
 import type { BodyMode } from '../utils/changelog.js';
-export declare function defaultRepoDir(repo: RepoConfig): string | null;
 /** @returns true when the promotion completed (or would have, under dryRun). */
 export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string, bodyMode?: BodyMode): boolean;
 export declare function registerPromoteCommand(program: Command): void;

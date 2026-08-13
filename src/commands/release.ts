@@ -13,8 +13,9 @@ import { Command } from 'commander';
 import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
 import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
-import { promote, defaultRepoDir } from './promote.js';
-import { deployOne, printSummary, type DeployOutcome } from './deploy.js';
+import { promote } from './promote.js';
+import { repoDir } from '../config/workspace.js';
+import { deployOne, notClonedOutcome, printSummary, type DeployOutcome } from './deploy.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
 interface ReleaseOptions {
@@ -29,15 +30,8 @@ interface ReleaseOptions {
 }
 
 async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<DeployOutcome> {
-  const dir = options.dir ?? defaultRepoDir(repo);
-  if (!dir) {
-    return {
-      repo: repo.name,
-      version: '—',
-      status: 'failed',
-      detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
-    };
-  }
+  const dir = repoDir(repo, options.dir);
+  if (!dir) return notClonedOutcome(repo.name, options.all);
 
   if (!repo.workflow) {
     return { repo: repo.name, version: '—', status: 'skipped', detail: 'no deploy workflow exists' };

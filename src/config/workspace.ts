@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { canonicalRepoName } from '../utils/remote.js';
-import { discover, defaultRoots, originOf } from '../utils/discover.js';
+import { discover, defaultRoots, originOf, pickShortest } from '../utils/discover.js';
+import type { RepoConfig } from './repos.js';
 
 export interface VastConfig {
   /** Canonical repo name -> absolute path of the checkout. */
@@ -59,6 +60,27 @@ export function setRepoPath(name: string, dir: string): void {
   writeConfig(config);
 }
 
+/** Drop an entry that no longer describes anything on this machine. */
+export function forgetRepoPath(name: string): void {
+  const config = readConfig();
+  if (!(name in config.repos)) return;
+  delete config.repos[name];
+  writeConfig(config);
+}
+
+/**
+ * Remember a directory future discovery must sweep.
+ *
+ * `vast clone --into ~/side` puts repos somewhere no heuristic would guess, so
+ * the destination has to be recorded or the next `vast init` cannot see them.
+ */
+export function addSearchRoot(dir: string): void {
+  const config = readConfig();
+  if (config.searchRoots.includes(dir)) return;
+  config.searchRoots.push(dir);
+  writeConfig(config);
+}
+
 export function cachedRepoPath(name: string): string | undefined {
   return readConfig().repos[name];
 }
@@ -68,7 +90,11 @@ export function cachedRepoPath(name: string): string | undefined {
  *
  * Trusts the cache only when the directory still exists AND still has a
  * matching origin — a moved or repurposed clone must not become a permanent
- * dead end. On a miss it re-scans and repairs the entry for just this repo.
+ * dead end. On a miss it re-scans and repairs the entry for just this repo;
+ * persisting that repair is the point, so later runs skip the sweep entirely.
+ *
+ * When the re-scan also comes up empty, the dead entry is deleted rather than
+ * left to fail the same way on every future call.
  */
 export function resolveRepoDir(name: string): string | null {
   const config = readConfig();
@@ -81,9 +107,23 @@ export function resolveRepoDir(name: string): string | null {
 
   const roots = config.searchRoots.length ? config.searchRoots : defaultRoots();
   const found = discover(roots).get(name);
-  if (!found?.length) return null;
+  if (!found?.length) {
+    if (cached !== undefined) forgetRepoPath(name);
+    return null;
+  }
 
-  const dir = [...found].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+  const dir = pickShortest(found);
   setRepoPath(name, dir);
   return dir;
+}
+
+/**
+ * A repo's checkout path, honouring an explicit `--dir` override.
+ *
+ * The one resolution entry point for commands — `status`, `promote`, `deploy`,
+ * and `release` all need exactly this, and two spellings of it drifted apart
+ * once already.
+ */
+export function repoDir(repo: RepoConfig, override?: string): string | null {
+  return override ?? resolveRepoDir(repo.name);
 }

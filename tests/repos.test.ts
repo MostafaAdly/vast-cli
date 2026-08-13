@@ -109,6 +109,8 @@ test('nine of the twelve repos are releasable', () => {
   assert.equal(REPOS.filter(isReleasable).length, 9, 'Vast-Finance has no workflow or Helm');
 });
 
+// Copy before sorting: TEAMS is exported module state, and sorting it in place
+// reorders it for every test that runs after this one.
 test('TEAMS lists the profiles offered', () => {
-  assert.deepEqual(TEAMS.sort(), ['all', 'backend', 'frontend', 'infra']);
+  assert.deepEqual([...TEAMS].sort(), ['all', 'backend', 'frontend', 'infra']);
 });

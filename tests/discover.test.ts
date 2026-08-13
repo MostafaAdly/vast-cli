@@ -1,10 +1,20 @@
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findCheckouts, originOf, discover, PRUNE } from '../src/utils/discover.js';
+import {
+  findCheckouts,
+  originOf,
+  discover,
+  clearDiscoveryCache,
+  pickShortest,
+  PRUNE,
+} from '../src/utils/discover.js';
+
+// Sweeps are memoized per process; every case below builds its checkouts fresh.
+beforeEach(() => clearDiscoveryCache());
 
 /** A directory that is a real git repo with the given origin. */
 function makeRepo(parent: string, name: string, origin: string): string {
@@ -99,6 +109,58 @@ test('records every candidate when two checkouts claim one repo', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// A sweep walks every root and spawns a `git remote get-url` per checkout, and
+// `vast clone --team all` resolves twelve repos in one run. Without the memo
+// that is twelve full sweeps of the disk.
+test('sweeps the same roots only once per process', () => {
+  const root = sandbox();
+  try {
+    makeRepo(root, 'first', 'https://github.com/vast-menu/vastpaypwa');
+    assert.deepEqual([...discover([root]).keys()], ['VastPayPwa']);
+
+    makeRepo(root, 'second', 'https://github.com/vast-menu/vastmenupwa');
+    assert.deepEqual([...discover([root]).keys()], ['VastPayPwa'], 'second call must not re-walk');
+
+    clearDiscoveryCache();
+    assert.deepEqual([...discover([root]).keys()].sort(), ['VastMenuPwa', 'VastPayPwa']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('root order does not defeat the memo', () => {
+  const root = sandbox();
+  const other = sandbox();
+  try {
+    makeRepo(root, 'one', 'https://github.com/vast-menu/vastpaypwa');
+    const first = discover([root, other]);
+    assert.equal(discover([other, root]), first, 'same roots, either order, one sweep');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+// Shared with `vast init` so a lazy repair can never pick a different checkout
+// than init would have.
+test('picks the shortest path when several checkouts claim one repo', () => {
+  assert.equal(
+    pickShortest(['/a/very/long/path/vastmenu-api-test', '/a/vastmenu-api']),
+    '/a/vastmenu-api',
+  );
+});
+
+test('ties break deterministically on sort order, never at random', () => {
+  const a = pickShortest(['/x/bbb', '/x/aaa']);
+  const b = pickShortest(['/x/aaa', '/x/bbb']);
+  assert.equal(a, b);
+  assert.equal(a, '/x/aaa');
+});
+
+test('a single candidate is returned as-is', () => {
+  assert.equal(pickShortest(['/only/one']), '/only/one');
 });
 
 test('prune list covers the obvious noise', () => {

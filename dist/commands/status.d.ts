@@ -6,7 +6,5 @@
  * checkout-pull-look loop.
  */
 import { Command } from 'commander';
-import { type RepoConfig } from '../config/repos.js';
-export declare function repoDir(repo: RepoConfig, override?: string): string | null;
 export declare function registerStatusCommand(program: Command): void;
 //# sourceMappingURL=status.d.ts.map

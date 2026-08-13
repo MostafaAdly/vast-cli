@@ -8,13 +8,10 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { REPOS, getRepo, isReleasable } from '../config/repos.js';
-import { resolveRepoDir } from '../config/workspace.js';
+import { repoDir } from '../config/workspace.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
-export function repoDir(repo, override) {
-    return override ?? resolveRepoDir(repo.name);
-}
 /** The remote-tracking branches this repo's row is built from. */
 function branchesRead(repo) {
     const branches = ['staging', 'production'];

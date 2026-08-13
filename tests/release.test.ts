@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { releaseTargets } from '../src/commands/release.js';
+import { notClonedOutcome } from '../src/commands/deploy.js';
 
 // Regression: `vast release --all` must never include an unreleasable repo.
 // It previously iterated the raw REPOS list, so an unreleasable repo
@@ -24,4 +25,15 @@ test('a named repo is targeted regardless of releasability', () => {
 
 test('an unknown repo name targets nothing', () => {
   assert.deepEqual(releaseTargets('NotARepo', false), []);
+});
+
+// `vast release --all` shares deploy's outcome shape, and the same rule: a
+// releasable repo you were never meant to have is skipped, not failed, so a
+// frontend teammate's sweep does not exit 1 over the backend repos.
+test('an uncloned repo is skipped during a sweep, not failed', () => {
+  assert.equal(notClonedOutcome('VastMenu-BackEnd', true).status, 'skipped');
+});
+
+test('an uncloned repo the user named explicitly is a failure', () => {
+  assert.equal(notClonedOutcome('VastMenu-BackEnd', false).status, 'failed');
 });

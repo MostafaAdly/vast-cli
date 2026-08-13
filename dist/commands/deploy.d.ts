@@ -17,6 +17,15 @@ export interface DeployOutcome {
     detail: string;
 }
 /**
+ * The outcome for a repo that is not on this machine.
+ *
+ * Not being cloned is a normal state on a portable CLI — a frontend teammate
+ * has no backend checkouts — so a sweep skips it. Naming that repo explicitly
+ * is different: the user asked for something specific they do not have, and
+ * that IS an error.
+ */
+export declare function notClonedOutcome(repo: string, all: boolean): DeployOutcome;
+/**
  * The version to deploy to `env`, given the tag currently on staging.
  *
  * Production ships what has been baking in staging, with the candidate suffix

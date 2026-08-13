@@ -62,7 +62,11 @@ export function findCheckouts(root, maxDepth = MAX_DEPTH) {
             return; // a checkout does not contain other checkouts we care about
         }
         for (const entry of entries) {
-            if (!entry.isDirectory() || entry.isSymbolicLink())
+            // Symlinks are skipped as a consequence: with `withFileTypes`, a symlink
+            // to a directory reports isDirectory() === false (the type comes from
+            // the link itself, not its target). Deliberate — following them invites
+            // cycles and duplicate checkouts. Do not "fix" this by resolving links.
+            if (!entry.isDirectory())
                 continue;
             if (PRUNE.has(entry.name))
                 continue;
@@ -86,11 +90,36 @@ export function originOf(dir) {
     }
 }
 /**
+ * Per-process memo of {@link discover}, keyed by the roots swept.
+ *
+ * A sweep walks every root and spawns `git remote get-url` per checkout found,
+ * so it is by far the most expensive thing this CLI does. Callers resolve many
+ * repos in one run (`vast clone --team all` resolves 12, `deploy --all` one per
+ * repo) and every one of them would otherwise re-walk the whole disk.
+ *
+ * Process-scoped on purpose: a single command run sees a consistent filesystem,
+ * and nothing is carried across runs.
+ */
+const sweeps = new Map();
+/** Forget memoized sweeps — for tests that create checkouts between calls. */
+export function clearDiscoveryCache() {
+    sweeps.clear();
+}
+/**
  * @returns canonical repo name -> every checkout claiming it. More than one is
  * a real state, not an error, so all candidates are kept for the caller to
  * resolve.
+ *
+ * Memoized per process; call {@link clearDiscoveryCache} after creating or
+ * cloning a checkout. The returned map is shared, so callers must not mutate it.
  */
 export function discover(roots) {
+    // NUL joins the sorted roots because it is the one byte a path cannot
+    // contain, so two different root lists can never collide on one key.
+    const key = [...roots].sort().join('\0');
+    const memo = sweeps.get(key);
+    if (memo)
+        return memo;
     const map = new Map();
     for (const root of roots) {
         for (const dir of findCheckouts(root)) {
@@ -103,7 +132,19 @@ export function discover(roots) {
             map.set(name, [...(map.get(name) ?? []), dir]);
         }
     }
+    sweeps.set(key, map);
     return map;
+}
+/**
+ * Deterministic pick when several checkouts claim one repo: shortest path,
+ * ties broken by sort order.
+ *
+ * Shared by `vast init`'s non-interactive fallback and the lazy repair in
+ * workspace.ts, which must agree — a repair that picked differently from init
+ * would silently move a repo out from under the user.
+ */
+export function pickShortest(candidates) {
+    return [...candidates].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
 }
 /** $HOME-relative likely roots, as absolute paths that exist. */
 export function defaultRoots() {

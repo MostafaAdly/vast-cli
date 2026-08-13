@@ -15,15 +15,12 @@ import { Option } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo } from '../config/repos.js';
-import { resolveRepoDir } from '../config/workspace.js';
+import { repoDir } from '../config/workspace.js';
 import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush } from '../utils/git.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { stripRc } from '../utils/version.js';
 import { cutReleaseBranch, RELEASE_KINDS } from '../utils/release-branch.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
-export function defaultRepoDir(repo) {
-    return resolveRepoDir(repo.name);
-}
 /** @returns true when the promotion completed (or would have, under dryRun). */
 export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, bodyMode = 'changelog') {
     // Deliberately NOT gated on the production lock. Cutting a branch and opening
@@ -117,7 +114,7 @@ async function executePromote(repoName, options) {
         : options.summarize || options.llm
             ? 'summarize'
             : 'changelog';
-    const dir = options.dir ?? defaultRepoDir(repo);
+    const dir = repoDir(repo, options.dir);
     if (!dir) {
         console.log(createErrorBox(`${repo.name} is not cloned`, 'Run `vast init`, or clone it with `vast clone`.'));
         process.exit(1);

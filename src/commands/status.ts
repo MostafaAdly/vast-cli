@@ -10,14 +10,10 @@ import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
-import { resolveRepoDir } from '../config/workspace.js';
+import { repoDir } from '../config/workspace.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
-
-export function repoDir(repo: RepoConfig, override?: string): string | null {
-  return override ?? resolveRepoDir(repo.name);
-}
 
 interface Row {
   name: string;

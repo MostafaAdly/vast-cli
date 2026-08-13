@@ -12,8 +12,8 @@ import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { getRepo, reposForTeam, TEAMS, type RepoConfig } from '../config/repos.js';
-import { resolveRepoDir, setRepoPath } from '../config/workspace.js';
-import { readConfig } from '../config/workspace.js';
+import { addSearchRoot, readConfig, resolveRepoDir, setRepoPath } from '../config/workspace.js';
+import { clearDiscoveryCache } from '../utils/discover.js';
 import { ORG } from '../utils/remote.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
@@ -106,6 +106,11 @@ async function executeClone(
     try {
       execFileSync('gh', ['repo', 'clone', `${ORG}/${repo.name}`, dest], { stdio: 'inherit' });
       setRepoPath(repo.name, dest);
+      // The destination has to become a search root, or the next `vast init`
+      // scans without it, fails to find what we just cloned, and drops it.
+      addSearchRoot(into);
+      // A new checkout on disk invalidates any sweep already memoized.
+      clearDiscoveryCache();
       log.success(`${repo.name} -> ${dest}`);
     } catch {
       log.error(`${repo.name}: clone failed`);

@@ -8,9 +8,15 @@ import { join } from 'node:path';
 const SANDBOX = mkdtempSync(join(tmpdir(), 'vast-ws-'));
 process.env.VAST_CLI_HOME = SANDBOX;
 
-const { readConfig, writeConfig, setRepoPath, cachedRepoPath, configPath } = await import(
-  '../src/config/workspace.js'
-);
+const {
+  readConfig,
+  writeConfig,
+  setRepoPath,
+  forgetRepoPath,
+  addSearchRoot,
+  cachedRepoPath,
+  configPath,
+} = await import('../src/config/workspace.js');
 
 test('config lives under VAST_CLI_HOME', () => {
   assert.equal(configPath(), join(SANDBOX, 'config.json'));
@@ -36,6 +42,38 @@ test('setRepoPath merges without dropping the rest', () => {
   assert.equal(c.repos.VastPayPwa, '/a/b');
   assert.equal(c.repos.VastMenuPwa, '/c/d');
   assert.deepEqual(c.searchRoots, ['/a'], 'searchRoots must survive');
+});
+
+test('forgetRepoPath drops one entry and leaves the rest alone', () => {
+  writeConfig({ repos: { VastPayPwa: '/a/b', VastMenuPwa: '/c/d' }, searchRoots: ['/a'] });
+  forgetRepoPath('VastPayPwa');
+  const c = readConfig();
+  assert.equal('VastPayPwa' in c.repos, false);
+  assert.equal(c.repos.VastMenuPwa, '/c/d');
+  assert.deepEqual(c.searchRoots, ['/a'], 'searchRoots must survive');
+});
+
+test('forgetting an unknown repo is a no-op', () => {
+  writeConfig({ repos: { VastPayPwa: '/a/b' }, searchRoots: ['/a'] });
+  forgetRepoPath('Nope');
+  assert.deepEqual(readConfig().repos, { VastPayPwa: '/a/b' });
+});
+
+// `vast clone --into ~/side` records the destination this way, so the next
+// `vast init` sweeps it instead of losing everything cloned there.
+test('addSearchRoot records a destination once and only once', () => {
+  writeConfig({ repos: {}, searchRoots: ['/one'] });
+  addSearchRoot('/two');
+  addSearchRoot('/two');
+  assert.deepEqual(readConfig().searchRoots, ['/one', '/two']);
+});
+
+test('addSearchRoot leaves the repo map alone', () => {
+  writeConfig({ repos: { VastPayPwa: '/a/b' }, searchRoots: [] });
+  addSearchRoot('/side');
+  const c = readConfig();
+  assert.deepEqual(c.repos, { VastPayPwa: '/a/b' });
+  assert.deepEqual(c.searchRoots, ['/side']);
 });
 
 test('cachedRepoPath returns the stored path', () => {
