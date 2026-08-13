@@ -19,6 +19,16 @@ export declare class VastCli {
      */
     private registerCommands;
     /**
+     * Show a cached update hint, and detach a refresh if one is due.
+     *
+     * Both halves are free. The hint is read from a local file, and the refresh
+     * runs in a detached child that this process does not wait on — so a slow or
+     * unreachable GitHub cannot add a millisecond to any command. It also runs
+     * BEFORE the command rather than after, because most commands end in
+     * process.exit() and anything after would never execute.
+     */
+    private maybeCheckForUpdates;
+    /**
      * Run the CLI
      */
     run(): Promise<void>;
