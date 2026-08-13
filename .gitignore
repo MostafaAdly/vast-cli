@@ -1,0 +1,18 @@
+# Dependencies — fetched by `npm install`, never committed.
+node_modules/
+
+# NOTE: dist/ is deliberately NOT ignored. bin/vast.js loads from it, so the
+# committed build is what makes the CLI runnable straight from a clone.
+# Rebuild with `npm run build` before committing source changes.
+
+# Subagent-driven-development scratch space
+.superpowers/
+
+# Logs and OS noise
+*.log
+npm-debug.log*
+.DS_Store
+
+# Editor
+.idea/
+*.swp
