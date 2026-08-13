@@ -26,5 +26,11 @@ export declare function versionFor(env: 'staging' | 'production', stagingTag: st
 export declare function confirmProduction(repo: string, version: string): Promise<boolean>;
 export declare function deployOne(repo: RepoConfig, env: 'staging' | 'production', version: string, dryRun: boolean): Promise<DeployOutcome>;
 export declare function printSummary(outcomes: DeployOutcome[], env: string): void;
+/**
+ * Repos `vast deploy` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export declare function deployTargets(repoName: string | undefined, all: boolean): RepoConfig[];
 export declare function registerDeployCommand(program: Command): void;
 //# sourceMappingURL=deploy.d.ts.map

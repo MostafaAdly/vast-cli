@@ -14,6 +14,10 @@ import { colors } from './ui.js';
 import { isProductionEnabled } from '../config/production-lock.js';
 /** Target width. Keeps the screen intact in an 80-column terminal. */
 export const WIDTH = 76;
+const SETUP = [
+    { left: 'init', right: 'Find your Vast checkouts and remember where they are' },
+    { left: 'clone', right: 'Clone the repos your team needs' },
+];
 const INSPECT = [
     { left: 'status', right: 'Deployed versions and branch drift, all repos' },
 ];
@@ -71,7 +75,7 @@ export function lockState() {
         : `${colors.success('● LOCKED')} ${colors.muted('— production deploys refused')}`;
 }
 export function renderRootHelp(version) {
-    const cmdWidth = columnWidth([...INSPECT, ...SHIP, { left: 'production', right: '' }]);
+    const cmdWidth = columnWidth([...SETUP, ...INSPECT, ...SHIP, { left: 'production', right: '' }]);
     const exWidth = columnWidth(EXAMPLES);
     return [
         '',
@@ -80,6 +84,9 @@ export function renderRootHelp(version) {
         '',
         heading('THE EVERYDAY FLOW'),
         flowDiagram(),
+        '',
+        heading('SETUP'),
+        ...SETUP.map((r) => commandRow(r, cmdWidth)),
         '',
         heading('INSPECT'),
         ...INSPECT.map((r) => commandRow(r, cmdWidth)),

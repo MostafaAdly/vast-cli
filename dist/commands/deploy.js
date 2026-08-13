@@ -9,7 +9,7 @@
  * dispatches on, and the production lock guarding it.
  */
 import inquirer from 'inquirer';
-import { REPOS, getRepo } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable } from '../config/repos.js';
 import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
@@ -107,6 +107,16 @@ export function printSummary(outcomes, env) {
             (failed.length ? `\n${failed.map((o) => `✗ ${o.repo} — ${o.detail}`).join('\n')}` : ''));
     }
 }
+/**
+ * Repos `vast deploy` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export function deployTargets(repoName, all) {
+    return all
+        ? REPOS.filter(isReleasable)
+        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+}
 async function executeDeploy(repoName, options) {
     if (options.to !== 'staging' && options.to !== 'production') {
         log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
@@ -116,9 +126,7 @@ async function executeDeploy(repoName, options) {
         console.log(createErrorBox('Production deploys are locked', PRODUCTION_LOCKED_MESSAGE));
         process.exit(1);
     }
-    const targets = options.all
-        ? REPOS
-        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+    const targets = deployTargets(repoName, options.all);
     if (targets.length === 0) {
         log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
         process.exit(1);
@@ -127,6 +135,15 @@ async function executeDeploy(repoName, options) {
     const outcomes = [];
     for (const repo of targets) {
         const dir = options.dir ?? defaultRepoDir(repo);
+        if (!dir) {
+            outcomes.push({
+                repo: repo.name,
+                version: '—',
+                status: 'failed',
+                detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
+            });
+            continue;
+        }
         const stagingHelm = repo.helm.staging;
         let version;
         if (options.targetVersion) {

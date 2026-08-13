@@ -8,7 +8,7 @@
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one.
  */
-import { REPOS, getRepo } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable } from '../config/repos.js';
 import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { promote, defaultRepoDir } from './promote.js';
@@ -16,6 +16,14 @@ import { deployOne, printSummary } from './deploy.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 async function releaseOne(repo, options) {
     const dir = options.dir ?? defaultRepoDir(repo);
+    if (!dir) {
+        return {
+            repo: repo.name,
+            version: '—',
+            status: 'failed',
+            detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
+        };
+    }
     if (!repo.workflow) {
         return { repo: repo.name, version: '—', status: 'skipped', detail: 'no deploy workflow exists' };
     }
@@ -50,6 +58,16 @@ async function releaseOne(repo, options) {
     }
     return deployOne(repo, 'staging', version, options.dryRun);
 }
+/**
+ * Repos `vast release` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export function releaseTargets(repoName, all) {
+    return all
+        ? REPOS.filter(isReleasable)
+        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+}
 async function executeRelease(repoName, options) {
     if (options.bump && options.targetVersion) {
         log.error('--bump and --target-version are mutually exclusive.');
@@ -68,9 +86,7 @@ async function executeRelease(repoName, options) {
             'The promote works any time; only the deploy needs `vast production enable`.'));
         process.exit(1);
     }
-    const targets = options.all
-        ? REPOS
-        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+    const targets = releaseTargets(repoName, options.all);
     if (targets.length === 0) {
         log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
         process.exit(1);
