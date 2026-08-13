@@ -9,7 +9,7 @@
 import { execFileSync } from 'child_process';
 import { existsSync, readdirSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { canonicalRepoName } from './remote.js';
 
 /** Directory names, relative to $HOME, checked before sweeping wider. */
@@ -159,4 +159,30 @@ export function pickShortest(candidates: string[]): string {
 /** $HOME-relative likely roots, as absolute paths that exist. */
 export function defaultRoots(): string[] {
   return LIKELY_ROOTS.map((r) => join(homedir(), r)).filter((p) => existsSync(p));
+}
+
+/**
+ * Directories too broad to scan from. Walking `/` or `$HOME` at depth 4 sweeps
+ * an entire machine, so the current directory is only added as a search root
+ * when it is somewhere specific.
+ */
+export function isTooBroadToScan(dir: string): boolean {
+  const resolved = resolve(dir);
+  return resolved === '/' || resolved === homedir() || resolved === resolve(homedir(), '..');
+}
+
+/**
+ * Search roots for a scan, given extra roots the user named and where they are
+ * standing.
+ *
+ * The current directory is included because `cd` into your repos and run
+ * `vast init` is what people actually try — and without it the command ignores
+ * where you are entirely, which reads as "it found nothing and I don't know
+ * why". Explicit --root paths are always honoured, even broad ones: asking for
+ * a directory by name is a deliberate act.
+ */
+export function rootsFor(extra: string[], cwd: string, base: string[]): string[] {
+  const roots = [...base, ...extra.map((r) => resolve(r))];
+  if (!isTooBroadToScan(cwd)) roots.push(resolve(cwd));
+  return [...new Set(roots)].filter((p) => existsSync(p));
 }
