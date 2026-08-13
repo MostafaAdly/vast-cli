@@ -34,8 +34,8 @@ jobs:
 
       - name: Verify the bundle actually runs
         run: |
-          node build/vast.js --version
-          node build/vast.js --help > /dev/null
+          node build/vast.mjs --version
+          node build/vast.mjs --help > /dev/null
 
       - name: Check the tag matches package.json
         run: |
@@ -49,6 +49,6 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: build/vast.js
+          files: build/vast.mjs
           generate_release_notes: true
           fail_on_unmatched_files: true

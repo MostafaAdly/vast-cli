@@ -15,7 +15,10 @@ set -euo pipefail
 REPO="MostafaAdly/vast-cli"
 HOME_DIR="${VAST_CLI_HOME:-$HOME/.vast-cli}"
 BIN_DIR="${VAST_BIN_DIR:-$HOME/.local/bin}"
-ASSET="vast.js"
+# .mjs, not .js. The bundle is ESM. Node 22 sniffs module syntax in a .js file,
+# but Node 18 and 20 do not and would throw "Cannot use import statement outside
+# a module" — and this installer advertises Node >= 18.
+ASSET="vast.mjs"
 
 # Colour only on a terminal. Installers get piped and logged constantly.
 if [ -t 1 ]; then
@@ -91,8 +94,14 @@ ok "release $TAG"
 # ------------------------------------------------------------------ download
 URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 mkdir -p "$HOME_DIR" "$BIN_DIR"
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+
+# A temp DIRECTORY so the file can keep its .mjs extension. `mktemp` alone gives
+# an extensionless path, and `node --check` on one fails with
+# ERR_UNKNOWN_FILE_EXTENSION because it cannot infer the module format — which
+# made this validation reject every download.
+TMPD="$(mktemp -d)"
+TMP="$TMPD/$ASSET"
+trap 'rm -rf "$TMPD"' EXIT
 
 curl -fsSL "$URL" -o "$TMP" || die "Download failed: $URL"
 
@@ -104,6 +113,7 @@ if [ ! -s "$TMP" ] || ! node --check "$TMP" >/dev/null 2>&1; then
 fi
 
 mv "$TMP" "$HOME_DIR/$ASSET"
+rm -rf "$TMPD"
 trap - EXIT
 ok "installed $HOME_DIR/$ASSET"
 
