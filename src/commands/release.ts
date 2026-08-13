@@ -10,7 +10,7 @@
  */
 
 import { Command } from 'commander';
-import { REPOS, getRepo, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
 import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { promote, defaultRepoDir } from './promote.js';
@@ -75,6 +75,17 @@ async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<De
   return deployOne(repo, 'staging', version, options.dryRun);
 }
 
+/**
+ * Repos `vast release` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export function releaseTargets(repoName: string | undefined, all: boolean): RepoConfig[] {
+  return all
+    ? REPOS.filter(isReleasable)
+    : [getRepo(repoName ?? '')].filter((r): r is RepoConfig => Boolean(r));
+}
+
 async function executeRelease(
   repoName: string | undefined,
   options: ReleaseOptions,
@@ -103,9 +114,7 @@ async function executeRelease(
     process.exit(1);
   }
 
-  const targets = options.all
-    ? REPOS
-    : [getRepo(repoName ?? '')].filter((r): r is RepoConfig => Boolean(r));
+  const targets = releaseTargets(repoName, options.all);
 
   if (targets.length === 0) {
     log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');

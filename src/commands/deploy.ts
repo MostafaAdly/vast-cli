@@ -11,7 +11,7 @@
 
 import { Command } from 'commander';
 import inquirer from 'inquirer';
-import { REPOS, getRepo, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
 import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
@@ -149,6 +149,17 @@ interface DeployOptions {
   dryRun: boolean;
 }
 
+/**
+ * Repos `vast deploy` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export function deployTargets(repoName: string | undefined, all: boolean): RepoConfig[] {
+  return all
+    ? REPOS.filter(isReleasable)
+    : [getRepo(repoName ?? '')].filter((r): r is RepoConfig => Boolean(r));
+}
+
 async function executeDeploy(repoName: string | undefined, options: DeployOptions): Promise<void> {
   if (options.to !== 'staging' && options.to !== 'production') {
     log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
@@ -160,9 +171,7 @@ async function executeDeploy(repoName: string | undefined, options: DeployOption
     process.exit(1);
   }
 
-  const targets = options.all
-    ? REPOS
-    : [getRepo(repoName ?? '')].filter((r): r is RepoConfig => Boolean(r));
+  const targets = deployTargets(repoName, options.all);
 
   if (targets.length === 0) {
     log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
