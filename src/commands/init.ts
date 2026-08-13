@@ -5,6 +5,7 @@
  * machine regardless of where repos were cloned or what they were named.
  */
 
+import { dirname } from 'path';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { REPOS } from '../config/repos.js';
@@ -71,7 +72,7 @@ async function executeInit(options: { rescan: boolean }): Promise<void> {
   writeConfig({
     repos: resolved,
     // Remember only roots that actually contained something.
-    searchRoots: [...new Set(Object.values(resolved).map((p) => p.split('/').slice(0, -1).join('/')))],
+    searchRoots: [...new Set(Object.values(resolved).map((p) => dirname(p)))],
     discoveredAt: new Date().toISOString(),
   });
 
