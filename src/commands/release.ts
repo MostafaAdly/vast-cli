@@ -30,6 +30,14 @@ interface ReleaseOptions {
 
 async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<DeployOutcome> {
   const dir = options.dir ?? defaultRepoDir(repo);
+  if (!dir) {
+    return {
+      repo: repo.name,
+      version: '—',
+      status: 'failed',
+      detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
+    };
+  }
 
   if (!repo.workflow) {
     return { repo: repo.name, version: '—', status: 'skipped', detail: 'no deploy workflow exists' };

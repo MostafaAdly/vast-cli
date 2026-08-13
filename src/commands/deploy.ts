@@ -174,6 +174,15 @@ async function executeDeploy(repoName: string | undefined, options: DeployOption
   const outcomes: DeployOutcome[] = [];
   for (const repo of targets) {
     const dir = options.dir ?? defaultRepoDir(repo);
+    if (!dir) {
+      outcomes.push({
+        repo: repo.name,
+        version: '—',
+        status: 'failed',
+        detail: 'not cloned — run `vast init`, or clone it with `vast clone`',
+      });
+      continue;
+    }
     const stagingHelm = repo.helm.staging;
 
     let version: string;

@@ -18,12 +18,6 @@ export interface RepoConfig {
   /** Canonical GitHub repo name. */
   name: string;
   /**
-   * Directory name under ~/Workshop/Work/vastgroup.
-   * NOT derivable from `name` — VastMenuPwa lives at `vastmenu-pwa`,
-   * vast-menu-payments at `vastmenu-payments`, VastPay-BackEnd at `vastpay-api`.
-   */
-  localDir: string;
-  /**
    * GitHub Actions workflow that builds the image and opens the bump PR.
    * null means the repo has no deploy workflow and cannot be released.
    */
@@ -54,12 +48,10 @@ const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' } as cons
 /** Frontend repo: develop -> staging -> production, standard Helm layout. */
 const fe = (
   name: string,
-  localDir: string,
   workflow: string | null,
   teams: string[] = ['frontend'],
 ): RepoConfig => ({
   name,
-  localDir,
   workflow,
   helm: { ...HELM },
   promoteFrom: { ...FRONTEND_PROMOTION },
@@ -67,13 +59,13 @@ const fe = (
 });
 
 export const REPOS: RepoConfig[] = [
-  fe('VastPayPwaV2', 'vastpay-pwa-v2', 'vastpaypwa-v2-ci-new'),
-  fe('VastPay-DashBoard', 'vastpay-dashboard', 'vastpay-dashboard-ci-new'),
-  fe('VastMenuPwa', 'vastmenu-pwa', 'pwa-ci-new'),
-  fe('VastMenuPwaV2', 'vastmenu-pwa-v2', 'pwa-v2-ci-new'),
-  fe('VastPayPwa', 'vastpay-pwa', 'vastpay-pwa-ci-new'),
-  fe('VastMenu-DashBoard', 'vastmenu-dashboard', 'dashboard-ci-new'),
-  fe('vast-menu-payments', 'vastmenu-payments', 'payments-ci-new'),
+  fe('VastPayPwaV2', 'vastpaypwa-v2-ci-new'),
+  fe('VastPay-DashBoard', 'vastpay-dashboard-ci-new'),
+  fe('VastMenuPwa', 'pwa-ci-new'),
+  fe('VastMenuPwaV2', 'pwa-v2-ci-new'),
+  fe('VastPayPwa', 'vastpay-pwa-ci-new'),
+  fe('VastMenu-DashBoard', 'dashboard-ci-new'),
+  fe('vast-menu-payments', 'payments-ci-new'),
 
   // Vast-Finance has no Helm directory and no CI workflow — only review bots
   // (Claude PR Review, Copilot, CodeQL). Verified via the GitHub API on
@@ -81,7 +73,6 @@ export const REPOS: RepoConfig[] = [
   // release path skips it with a reason rather than pretending it can ship.
   {
     name: 'Vast-Finance',
-    localDir: 'vast-finance',
     workflow: null,
     helm: { staging: null, production: null },
     promoteFrom: { ...FRONTEND_PROMOTION },
@@ -90,11 +81,8 @@ export const REPOS: RepoConfig[] = [
 
   // Dead `develop` — no promotion source into staging. Human PRs in these two
   // target `staging` directly.
-  // NOTE: vastmenu-api-test and vastmenu-api-rails are also clones of the
-  // VastMenu backend; `vastmenu-api` is the working one.
   {
     name: 'VastPay-BackEnd',
-    localDir: 'vastpay-api',
     workflow: 'vastpay-backend-ci-new',
     helm: { ...HELM },
     promoteFrom: { staging: null, production: 'staging' },
@@ -102,7 +90,6 @@ export const REPOS: RepoConfig[] = [
   },
   {
     name: 'VastMenu-BackEnd',
-    localDir: 'vastmenu-api',
     workflow: 'vastmenu-backend-ci-new',
     helm: { ...HELM },
     promoteFrom: { staging: null, production: 'staging' },
@@ -113,7 +100,6 @@ export const REPOS: RepoConfig[] = [
   // isReleasable() keeps them out of status, promote, and deploy.
   {
     name: 'vastpay-payment-odoo',
-    localDir: 'vastpay-payment-odoo',
     workflow: null,
     helm: { staging: null, production: null },
     promoteFrom: { staging: null, production: null },
@@ -121,7 +107,6 @@ export const REPOS: RepoConfig[] = [
   },
   {
     name: 'Terraform',
-    localDir: 'terraform',
     workflow: null,
     helm: { staging: null, production: null },
     promoteFrom: { staging: null, production: null },

@@ -28,21 +28,6 @@ test('frontend repos promote into staging from develop', () => {
   assert.equal(getRepo('VastMenuPwa')?.promoteFrom.staging, 'develop');
 });
 
-// localDir is NOT derivable from name — these are the counter-examples that
-// broke the original toLowerCase() assumption.
-test('local checkout dirs are the real ones, not derived from the repo name', () => {
-  assert.equal(getRepo('VastMenuPwa')?.localDir, 'vastmenu-pwa');
-  assert.equal(getRepo('VastPayPwa')?.localDir, 'vastpay-pwa');
-  assert.equal(getRepo('VastMenuPwaV2')?.localDir, 'vastmenu-pwa-v2');
-  assert.equal(getRepo('vast-menu-payments')?.localDir, 'vastmenu-payments');
-  assert.equal(getRepo('VastPay-BackEnd')?.localDir, 'vastpay-api');
-});
-
-test('every localDir is distinct', () => {
-  const dirs = REPOS.map((r) => r.localDir);
-  assert.equal(new Set(dirs).size, dirs.length);
-});
-
 // Vast-Finance has no Helm directory and no CI workflow — verified against the
 // GitHub API. It must be unreleasable rather than silently attempted.
 test('Vast-Finance is configured as unreleasable', () => {
@@ -120,7 +105,7 @@ test('releasable means it has a workflow and staging Helm values', () => {
   assert.equal(isReleasable(getRepo('Vast-Finance')!), false);
 });
 
-test('the ten original repos are still the releasable set', () => {
+test('nine of the twelve repos are releasable', () => {
   assert.equal(REPOS.filter(isReleasable).length, 9, 'Vast-Finance has no workflow or Helm');
 });
 

@@ -9,6 +9,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
+import { canonicalRepoName } from '../utils/remote.js';
+import { discover, defaultRoots, originOf } from '../utils/discover.js';
 
 export interface VastConfig {
   /** Canonical repo name -> absolute path of the checkout. */
@@ -59,4 +61,29 @@ export function setRepoPath(name: string, dir: string): void {
 
 export function cachedRepoPath(name: string): string | undefined {
   return readConfig().repos[name];
+}
+
+/**
+ * Absolute path of a repo's checkout, or null if it is not on this machine.
+ *
+ * Trusts the cache only when the directory still exists AND still has a
+ * matching origin — a moved or repurposed clone must not become a permanent
+ * dead end. On a miss it re-scans and repairs the entry for just this repo.
+ */
+export function resolveRepoDir(name: string): string | null {
+  const config = readConfig();
+  const cached = config.repos[name];
+
+  if (cached && existsSync(cached)) {
+    const origin = originOf(cached);
+    if (origin && canonicalRepoName(origin) === name) return cached;
+  }
+
+  const roots = config.searchRoots.length ? config.searchRoots : defaultRoots();
+  const found = discover(roots).get(name);
+  if (!found?.length) return null;
+
+  const dir = [...found].sort((a, b) => a.length - b.length || a.localeCompare(b))[0];
+  setRepoPath(name, dir);
+  return dir;
 }

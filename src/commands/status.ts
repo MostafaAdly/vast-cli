@@ -8,17 +8,15 @@
 
 import { Command } from 'commander';
 import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
-import { REPOS, getRepo, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
+import { resolveRepoDir } from '../config/workspace.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 
-export const WORKSPACE = join(homedir(), 'Workshop', 'Work', 'vastgroup');
-
-export function repoDir(repo: RepoConfig, override?: string): string {
-  return override ?? join(WORKSPACE, repo.localDir);
+export function repoDir(repo: RepoConfig, override?: string): string | null {
+  return override ?? resolveRepoDir(repo.name);
 }
 
 interface Row {
@@ -50,7 +48,7 @@ async function refreshAll(targets: RepoConfig[], dirOverride?: string): Promise<
   await Promise.all(
     targets.map(async (repo) => {
       const dir = repoDir(repo, dirOverride);
-      if (!existsSync(join(dir, '.git'))) return;
+      if (!dir || !existsSync(join(dir, '.git'))) return;
       try {
         // Only a total failure counts. A repo missing one of these branches is
         // a fact about the repo, and the row reports it as "n/a" or "?".
@@ -63,8 +61,8 @@ async function refreshAll(targets: RepoConfig[], dirOverride?: string): Promise<
   return failed;
 }
 
-function inspect(repo: RepoConfig, dir: string, fetchFailed: boolean): Row {
-  if (!existsSync(join(dir, '.git'))) {
+function inspect(repo: RepoConfig, dir: string | null, fetchFailed: boolean): Row {
+  if (!dir || !existsSync(join(dir, '.git'))) {
     return { name: repo.name, staging: '—', production: '—', drift: 'not cloned' };
   }
 
@@ -105,7 +103,7 @@ async function executeStatus(
   const targets = repoName
     ? [getRepo(repoName)].filter((r): r is RepoConfig => Boolean(r))
     : options.all
-      ? REPOS
+      ? REPOS.filter(isReleasable)
       : [];
 
   if (targets.length === 0) {
