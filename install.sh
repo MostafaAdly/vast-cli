@@ -135,11 +135,13 @@ case ":$PATH:" in
       */bash) rc="~/.bashrc" ;;
       *)      rc="your shell rc file" ;;
     esac
+    # Echo the directory actually used, not a hardcoded default — VAST_BIN_DIR
+    # can point anywhere, and printing the wrong path is worse than silence.
     say ""
     warn "$BIN_DIR is not on your PATH."
     say "    Add this to $rc, then open a new terminal:"
     say ""
-    say "      ${B}export PATH=\"\$HOME/.local/bin:\$PATH\"${RST}"
+    say "      ${B}export PATH=\"$BIN_DIR:\$PATH\"${RST}"
     ;;
 esac
 
