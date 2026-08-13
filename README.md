@@ -206,9 +206,16 @@ Everything lives in `~/.vast-cli/`:
 | `version` | The installed release tag |
 | `update-check.json` | Cached result of the daily release check |
 
-Re-scan with `vast init --rescan` after moving a repo somewhere new, or
-`vast init --root <path>` to teach it a location it does not know. Roots you name are
-saved, so you only pass them once.
+Every `vast init` searches the default locations, your saved roots, and your current
+directory — so a repo cloned into a normal place is always picked up, with no flag.
+Use `vast init --root <path>` to teach it somewhere unusual; named roots are saved, so
+you pass them once.
+
+`vast init --rescan` forgets previously saved roots while keeping the defaults, for when
+you have reorganised and old locations no longer matter.
+
+If a repo has more than one checkout, `init` asks which to use and remembers the answer.
+Later runs keep that choice rather than re-picking, even when they find the other copy.
 
 ---
 

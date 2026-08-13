@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { homedir, tmpdir } from 'node:os';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { rootsFor, isTooBroadToScan } from '../src/utils/discover.js';
+import { rootsFor, isTooBroadToScan, baseRoots, defaultRoots } from '../src/utils/discover.js';
 
 // Walking / or $HOME at depth 4 sweeps the whole machine.
 test('refuses to treat / or $HOME as a scan root', () => {
@@ -75,6 +75,27 @@ test('duplicates collapse', () => {
 
 test('roots that do not exist are dropped', () => {
   assert.deepEqual(rootsFor(['/definitely/not/here'], '/', []), []);
+});
+
+// Saved roots used to REPLACE the defaults, so once you had run init with
+// --root, a repo cloned into a normal place like ~/projects went unnoticed and
+// the only cure was a flag you had no reason to suspect you needed.
+test('the defaults are always included alongside saved roots', () => {
+  const saved = ['/some/saved/root'];
+  const roots = baseRoots(saved, false);
+  for (const d of defaultRoots()) assert.ok(roots.includes(d), `${d} must survive`);
+  assert.ok(roots.includes('/some/saved/root'));
+});
+
+test('--rescan drops the saved roots but keeps the defaults', () => {
+  const roots = baseRoots(['/some/saved/root'], true);
+  assert.ok(!roots.includes('/some/saved/root'), 'saved roots should be forgotten');
+  assert.deepEqual(roots, defaultRoots(), 'the defaults must remain');
+});
+
+test('with nothing saved, both modes are just the defaults', () => {
+  assert.deepEqual(baseRoots([], false), defaultRoots());
+  assert.deepEqual(baseRoots([], true), defaultRoots());
 });
 
 test('a nested root under an existing one is still listed', () => {

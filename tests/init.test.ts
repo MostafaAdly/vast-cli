@@ -88,10 +88,23 @@ test('an empty config is just the scan', () => {
 });
 
 /** Run `vast init` against the sandboxed config, without its console noise. */
+/**
+ * Runs `vast init` against an empty HOME.
+ *
+ * Every scan now includes the default roots under $HOME, and these fixtures use
+ * real Vast origins — so on a machine that actually has those repos checked out,
+ * the real copies would join the candidate list and win. Pointing HOME at an
+ * empty directory keeps the test about the fixtures instead of about whatever
+ * the developer happens to have cloned.
+ */
 async function runInit(): Promise<void> {
   const program = new Command();
   program.exitOverride();
   registerInitCommand(program);
+
+  const realHome = process.env.HOME;
+  const emptyHome = mkdtempSync(join(tmpdir(), 'vast-init-home-'));
+  process.env.HOME = emptyHome;
 
   const spoken = console.log;
   console.log = () => {};
@@ -99,6 +112,9 @@ async function runInit(): Promise<void> {
     await program.parseAsync(['init'], { from: 'user' });
   } finally {
     console.log = spoken;
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    rmSync(emptyHome, { recursive: true, force: true });
   }
 }
 
