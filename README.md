@@ -2,6 +2,7 @@
 
 [![release](https://img.shields.io/github/v/release/MostafaAdly/vast-cli?label=release)](https://github.com/MostafaAdly/vast-cli/releases/latest)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)](https://nodejs.org)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Release tooling for Vast Group. Replaces the hand-run `develop → staging → production`
 ritual with a few commands, and derives version numbers from what is actually deployed
@@ -244,3 +245,7 @@ New commands are registered in `src/cli.ts`; anything registered there appears i
 The bundle is ESM and ships as **`.mjs`**, deliberately. Node 22 sniffs module syntax in a
 `.js` file but Node 18 and 20 do not, and would fail with
 `Cannot use import statement outside a module`.
+
+## License
+
+[MIT](LICENSE) © Mostafa Adly
