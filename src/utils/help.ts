@@ -24,6 +24,11 @@ interface Row {
   right: string;
 }
 
+const SETUP: Row[] = [
+  { left: 'init', right: 'Find your Vast checkouts and remember where they are' },
+  { left: 'clone', right: 'Clone the repos your team needs' },
+];
+
 const INSPECT: Row[] = [
   { left: 'status', right: 'Deployed versions and branch drift, all repos' },
 ];
@@ -90,7 +95,7 @@ export function lockState(): string {
 }
 
 export function renderRootHelp(version: string): string {
-  const cmdWidth = columnWidth([...INSPECT, ...SHIP, { left: 'production', right: '' }]);
+  const cmdWidth = columnWidth([...SETUP, ...INSPECT, ...SHIP, { left: 'production', right: '' }]);
   const exWidth = columnWidth(EXAMPLES);
 
   return [
@@ -100,6 +105,9 @@ export function renderRootHelp(version: string): string {
     '',
     heading('THE EVERYDAY FLOW'),
     flowDiagram(),
+    '',
+    heading('SETUP'),
+    ...SETUP.map((r) => commandRow(r, cmdWidth)),
     '',
     heading('INSPECT'),
     ...INSPECT.map((r) => commandRow(r, cmdWidth)),
