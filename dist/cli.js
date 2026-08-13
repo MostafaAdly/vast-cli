@@ -19,8 +19,15 @@ import { registerDeployCommand } from './commands/deploy.js';
 import { registerReleaseCommand } from './commands/release.js';
 import { registerProductionCommand } from './commands/production.js';
 import { log } from './utils/ui.js';
-/** CLI version */
-const VERSION = '1.0.0';
+/**
+ * CLI version, generated from package.json by scripts/sync-version.mjs.
+ *
+ * Never hardcode it here again: `npm version` only touches package.json, so a
+ * literal silently drifts. v1.1.0 shipped reporting 1.0.0, which made the
+ * update check tell every user they were permanently out of date.
+ */
+export { VERSION } from './version.js';
+import { VERSION } from './version.js';
 /** CLI description */
 const DESCRIPTION = 'CLI toolkit for Vast-menu GitHub workflow management';
 export class VastCli {
