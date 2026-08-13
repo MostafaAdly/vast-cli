@@ -9,7 +9,7 @@
  * dispatches on, and the production lock guarding it.
  */
 import inquirer from 'inquirer';
-import { REPOS, getRepo } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable } from '../config/repos.js';
 import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
@@ -17,7 +17,25 @@ import { aheadBehind } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
 import { runWorkflow, waitForWorkflowCompletion, findPullRequest, mergePullRequest, getEnvName, } from '../utils/github.js';
 import { createHeader, createErrorBox, createSpinner, log } from '../utils/ui.js';
-import { defaultRepoDir } from './promote.js';
+import { repoDir } from '../config/workspace.js';
+/**
+ * The outcome for a repo that is not on this machine.
+ *
+ * Not being cloned is a normal state on a portable CLI — a frontend teammate
+ * has no backend checkouts — so a sweep skips it. Naming that repo explicitly
+ * is different: the user asked for something specific they do not have, and
+ * that IS an error.
+ */
+export function notClonedOutcome(repo, all) {
+    return {
+        repo,
+        version: '—',
+        status: all ? 'skipped' : 'failed',
+        detail: all
+            ? 'not cloned — get it with `vast clone`'
+            : 'not cloned — run `vast init`, or clone it with `vast clone`',
+    };
+}
 /**
  * The version to deploy to `env`, given the tag currently on staging.
  *
@@ -107,6 +125,16 @@ export function printSummary(outcomes, env) {
             (failed.length ? `\n${failed.map((o) => `✗ ${o.repo} — ${o.detail}`).join('\n')}` : ''));
     }
 }
+/**
+ * Repos `vast deploy` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export function deployTargets(repoName, all) {
+    return all
+        ? REPOS.filter(isReleasable)
+        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+}
 async function executeDeploy(repoName, options) {
     if (options.to !== 'staging' && options.to !== 'production') {
         log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
@@ -116,9 +144,7 @@ async function executeDeploy(repoName, options) {
         console.log(createErrorBox('Production deploys are locked', PRODUCTION_LOCKED_MESSAGE));
         process.exit(1);
     }
-    const targets = options.all
-        ? REPOS
-        : [getRepo(repoName ?? '')].filter((r) => Boolean(r));
+    const targets = deployTargets(repoName, options.all);
     if (targets.length === 0) {
         log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
         process.exit(1);
@@ -126,7 +152,11 @@ async function executeDeploy(repoName, options) {
     console.log(createHeader('Deploy', `${targets.length} repo(s) | → ${options.to}`));
     const outcomes = [];
     for (const repo of targets) {
-        const dir = options.dir ?? defaultRepoDir(repo);
+        const dir = repoDir(repo, options.dir);
+        if (!dir) {
+            outcomes.push(notClonedOutcome(repo.name, options.all));
+            continue;
+        }
         const stagingHelm = repo.helm.staging;
         let version;
         if (options.targetVersion) {

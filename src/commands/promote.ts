@@ -16,17 +16,13 @@ import { Command, Option } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo, type RepoConfig } from '../config/repos.js';
+import { repoDir } from '../config/workspace.js';
 import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush } from '../utils/git.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { stripRc } from '../utils/version.js';
 import { cutReleaseBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
 import type { BodyMode } from '../utils/changelog.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
-import { WORKSPACE } from './status.js';
-
-export function defaultRepoDir(repo: RepoConfig): string {
-  return join(WORKSPACE, repo.localDir);
-}
 
 /** @returns true when the promotion completed (or would have, under dryRun). */
 export function promote(
@@ -175,9 +171,17 @@ async function executePromote(
       ? 'summarize'
       : 'changelog';
 
+  const dir = repoDir(repo, options.dir);
+  if (!dir) {
+    console.log(
+      createErrorBox(`${repo.name} is not cloned`, 'Run `vast init`, or clone it with `vast clone`.'),
+    );
+    process.exit(1);
+  }
+
   const ok = promote(
     repo,
-    options.dir ?? defaultRepoDir(repo),
+    dir,
     options.to,
     options.dryRun,
     options.as,

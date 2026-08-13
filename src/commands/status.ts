@@ -8,18 +8,12 @@
 
 import { Command } from 'commander';
 import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
-import { REPOS, getRepo, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
+import { repoDir } from '../config/workspace.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
-
-export const WORKSPACE = join(homedir(), 'Workshop', 'Work', 'vastgroup');
-
-export function repoDir(repo: RepoConfig, override?: string): string {
-  return override ?? join(WORKSPACE, repo.localDir);
-}
 
 interface Row {
   name: string;
@@ -43,14 +37,17 @@ function branchesRead(repo: RepoConfig): string[] {
  * roughly one repo's latency. Failures are reported per repo rather than
  * failing the sweep.
  *
+ * @param dirs each target's resolved path (or null), pre-computed by the
+ * caller — resolution runs a subprocess and, on a cache miss, a full disk
+ * walk, so it must happen exactly once per repo, not once per call site.
  * @returns names of repos whose fetch failed.
  */
-async function refreshAll(targets: RepoConfig[], dirOverride?: string): Promise<Set<string>> {
+async function refreshAll(targets: RepoConfig[], dirs: Map<string, string | null>): Promise<Set<string>> {
   const failed = new Set<string>();
   await Promise.all(
     targets.map(async (repo) => {
-      const dir = repoDir(repo, dirOverride);
-      if (!existsSync(join(dir, '.git'))) return;
+      const dir = dirs.get(repo.name) ?? null;
+      if (!dir || !existsSync(join(dir, '.git'))) return;
       try {
         // Only a total failure counts. A repo missing one of these branches is
         // a fact about the repo, and the row reports it as "n/a" or "?".
@@ -63,8 +60,8 @@ async function refreshAll(targets: RepoConfig[], dirOverride?: string): Promise<
   return failed;
 }
 
-function inspect(repo: RepoConfig, dir: string, fetchFailed: boolean): Row {
-  if (!existsSync(join(dir, '.git'))) {
+function inspect(repo: RepoConfig, dir: string | null, fetchFailed: boolean): Row {
+  if (!dir || !existsSync(join(dir, '.git'))) {
     return { name: repo.name, staging: '—', production: '—', drift: 'not cloned' };
   }
 
@@ -105,13 +102,18 @@ async function executeStatus(
   const targets = repoName
     ? [getRepo(repoName)].filter((r): r is RepoConfig => Boolean(r))
     : options.all
-      ? REPOS
+      ? REPOS.filter(isReleasable)
       : [];
 
   if (targets.length === 0) {
     log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
     process.exit(1);
   }
+
+  // Resolved once per repo and shared by refreshAll and inspect — resolution
+  // runs a subprocess and, on a cache miss, a full disk walk, so calling it
+  // twice per repo would double that cost (or worse, double the walks).
+  const dirs = new Map(targets.map((r) => [r.name, repoDir(r, options.dir)]));
 
   let fetchFailed = new Set<string>();
   if (options.fetch) {
@@ -120,13 +122,13 @@ async function executeStatus(
     const spinner = process.stdout.isTTY
       ? createSpinner(`Refreshing ${targets.length} repo(s)...`).start()
       : null;
-    fetchFailed = await refreshAll(targets, options.dir);
+    fetchFailed = await refreshAll(targets, dirs);
     spinner?.stop();
   }
 
   console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
 
-  const rows = targets.map((r) => inspect(r, repoDir(r, options.dir), fetchFailed.has(r.name)));
+  const rows = targets.map((r) => inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name)));
 
   // Widths come from the data, not constants — real tags run long
   // ("1.1.3-rc4-health") and a fixed width silently breaks the columns.

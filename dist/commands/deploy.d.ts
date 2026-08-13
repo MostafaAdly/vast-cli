@@ -17,6 +17,15 @@ export interface DeployOutcome {
     detail: string;
 }
 /**
+ * The outcome for a repo that is not on this machine.
+ *
+ * Not being cloned is a normal state on a portable CLI — a frontend teammate
+ * has no backend checkouts — so a sweep skips it. Naming that repo explicitly
+ * is different: the user asked for something specific they do not have, and
+ * that IS an error.
+ */
+export declare function notClonedOutcome(repo: string, all: boolean): DeployOutcome;
+/**
  * The version to deploy to `env`, given the tag currently on staging.
  *
  * Production ships what has been baking in staging, with the candidate suffix
@@ -26,5 +35,11 @@ export declare function versionFor(env: 'staging' | 'production', stagingTag: st
 export declare function confirmProduction(repo: string, version: string): Promise<boolean>;
 export declare function deployOne(repo: RepoConfig, env: 'staging' | 'production', version: string, dryRun: boolean): Promise<DeployOutcome>;
 export declare function printSummary(outcomes: DeployOutcome[], env: string): void;
+/**
+ * Repos `vast deploy` acts on. `--all` is filtered to releasable repos, so an
+ * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
+ * cannot fail the whole sweep with a spurious "not cloned".
+ */
+export declare function deployTargets(repoName: string | undefined, all: boolean): RepoConfig[];
 export declare function registerDeployCommand(program: Command): void;
 //# sourceMappingURL=deploy.d.ts.map
