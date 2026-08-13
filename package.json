@@ -12,17 +12,19 @@
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:watch": "node --import tsx --test --watch tests/*.test.ts"
+    "test:watch": "node --import tsx --test --watch tests/*.test.ts",
+    "bundle": "esbuild src/cli-entry.ts --bundle --platform=node --target=node18 --format=esm --outfile=build/vast.js --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\""
   },
   "dependencies": {
+    "boxen": "^8.0.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
-    "ora": "^8.2.0",
     "inquirer": "^13.2.0",
-    "boxen": "^8.0.1"
+    "ora": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },

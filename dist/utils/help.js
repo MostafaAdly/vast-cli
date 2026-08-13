@@ -17,6 +17,7 @@ export const WIDTH = 76;
 const SETUP = [
     { left: 'init', right: 'Find your Vast checkouts and remember where they are' },
     { left: 'clone', right: 'Clone the repos your team needs' },
+    { left: 'upgrade', right: 'Update to the latest release' },
 ];
 const INSPECT = [
     { left: 'status', right: 'Deployed versions and branch drift, all repos' },

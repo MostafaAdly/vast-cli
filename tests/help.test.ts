@@ -49,7 +49,7 @@ test('lock state reflects the lock, and locked reads as the safe state', () => {
 
 test('help lists every command', () => {
   const out = plain(renderRootHelp('1.0.0'));
-  for (const cmd of ['init', 'clone', 'status', 'promote', 'release', 'deploy', 'workflow', 'production']) {
+  for (const cmd of ['init', 'clone', 'upgrade', 'status', 'promote', 'release', 'deploy', 'workflow', 'production']) {
     assert.ok(new RegExp(`\\b${cmd}\\b`).test(out), `${cmd} missing from help`);
   }
 });

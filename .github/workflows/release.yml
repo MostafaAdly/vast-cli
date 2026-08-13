@@ -1,0 +1,54 @@
+name: release
+
+# Publishing is `npm version <patch|minor|major> && git push --follow-tags`.
+# This builds the bundle that install.sh downloads, so a forgotten local build
+# can never ship stale code to the team.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      # Gate the release on a green suite. A tag that fails here produces no
+      # release, which is the correct outcome — better no release than one that
+      # installs a broken CLI over everyone's working copy.
+      - run: npm test
+      - run: npm run typecheck
+
+      - run: npm run bundle
+
+      - name: Verify the bundle actually runs
+        run: |
+          node build/vast.js --version
+          node build/vast.js --help > /dev/null
+
+      - name: Check the tag matches package.json
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "Tag $tag does not match package.json ($pkg)."
+            echo "Use 'npm version <patch|minor|major>' so the two stay in step."
+            exit 1
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/vast.js
+          generate_release_notes: true
+          fail_on_unmatched_files: true

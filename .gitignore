@@ -5,6 +5,10 @@ node_modules/
 # committed build is what makes the CLI runnable straight from a clone.
 # Rebuild with `npm run build` before committing source changes.
 
+# The single-file bundle, produced by `npm run bundle` and attached to a
+# GitHub Release by CI. Unlike dist/, it is a release artifact, not source.
+build/
+
 # Subagent-driven-development scratch space
 .superpowers/
 

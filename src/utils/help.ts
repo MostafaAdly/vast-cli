@@ -27,6 +27,7 @@ interface Row {
 const SETUP: Row[] = [
   { left: 'init', right: 'Find your Vast checkouts and remember where they are' },
   { left: 'clone', right: 'Clone the repos your team needs' },
+  { left: 'upgrade', right: 'Update to the latest release' },
 ];
 
 const INSPECT: Row[] = [

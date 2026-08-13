@@ -6,9 +6,12 @@
  */
 
 import { Command, Help } from 'commander';
+import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { renderRootHelp } from './utils/help.js';
+import { pendingHint, isDue, readState, refreshInBackground } from './utils/update-check.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerCloneCommand } from './commands/clone.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -84,6 +87,41 @@ export class VastCli {
     registerDeployCommand(this.program);
     registerWorkflowCommand(this.program);
     registerProductionCommand(this.program);
+    registerUpgradeCommand(this.program);
+
+    // Internal: refreshes the update cache and exits. Spawned detached by
+    // maybeCheckForUpdates so the network call never sits in a user's way.
+    this.program
+      .command('__update-check', { hidden: true })
+      .action(async () => {
+        await refreshInBackground(Date.now());
+      });
+  }
+
+  /**
+   * Show a cached update hint, and detach a refresh if one is due.
+   *
+   * Both halves are free. The hint is read from a local file, and the refresh
+   * runs in a detached child that this process does not wait on — so a slow or
+   * unreachable GitHub cannot add a millisecond to any command. It also runs
+   * BEFORE the command rather than after, because most commands end in
+   * process.exit() and anything after would never execute.
+   */
+  private maybeCheckForUpdates(): void {
+    try {
+      const hint = pendingHint(VERSION);
+      if (hint) log.warn(hint);
+
+      if (isDue(readState(), Date.now())) {
+        const child = spawn(process.execPath, [process.argv[1], '__update-check'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+      }
+    } catch {
+      // An update check must never be the reason a command fails.
+    }
   }
 
   /**
@@ -97,6 +135,10 @@ export class VastCli {
         this.program.outputHelp();
         return;
       }
+
+      // Skipped for the internal refresh itself, which would otherwise spawn
+      // another one and recurse.
+      if (process.argv[2] !== '__update-check') this.maybeCheckForUpdates();
 
       await this.program.parseAsync(process.argv);
     } catch (error) {
