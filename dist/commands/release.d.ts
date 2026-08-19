@@ -11,6 +11,14 @@
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
 /**
+ * Whether this repo has a develop branch to promote into staging.
+ *
+ * `vast promote <repo>` (explicit) still refuses when this is false — an
+ * explicit ask to merge develop deserves an explanation, not a silent no-op.
+ * Only `vast release` treats it as a skip.
+ */
+export declare function needsPromotion(repo: RepoConfig): boolean;
+/**
  * Repos `vast release` acts on. `--all` is filtered to releasable repos, so an
  * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
  * cannot fail the whole sweep with a spurious "not cloned".

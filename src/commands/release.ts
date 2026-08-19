@@ -29,6 +29,17 @@ interface ReleaseOptions {
   all: boolean;
 }
 
+/**
+ * Whether this repo has a develop branch to promote into staging.
+ *
+ * `vast promote <repo>` (explicit) still refuses when this is false — an
+ * explicit ask to merge develop deserves an explanation, not a silent no-op.
+ * Only `vast release` treats it as a skip.
+ */
+export function needsPromotion(repo: RepoConfig): boolean {
+  return repo.promoteFrom.staging !== null;
+}
+
 async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<DeployOutcome> {
   const dir = repoDir(repo, options.dir);
   if (!dir) return notClonedOutcome(repo.name, options.all);
@@ -42,7 +53,14 @@ async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<De
   }
 
   if (!options.skipPromote) {
-    if (!promote(repo, dir, 'staging', options.dryRun)) {
+    if (!needsPromotion(repo)) {
+      // The backend repos have no usable develop — human PRs there target
+      // staging directly. Failing the release for a promotion that cannot
+      // exist made the everyday command unusable for that team and turned
+      // every `release --all` sweep red. Skipping is not a policy change:
+      // there is nothing to promote.
+      log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
+    } else if (!promote(repo, dir, 'staging', options.dryRun)) {
       return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
     }
   }

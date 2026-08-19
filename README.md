@@ -291,6 +291,8 @@ promoted or deployed.
 
 The two `*-BackEnd` repos have no usable `develop` — human PRs there target `staging`
 directly — so `promote --to staging` refuses on them rather than regressing the branch.
+`vast release` knows this and skips the promotion step for them automatically, deploying
+what is already on staging.
 
 ## Configuration
 
