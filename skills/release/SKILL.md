@@ -33,18 +33,30 @@ This skill lives beside the CLI it drives. The helper it uses is at
 
 ## 0. Before anything: is the tool usable?
 
-Run this first on an unfamiliar machine. It is cheap and it turns three
+Run this first on an unfamiliar machine. It is cheap and it turns four
 confusing failure modes into one clear sentence.
 
 ```bash
-vast --version || echo "vast is not installed"
-gh auth status  || echo "gh is not authenticated"
+vast --version    || echo "vast is not installed"
+gh auth status    || echo "gh is not authenticated"
+vast upgrade --check
 ```
 
 - **`vast` missing** → the install one-liner is in the vast-cli README. Stop and
   say so; do not attempt a release.
 - **`gh` not authenticated** → `gh auth login`. Every `vast` command talks to
   GitHub through `gh`, so nothing will work. Stop.
+- **A newer release exists.** `vast upgrade --check` says
+  `Latest is X; you have Y`. Run `vast upgrade` now, before starting, and say
+  that you did. The instructions in this skill describe the current CLI, so
+  working against an old one is how you end up reporting behaviour that no
+  longer exists.
+
+  **Never upgrade in the middle of a release.** If work has already started —
+  a promote landed, a deploy is running, a PR is open — finish it on the version
+  you began with and upgrade afterwards. Swapping the binary mid-flow changes the
+  tool under your own feet.
+
 - **The repo is not on this machine.** `vast` reports `not cloned` rather than
   failing obscurely. Tell the user to run `vast clone --team <their team>`, or
   `vast init` if they have it checked out somewhere `vast` has not been shown

@@ -11,7 +11,7 @@ import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { vastHome } from '../config/workspace.js';
-import { readState, normalize } from '../utils/update-check.js';
+import { readState, normalize, isDue, refreshInBackground, isNewer } from '../utils/update-check.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
 const INSTALL_URL = 'https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/install.sh';
@@ -30,12 +30,22 @@ async function executeUpgrade(options: { version?: string; check: boolean }): Pr
   const installed = installedTag();
 
   if (options.check) {
-    const state = readState();
+    // Fetch when the cache cannot answer. The never-block rule governs the
+    // BACKGROUND hint; --check is an explicit question, and "no information
+    // cached yet" is not an answer — least of all on a fresh install, where the
+    // cache stays empty for a day and an agent asking "am I current?" learns
+    // nothing.
+    let state = readState();
+    if (!state?.latest || isDue(state, Date.now())) {
+      await refreshInBackground(Date.now());
+      state = readState();
+    }
+
     if (!state?.latest) {
-      log.info('No update information cached yet. Run `vast upgrade` to fetch and install the latest.');
+      log.warn('Could not reach GitHub to check for updates.');
       return;
     }
-    if (installed && normalize(state.latest) === normalize(installed)) {
+    if (installed && !isNewer(state.latest, installed)) {
       log.success(`Up to date (${normalize(installed)}).`);
       return;
     }
