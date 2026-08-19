@@ -32,6 +32,8 @@ export type BodyMode = 'changelog' | 'summarize' | 'bare';
  * `summarize` falls back to `changelog` whenever the model summary cannot be
  * produced or does not pass screening, so the body is never left empty.
  */
-export declare function releaseBody(dir: string, base: string, head: string, mode: BodyMode): string;
+export declare function releaseBody(dir: string, base: string, head: string, mode: BodyMode, opts?: {
+    selective?: boolean;
+}): string;
 export {};
 //# sourceMappingURL=changelog.d.ts.map

@@ -26,8 +26,10 @@ import {
   syncLocalBranch,
 } from '../utils/git.js';
 import { readDeployedTag } from '../utils/helm.js';
-import { stripRc } from '../utils/version.js';
-import { cutReleaseBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
+import { cutReleaseBranch, cutPickedBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
+import { resolvePicks } from '../utils/picks.js';
+import { nextPatch, stripRc } from '../utils/version.js';
+import { ORG } from '../utils/remote.js';
 import type { BodyMode } from '../utils/changelog.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
@@ -66,6 +68,7 @@ export function promote(
   kind: ReleaseKind = 'release',
   targetVersion?: string,
   bodyMode: BodyMode = 'changelog',
+  pickRefs: string[] = [],
 ): boolean {
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
   // a PR ships nothing; the lock guards the deploy that follows the merge.
@@ -96,6 +99,58 @@ export function promote(
       );
       return false;
     }
+    if (pickRefs.length > 0) {
+      const { picks, errors } = resolvePicks(dir, ORG, repo.name, pickRefs);
+      if (errors.length > 0) {
+        console.log(
+          createErrorBox(
+            `${repo.name}: ${errors.length} pick(s) cannot be promoted`,
+            errors.map((e) => `• ${e}`).join('\n'),
+          ),
+        );
+        return false;
+      }
+      if (picks.length === 0) {
+        console.log(createErrorBox(`${repo.name}: nothing to pick`, 'Every ref resolved to nothing.'));
+        return false;
+      }
+
+      let version: string;
+      if (targetVersion) {
+        version = targetVersion;
+      } else {
+        const prodHelm = repo.helm.production;
+        if (!prodHelm) {
+          console.log(
+            createErrorBox(`${repo.name}: no production Helm values`, 'Pass --target-version explicitly.'),
+          );
+          return false;
+        }
+        try {
+          // A selective promotion advances production's OWN tag — staging's
+          // version would claim content production did not receive.
+          version = nextPatch(readDeployedTag(dir, 'origin/production', prodHelm));
+        } catch (error) {
+          console.log(
+            createErrorBox(
+              `${repo.name}: cannot derive a hotfix version`,
+              `${error instanceof Error ? error.message : String(error)}\n\n` +
+                `Re-run with an explicit version:\n` +
+                `    vast promote ${repo.name} --to production --pick ... --target-version X.Y.Z`,
+            ),
+          );
+          return false;
+        }
+      }
+
+      log.info(`${repo.name}: ${picks.length} pick(s) → production, ${kind} ${version}`);
+      const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode);
+      if (url !== null) {
+        log.muted(`  after the PR is merged:  vast deploy ${repo.name} --to production --target-version ${version}`);
+      }
+      return url !== null || dryRun;
+    }
+
     const { ahead } = aheadBehind(dir, 'origin/staging', 'origin/production');
     if (ahead === 0) {
       log.info(`${repo.name}: production already contains staging. Nothing to release.`);
@@ -172,7 +227,8 @@ async function executePromote(
   repoName: string,
   options: {
     to: 'staging' | 'production';
-    as: ReleaseKind;
+    as?: ReleaseKind;
+    pick?: string[];
     dir?: string;
     targetVersion?: string;
     /** Commander sets this false when --no-changelog is passed. */
@@ -194,12 +250,21 @@ async function executePromote(
     process.exit(1);
   }
 
-  if (!RELEASE_KINDS.includes(options.as)) {
+  if (options.as !== undefined && !RELEASE_KINDS.includes(options.as)) {
     log.error(`Invalid --as value: ${options.as}. Use ${RELEASE_KINDS.join(' or ')}.`);
     process.exit(1);
   }
 
-  const label = options.to === 'production' ? `→ production (${options.as})` : '→ staging';
+  if (options.pick?.length && options.to !== 'production') {
+    log.error('--pick is production-only. Staging always promotes all of develop.');
+    process.exit(1);
+  }
+
+  // A selective promotion is definitionally a hotfix, so --pick flips the
+  // default; --as still overrides either way.
+  const kind: ReleaseKind = options.as ?? (options.pick?.length ? 'hotfix' : 'release');
+
+  const label = options.to === 'production' ? `→ production (${kind})` : '→ staging';
   console.log(createHeader('Promote', `${repo.name} | ${label}`));
   // --no-changelog wins over --summarize: asking for no description at all is
   // the more specific request.
@@ -222,9 +287,10 @@ async function executePromote(
     dir,
     options.to,
     options.dryRun,
-    options.as,
+    kind,
     options.targetVersion,
     bodyMode,
+    options.pick ?? [],
   );
   if (!ok) process.exit(1);
 }
@@ -235,7 +301,11 @@ export function registerPromoteCommand(program: Command): void {
     .description('Merge develop into staging, or open a release PR into production')
     .argument('<repository>', 'Repository name')
     .option('-t, --to <env>', 'Target environment: staging or production', 'staging')
-    .option('--as <kind>', 'Production branch kind: release or hotfix', 'release')
+    .option('--as <kind>', 'Production branch kind: release or hotfix (hotfix when --pick is used)')
+    .option(
+      '-p, --pick <ref...>',
+      'Promote only these changes: commit SHA, PR number/#number, PR link, or commit link',
+    )
     .option('-v, --target-version <version>', 'Override the derived release version')
     .option('--no-changelog', 'Open the PR with a bare description, no change summary')
     .option('-s, --summarize', 'Describe the diff with a small local model instead of commits')

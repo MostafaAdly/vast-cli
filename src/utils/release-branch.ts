@@ -17,6 +17,8 @@ import { join } from 'path';
 import { stripRc } from './version.js';
 import { trialMerge } from './git.js';
 import { releaseBody, type BodyMode } from './changelog.js';
+import { cherryPickSequence, currentBranch } from './git.js';
+import type { ResolvedPick } from './picks.js';
 import { log } from './ui.js';
 
 const ORG_NAME = 'Vast-menu';
@@ -135,6 +137,74 @@ export function cutReleaseBranch(
       // The audience is every reviewer on the team, most of whom do not use
       // this CLI. No tool instructions, no branding, no provenance note.
       releaseBody(dir, 'origin/production', branch, bodyMode),
+    ],
+    { encoding: 'utf-8' },
+  ).trim();
+
+  log.success(`${repo}: opened ${url}`);
+  return url;
+}
+
+/**
+ * The selective path: cut <kind>/<version> from production and cherry-pick the
+ * chosen commits onto it, instead of merging staging wholesale.
+ *
+ * All or nothing. A conflict aborts the pick, restores the original branch,
+ * and deletes the temp branch — the checkout ends exactly where it started.
+ *
+ * @returns the PR URL, or null if nothing was opened.
+ */
+export function cutPickedBranch(
+  dir: string,
+  repo: string,
+  kind: ReleaseKind,
+  version: string,
+  picks: ResolvedPick[],
+  dryRun: boolean,
+  bodyMode: BodyMode = 'changelog',
+): string | null {
+  const branch = releaseBranchName(kind, version);
+
+  for (const p of picks) {
+    log.info(`  pick ${p.sha.slice(0, 7)}  ${p.subject}${p.isMerge ? '  (merge, -m 1)' : ''}`);
+  }
+
+  if (dryRun) {
+    log.muted(`  (dry run — would cut ${branch}, apply ${picks.length} pick(s), and open a PR into production)`);
+    return null;
+  }
+
+  const original = currentBranch(dir);
+  git(dir, ['checkout', '-B', branch, 'origin/production']);
+
+  const applied = cherryPickSequence(dir, picks);
+  if (!applied.ok) {
+    git(dir, ['checkout', original]);
+    git(dir, ['branch', '-D', branch]);
+    const failed = picks.find((p) => p.sha === applied.failedSha);
+    log.error(`${repo}: pick ${applied.failedSha.slice(0, 7)} (${failed?.subject ?? '?'}) conflicts:`);
+    for (const f of applied.conflicts) log.error(`  • ${f}`);
+    log.error('Nothing was changed. Resolve on staging first, or pick a smaller set.');
+    return null;
+  }
+
+  git(dir, ['push', '-u', 'origin', branch]);
+
+  const url = execFileSync(
+    'gh',
+    [
+      'pr',
+      'create',
+      '--repo',
+      `${ORG_NAME}/${repo}`,
+      '--base',
+      'production',
+      '--head',
+      branch,
+      '--title',
+      `${kind}: ${version} to production`,
+      '--body',
+      releaseBody(dir, 'origin/production', branch, bodyMode, { selective: true }),
     ],
     { encoding: 'utf-8' },
   ).trim();

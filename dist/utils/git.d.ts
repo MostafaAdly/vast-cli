@@ -74,4 +74,28 @@ export declare function trialMerge(dir: string, into: string, from: string): Tri
  * reports clean.
  */
 export declare function mergeAndPush(dir: string, into: string, from: string): void;
+/** Whether `maybeAncestor` is contained in `ref`'s history. */
+export declare function isAncestor(dir: string, maybeAncestor: string, ref: string): boolean;
+export declare function refExists(dir: string, ref: string): boolean;
+export interface CherryPickFailure {
+    ok: false;
+    /** The pick that failed, so the report can name it. */
+    failedSha: string;
+    /** Conflicting paths at the moment of failure. */
+    conflicts: string[];
+}
+/**
+ * Apply a sequence of cherry-picks to the CURRENT branch, all or nothing.
+ *
+ * On the first conflict the in-progress pick is aborted, so the working tree
+ * and index end exactly as they started — the same zero-mutation promise the
+ * rest of the release chain makes. Rolling back the already-applied picks is
+ * the caller's job (it deletes the temp branch they landed on).
+ */
+export declare function cherryPickSequence(dir: string, picks: Array<{
+    sha: string;
+    isMerge: boolean;
+}>): {
+    ok: true;
+} | CherryPickFailure;
 //# sourceMappingURL=git.d.ts.map

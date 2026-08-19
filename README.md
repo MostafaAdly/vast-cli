@@ -198,6 +198,41 @@ Preparing a release ships nothing, so it is never gated — only the deploy is. 
 lock, this CLI never pushes to `production`, `prod`, `main` or `master` at all. Production
 is reached only by merging the reviewed release PR, which a human does.
 
+### Shipping only some of staging
+
+Sometimes staging carries more than you want to release. `--pick` cuts the branch from
+production and cherry-picks only the changes you name — everything else stays behind:
+
+```bash
+vast promote VastPayPwa --to production --pick 812 c51404cb   # defaults to --as hotfix
+```
+
+| A pick can be | Example |
+|---|---|
+| Commit SHA (needs a letter) | `c51404cb` |
+| Merge-commit SHA | same — `-m 1` applied automatically |
+| PR number | `812` or `#812` |
+| PR link | `https://github.com/Vast-menu/VastPayPwa/pull/812` |
+| Commit link | `https://github.com/Vast-menu/VastPayPwa/commit/c51404cb` |
+
+A bare number is always a PR number, never a short SHA. Picks apply in history order
+regardless of the order you type them, and a conflict aborts everything — branch deleted,
+checkout untouched.
+
+Rules that keep this safe: every pick must already be on `staging` (production only ever
+receives staging-baked changes) and must not already be on `production`. The version
+advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's, and
+deploying afterwards is explicit:
+
+```bash
+vast deploy VastPayPwa --to production --target-version 2.2.3
+```
+
+`--pick` works with `--as release` and `--as hotfix` alike; it just defaults to hotfix.
+Deploy's safety gate asks the same question in both flows: **is `release/X.Y.Z` or
+`hotfix/X.Y.Z` merged into production?** — so a selective release does not need staging
+to be fully shipped first.
+
 The release PR's description is built from the commit subjects being promoted, grouped
 into Features / Fixes / Improvements / Maintenance. `--summarize` instead has a small
 local model read the diff (slower, not reproducible); `--no-changelog` gives a bare

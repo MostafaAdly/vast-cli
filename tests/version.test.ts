@@ -53,3 +53,12 @@ test('bumping resets the rc to 1', () => {
   assert.equal(bump('2.1.0-rc45', 'minor'), '2.2.0-rc1');
   assert.equal(bump('2.1.0-rc45', 'major'), '3.0.0-rc1');
 });
+
+// Selective promotions advance production's own tag — staging's version would
+// claim content production did not receive.
+test('nextPatch bumps a finalised tag without an rc', async () => {
+  const { nextPatch } = await import('../src/utils/version.js');
+  assert.equal(nextPatch('2.4.0'), '2.4.1');
+  assert.equal(nextPatch('2.4.9'), '2.4.10');
+  assert.equal(nextPatch('2.4.0-rc3'), '2.4.1', 'a stray rc is stripped, not preserved');
+});

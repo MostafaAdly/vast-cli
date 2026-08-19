@@ -118,8 +118,12 @@ export function diffStat(dir, base, head) {
  * `summarize` falls back to `changelog` whenever the model summary cannot be
  * produced or does not pass screening, so the body is never left empty.
  */
-export function releaseBody(dir, base, head, mode) {
-    const heading = `Promotes \`staging\` to \`production\`.`;
+export function releaseBody(dir, base, head, mode, opts = {}) {
+    // A selective PR must not claim to promote staging wholesale — reviewers
+    // read the heading as the scope of what they are approving.
+    const heading = opts.selective
+        ? `Promotes selected changes from \`staging\` to \`production\`.`
+        : `Promotes \`staging\` to \`production\`.`;
     if (mode === 'bare')
         return heading;
     const subjects = commitSubjects(dir, base, head);

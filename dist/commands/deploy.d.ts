@@ -26,6 +26,19 @@ export interface DeployOutcome {
  */
 export declare function notClonedOutcome(repo: string, all: boolean): DeployOutcome;
 /**
+ * The human gate, asked directly: was the PR for THIS version merged?
+ *
+ * The old check — "production contains everything staging has" — was a proxy
+ * that a selective (--pick) promotion makes permanently false, because leaving
+ * things out is the point. Checking that release/<v> or hotfix/<v> is an
+ * ancestor of origin/production verifies exactly what matters for BOTH flows:
+ * a human reviewed and merged this version's PR.
+ */
+export declare function verifyReleaseMerged(dir: string, version: string): Promise<{
+    ok: boolean;
+    detail: string;
+}>;
+/**
  * The version to deploy to `env`, given the tag currently on staging.
  *
  * Production ships what has been baking in staging, with the candidate suffix

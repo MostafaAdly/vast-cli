@@ -11,6 +11,7 @@
  * comes after the PR is merged.
  */
 import { type BodyMode } from './changelog.js';
+import type { ResolvedPick } from './picks.js';
 declare function readVersionField(json: string): string | null;
 declare function setVersionField(json: string, version: string): string;
 /** Exported for tests only — these are internals, not API. */
@@ -24,5 +25,15 @@ export declare const RELEASE_KINDS: ReleaseKind[];
 export declare function releaseBranchName(kind: ReleaseKind, version: string): string;
 /** @returns the PR URL, or null if nothing was opened. */
 export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, bodyMode?: BodyMode): string | null;
+/**
+ * The selective path: cut <kind>/<version> from production and cherry-pick the
+ * chosen commits onto it, instead of merging staging wholesale.
+ *
+ * All or nothing. A conflict aborts the pick, restores the original branch,
+ * and deletes the temp branch — the checkout ends exactly where it started.
+ *
+ * @returns the PR URL, or null if nothing was opened.
+ */
+export declare function cutPickedBranch(dir: string, repo: string, kind: ReleaseKind, version: string, picks: ResolvedPick[], dryRun: boolean, bodyMode?: BodyMode): string | null;
 export {};
 //# sourceMappingURL=release-branch.d.ts.map

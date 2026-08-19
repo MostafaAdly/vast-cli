@@ -5,6 +5,9 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  cherryPickSequence,
+  isAncestor,
+  refExists,
   trialMerge,
   aheadBehind,
   isClean,
@@ -111,4 +114,50 @@ test('refspecs map branches onto their remote-tracking refs', () => {
 
 test('refspecs for no branches is empty, not a wildcard', () => {
   assert.deepEqual(refspecsFor([]), []);
+});
+
+// ------------------------------------------------- cherry-pick sequencing ----
+
+test('applies picks in order onto the current branch', () => {
+  withFixture((dir) => {
+    const git = (...a: string[]): string =>
+      execFileSync('git', a, { cwd: dir, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    // clean-branch has "other.txt"; pick its tip onto a branch cut from main.
+    const pick = git('rev-parse', 'clean-branch');
+    git('checkout', '-qb', 'hotfix-test', 'main');
+    const result = cherryPickSequence(dir, [{ sha: pick, isMerge: false }]);
+    assert.equal(result.ok, true);
+    assert.match(git('log', '--pretty=%s', '-1'), /other/);
+  });
+});
+
+test('a conflicting pick aborts and leaves the tree clean', () => {
+  withFixture((dir) => {
+    const git = (...a: string[]): string =>
+      execFileSync('git', a, { cwd: dir, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    // feature edits f.txt against main's version — guaranteed conflict.
+    const pick = git('rev-parse', 'feature');
+    git('checkout', '-qb', 'hotfix-conflict', 'main');
+    const before = git('rev-parse', 'HEAD');
+    const result = cherryPickSequence(dir, [{ sha: pick, isMerge: false }]);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.failedSha, pick);
+      assert.ok(result.conflicts.includes('f.txt'), `got ${JSON.stringify(result.conflicts)}`);
+    }
+    assert.equal(git('rev-parse', 'HEAD'), before, 'no partial picks may remain');
+    assert.equal(isClean(dir), true, 'the working tree must be restored');
+  });
+});
+
+test('isAncestor answers both directions', () => {
+  withFixture((dir) => {
+    const git = (...a: string[]): string =>
+      execFileSync('git', a, { cwd: dir, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    const root = git('rev-list', '--max-parents=0', 'main');
+    assert.equal(isAncestor(dir, root, 'main'), true);
+    assert.equal(isAncestor(dir, 'main', root), false);
+    assert.equal(refExists(dir, 'main'), true);
+    assert.equal(refExists(dir, 'no-such-ref'), false);
+  });
 });
