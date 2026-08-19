@@ -60,6 +60,35 @@ It writes exactly two paths: `~/.vast-cli/` and one shim in `~/.local/bin/`.
 
 </details>
 
+### Or let Claude do all of it
+
+Paste this into Claude Code and it will install the CLI, the skill, and wire up your repos:
+
+```
+Set up the Vast CLI and its release skill on my machine.
+
+1. Install the CLI:
+   curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/install.sh | bash
+
+2. Check it worked: run `vast --version` and `gh auth status`.
+   If gh is not authenticated, stop and tell me — nothing works without it.
+
+3. Install the Claude Code skill:
+   mkdir -p ~/.claude/skills/release
+   curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/skills/release/SKILL.md -o ~/.claude/skills/release/SKILL.md
+   curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/skills/release/notes.sh -o ~/.claude/skills/release/notes.sh
+   chmod +x ~/.claude/skills/release/notes.sh
+
+4. Find my repos: run `vast init` and tell me what it found.
+   If it finds nothing, ask me where I keep them and re-run with
+   `vast init --root <path>`.
+
+5. Show me `vast status --all`.
+
+Do not deploy, promote, or release anything. If a step fails, stop and tell me
+which one and the exact error.
+```
+
 ### From source
 
 For working on the CLI itself:
@@ -174,6 +203,39 @@ into Features / Fixes / Improvements / Maintenance. `--summarize` instead has a 
 local model read the diff (slower, not reproducible); `--no-changelog` gives a bare
 one-liner.
 
+## Claude Code skill
+
+The CLI does everything deterministic. The `/release` skill takes over where determinism
+runs out — merge conflicts, failed deploys, and writing release notes for QC.
+
+```bash
+mkdir -p ~/.claude/skills/release
+curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/skills/release/SKILL.md -o ~/.claude/skills/release/SKILL.md
+curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/skills/release/notes.sh -o ~/.claude/skills/release/notes.sh
+chmod +x ~/.claude/skills/release/notes.sh
+```
+
+Then in Claude Code:
+
+```
+/release VastPayPwa                  promote + deploy to staging
+/release VastPayPwa --to production  cut the release PR (never deploys)
+/release triage VastPayPwa           diagnose the last failed run
+/release notes VastPayPwa            draft QC notes only
+```
+
+**What it will and will not do.** It always dry-runs first and reports what it found. On a
+conflict it explains both sides and proposes a diff, then **stops for your approval** —
+and treats payment paths as requiring approval even when the fix looks obvious. On a
+failed deploy it diagnoses before retrying, and re-dispatches the *same* version rather
+than burning a new rc on a flake.
+
+It never pushes to a protected branch, never merges a release PR, and never lifts the
+production lock — it tells you the command and lets you run it.
+
+The skill source lives in this repo under [`skills/release/`](skills/release), so it stays
+in step with the CLI it drives.
+
 ## Repositories
 
 Twelve repos are configured. Nine are **releasable** — a repo is releasable when it has
@@ -218,6 +280,24 @@ If a repo has more than one checkout, `init` asks which to use and remembers the
 Later runs keep that choice rather than re-picking, even when they find the other copy.
 
 ---
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `vast: command not found` | `~/.local/bin` is not on your `PATH`. The installer prints the exact line for your shell; add it and open a new terminal. |
+| Everything fails against GitHub | `gh auth status` — every command goes through `gh`. Fix with `gh auth login`. |
+| `vast init` finds nothing | Your repos are outside the searched locations. Point at them: `vast init --root /path/to/repos`. The path is remembered. |
+| A repo shows `not cloned` | You do not have it. `vast clone --team <yours>`, or `vast init` if it is checked out somewhere `vast` has not seen. |
+| `not cloned` for a repo you *do* have | It moved. `vast init --rescan`, or `vast init --root <new path>`. |
+| `promote` refuses: uncommitted changes | Commit or stash first. It will not merge over a dirty tree. |
+| `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
+| `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
+| `Production deploys are locked` | By design. `vast production enable`, then `vast deploy --to production`. Preparing a release PR is never blocked. |
+| `vast upgrade` installs the previous version | GitHub's releases API is cached for ~60s. Wait a minute after publishing. |
+| `status --all` is slow | It fetches every repo. `--no-fetch` reads local refs instantly, at the cost of possible staleness. |
+
+Still stuck? `vast <command> --help` carries worked examples for every command.
 
 ## Development
 
