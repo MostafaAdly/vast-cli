@@ -23,4 +23,12 @@ export declare function nextRc(tag: string): string;
 /** Production version: the staging series with its candidate suffix dropped. */
 export declare function stripRc(tag: string): string;
 export declare function bump(tag: string, level: 'patch' | 'minor' | 'major'): string;
+/**
+ * The next production hotfix version: patch + 1, no rc suffix.
+ *
+ * A selective promotion cannot take staging's version — that would label
+ * production with content it did not receive. It advances production's own
+ * tag instead: 2.4.0 -> 2.4.1, matching the team's historic hotfix numbering.
+ */
+export declare function nextPatch(tag: string): string;
 //# sourceMappingURL=version.d.ts.map

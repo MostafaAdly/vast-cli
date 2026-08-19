@@ -210,6 +210,26 @@ vast promote <repo> --to production                 # cuts release/X.Y.Z + PR
 vast promote <repo> --to production --as hotfix     # cuts hotfix/X.Y.Z + PR
 ```
 
+**Selective promotion.** When the user wants only some of staging shipped — "just this
+PR", "only these two commits" — use `--pick`:
+
+```bash
+vast promote <repo> --to production --pick 812 <sha> <pr-link>
+```
+
+Picks accept commit SHAs, PR numbers, PR links, and commit links, in any mix. A bare
+number is always a PR number. Every pick must already be on staging; `vast` refuses
+otherwise, and refuses picks already on production. The version advances production's
+own tag (`2.2.2 → 2.2.3`), and the deploy after the PR merges must name it:
+
+```bash
+vast deploy <repo> --to production --target-version <the version promote printed>
+```
+
+`promote` prints that exact command when it opens the PR — relay it to the user. If a
+pick conflicts, `vast` aborts everything and names the failing commit; treat that as §2
+conflict resolution, except the fix belongs on staging, not on the hotfix branch.
+
 Preparing the PR is never blocked by the production lock — it ships nothing.
 Report the PR URL and **stop**. Do not merge it, do not offer to merge it, and do
 not run the deploy. Tell the user the deploy is

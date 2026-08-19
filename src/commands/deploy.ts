@@ -15,7 +15,7 @@ import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.j
 import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
-import { aheadBehind } from '../utils/git.js';
+import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
 import {
   runWorkflow,
@@ -50,6 +50,42 @@ export function notClonedOutcome(repo: string, all: boolean): DeployOutcome {
     detail: all
       ? 'not cloned — get it with `vast clone`'
       : 'not cloned — run `vast init`, or clone it with `vast clone`',
+  };
+}
+
+/**
+ * The human gate, asked directly: was the PR for THIS version merged?
+ *
+ * The old check — "production contains everything staging has" — was a proxy
+ * that a selective (--pick) promotion makes permanently false, because leaving
+ * things out is the point. Checking that release/<v> or hotfix/<v> is an
+ * ancestor of origin/production verifies exactly what matters for BOTH flows:
+ * a human reviewed and merged this version's PR.
+ */
+export async function verifyReleaseMerged(
+  dir: string,
+  version: string,
+): Promise<{ ok: boolean; detail: string }> {
+  let v: string;
+  try {
+    v = stripRc(version);
+  } catch {
+    v = version; // unparseable target-version: branch names use it verbatim
+  }
+
+  await fetchBranches(dir, ['production', `release/${v}`, `hotfix/${v}`]);
+
+  for (const kind of ['release', 'hotfix'] as const) {
+    const ref = `origin/${kind}/${v}`;
+    if (!refExists(dir, ref)) continue;
+    if (isAncestor(dir, ref, 'origin/production')) {
+      return { ok: true, detail: `${kind}/${v} is merged into production` };
+    }
+    return { ok: false, detail: `${kind}/${v} exists but its PR is not merged — merge it first` };
+  }
+  return {
+    ok: false,
+    detail: `no release/${v} or hotfix/${v} branch on origin — cut one with \`vast promote --to production\``,
   };
 }
 
@@ -233,16 +269,11 @@ async function executeDeploy(repoName: string | undefined, options: DeployOption
       }
     }
 
-    // Production only: refuse if the release PR has not been merged yet.
+    // Production only: refuse if this version's PR has not been merged yet.
     if (options.to === 'production' && !options.dryRun) {
-      const { ahead } = aheadBehind(dir, 'origin/staging', 'origin/production');
-      if (ahead > 0) {
-        outcomes.push({
-          repo: repo.name,
-          version,
-          status: 'failed',
-          detail: `production is missing ${ahead} commit(s) from staging — merge the release PR first`,
-        });
+      const gate = await verifyReleaseMerged(dir, version);
+      if (!gate.ok) {
+        outcomes.push({ repo: repo.name, version, status: 'failed', detail: gate.detail });
         continue;
       }
       if (!(await confirmProduction(repo.name, version))) {

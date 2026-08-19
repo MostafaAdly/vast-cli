@@ -153,4 +153,56 @@ export function mergeAndPush(dir, into, from) {
     git(dir, ['merge', '--no-edit', from]);
     git(dir, ['push', 'origin', into]);
 }
+/** Whether `maybeAncestor` is contained in `ref`'s history. */
+export function isAncestor(dir, maybeAncestor, ref) {
+    try {
+        git(dir, ['merge-base', '--is-ancestor', maybeAncestor, ref]);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+export function refExists(dir, ref) {
+    try {
+        git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Apply a sequence of cherry-picks to the CURRENT branch, all or nothing.
+ *
+ * On the first conflict the in-progress pick is aborted, so the working tree
+ * and index end exactly as they started — the same zero-mutation promise the
+ * rest of the release chain makes. Rolling back the already-applied picks is
+ * the caller's job (it deletes the temp branch they landed on).
+ */
+export function cherryPickSequence(dir, picks) {
+    for (const pick of picks) {
+        const args = ['cherry-pick', '--allow-empty'];
+        if (pick.isMerge)
+            args.push('-m', '1');
+        args.push(pick.sha);
+        try {
+            git(dir, args);
+        }
+        catch {
+            const conflicts = git(dir, ['status', '--porcelain'])
+                .split('\n')
+                .filter((l) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(l))
+                .map((l) => l.slice(3).trim());
+            try {
+                git(dir, ['cherry-pick', '--abort']);
+            }
+            catch {
+                // No sequence to abort (e.g. empty-commit failure) — tree is clean.
+            }
+            return { ok: false, failedSha: pick.sha, conflicts };
+        }
+    }
+    return { ok: true };
+}
 //# sourceMappingURL=git.js.map

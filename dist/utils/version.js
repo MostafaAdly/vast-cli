@@ -42,4 +42,15 @@ export function bump(tag, level) {
             : { major: v.major, minor: v.minor, patch: v.patch + 1 };
     return `${next.major}.${next.minor}.${next.patch}-rc1`;
 }
+/**
+ * The next production hotfix version: patch + 1, no rc suffix.
+ *
+ * A selective promotion cannot take staging's version — that would label
+ * production with content it did not receive. It advances production's own
+ * tag instead: 2.4.0 -> 2.4.1, matching the team's historic hotfix numbering.
+ */
+export function nextPatch(tag) {
+    const v = parseTag(tag);
+    return `${v.major}.${v.minor}.${v.patch + 1}`;
+}
 //# sourceMappingURL=version.js.map
