@@ -66,6 +66,10 @@ vast upgrade --check
 
 ## 1. Staging release — the default path
 
+The two `*-BackEnd` repos have no develop branch; `vast release` skips their
+promotion step automatically and deploys what is on staging. That is normal —
+do not report it as a problem.
+
 **Step 1. Read the state first.** Always dry-run before doing anything:
 
 ```bash

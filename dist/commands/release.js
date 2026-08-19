@@ -15,6 +15,16 @@ import { promote } from './promote.js';
 import { repoDir } from '../config/workspace.js';
 import { deployOne, notClonedOutcome, printSummary } from './deploy.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
+/**
+ * Whether this repo has a develop branch to promote into staging.
+ *
+ * `vast promote <repo>` (explicit) still refuses when this is false — an
+ * explicit ask to merge develop deserves an explanation, not a silent no-op.
+ * Only `vast release` treats it as a skip.
+ */
+export function needsPromotion(repo) {
+    return repo.promoteFrom.staging !== null;
+}
 async function releaseOne(repo, options) {
     const dir = repoDir(repo, options.dir);
     if (!dir)
@@ -27,7 +37,15 @@ async function releaseOne(repo, options) {
         return { repo: repo.name, version: '—', status: 'skipped', detail: 'no staging Helm values' };
     }
     if (!options.skipPromote) {
-        if (!promote(repo, dir, 'staging', options.dryRun)) {
+        if (!needsPromotion(repo)) {
+            // The backend repos have no usable develop — human PRs there target
+            // staging directly. Failing the release for a promotion that cannot
+            // exist made the everyday command unusable for that team and turned
+            // every `release --all` sweep red. Skipping is not a policy change:
+            // there is nothing to promote.
+            log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
+        }
+        else if (!promote(repo, dir, 'staging', options.dryRun)) {
             return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
         }
     }

@@ -37,3 +37,15 @@ test('an uncloned repo is skipped during a sweep, not failed', () => {
 test('an uncloned repo the user named explicitly is a failure', () => {
   assert.equal(notClonedOutcome('VastMenu-BackEnd', false).status, 'failed');
 });
+
+// The backends have no usable develop; failing their release for a promotion
+// that cannot exist made `vast release <backend>` unusable and turned every
+// `release --all` sweep red on any machine with backend checkouts.
+test('release skips promotion for repos with no develop, and only those', async () => {
+  const { needsPromotion } = await import('../src/commands/release.js');
+  const { getRepo } = await import('../src/config/repos.js');
+  assert.equal(needsPromotion(getRepo('VastPay-BackEnd')!), false);
+  assert.equal(needsPromotion(getRepo('VastMenu-BackEnd')!), false);
+  assert.equal(needsPromotion(getRepo('VastPayPwa')!), true);
+  assert.equal(needsPromotion(getRepo('vast-menu-payments')!), true);
+});
