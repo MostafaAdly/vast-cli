@@ -74,3 +74,27 @@ test('a corrupt cache degrades to no hint', () => {
 });
 
 process.on('exit', () => rmSync(SANDBOX, { recursive: true, force: true }));
+
+// Observed live: right after upgrading to 1.3.0 the day-old cache still said
+// 1.2.1, and a plain inequality produced
+// "A newer Vast CLI is available (1.2.1, you have 1.3.0)" — telling the user to
+// upgrade backwards.
+test('no hint when the cached release is older than what is installed', () => {
+  writeCache({ checkedAt: Date.now(), latest: 'v1.2.1' });
+  assert.equal(pendingHint('1.3.0'), null);
+});
+
+test('isNewer compares numerically, not lexically', async () => {
+  const { isNewer } = await import('../src/utils/update-check.js');
+  assert.equal(isNewer('1.10.0', '1.9.0'), true, '10 > 9 numerically');
+  assert.equal(isNewer('1.9.0', '1.10.0'), false);
+  assert.equal(isNewer('2.0.0', '1.99.99'), true);
+  assert.equal(isNewer('1.2.3', '1.2.3'), false);
+  assert.equal(isNewer('v1.3.0', '1.2.1'), true, 'leading v must not matter');
+});
+
+test('a shorter version string still compares correctly', async () => {
+  const { isNewer } = await import('../src/utils/update-check.js');
+  assert.equal(isNewer('1.3', '1.2.9'), true);
+  assert.equal(isNewer('1.2', '1.2.0'), false);
+});
