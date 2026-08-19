@@ -21,6 +21,7 @@ export declare function normalize(version: string): string;
  *
  * Reads only the cache — never the network — so calling it costs nothing.
  */
+export declare function isNewer(candidate: string, current: string): boolean;
 export declare function pendingHint(current: string): string | null;
 /**
  * Refresh the cache if a day has passed. Awaited only after the command's own

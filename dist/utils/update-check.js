@@ -49,11 +49,30 @@ export function normalize(version) {
  *
  * Reads only the cache — never the network — so calling it costs nothing.
  */
+export function isNewer(candidate, current) {
+    const parts = (v) => normalize(v)
+        .split('-')[0]
+        .split('.')
+        .map((n) => Number.parseInt(n, 10) || 0);
+    const a = parts(candidate);
+    const b = parts(current);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const x = a[i] ?? 0;
+        const y = b[i] ?? 0;
+        if (x !== y)
+            return x > y;
+    }
+    return false;
+}
 export function pendingHint(current) {
     const state = readState();
     if (!state?.latest)
         return null;
-    if (normalize(state.latest) === normalize(current))
+    // Only when the cached release is genuinely NEWER. A plain inequality told
+    // users to "upgrade" to an older version whenever the cache lagged behind —
+    // which it does for a minute after every release, and for a whole day after
+    // upgrading, since the cache only refreshes daily.
+    if (!isNewer(state.latest, current))
         return null;
     return `A newer Vast CLI is available (${normalize(state.latest)}, you have ${normalize(current)}). Run: vast upgrade`;
 }
