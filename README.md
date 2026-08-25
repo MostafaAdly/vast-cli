@@ -214,10 +214,26 @@ vast promote VastPayPwa --to production --pick 812 c51404cb   # defaults to --as
 | PR number | `812` or `#812` |
 | PR link | `https://github.com/Vast-menu/VastPayPwa/pull/812` |
 | Commit link | `https://github.com/Vast-menu/VastPayPwa/commit/c51404cb` |
+| Branch name | `fix/urgent-thing` |
+| Branch link | `https://github.com/Vast-menu/VastPayPwa/tree/fix/urgent-thing` |
 
 A bare number is always a PR number, never a short SHA. Picks apply in history order
 regardless of the order you type them, and a conflict aborts everything — branch deleted,
 checkout untouched.
+
+**A branch pick is handled by where the branch came from**, because a git merge brings a
+branch's entire ancestry, not just its own work:
+
+- **Cut from production** (a true emergency-fix branch) → genuinely merged. Its commits
+  skipped staging, so this prints a loud QC warning and, after the PR opens, a reminder
+  to port the fix back to develop/staging.
+- **Already landed on staging** → the tool uses its landing merge commit instead, exactly
+  as if you had picked the PR. No double-merge, all safety rules hold.
+- **Floating off develop/staging, not landed** → refused, with the number of foreign
+  commits a merge would have dragged in. Land it on staging first, or pick exact commits.
+
+The dry run states which treatment each branch gets. Branches are always fetched fresh
+before anything happens.
 
 Rules that keep this safe: every pick must already be on `staging` (production only ever
 receives staging-baked changes) and must not already be on `production`. The version

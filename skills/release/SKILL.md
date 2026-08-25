@@ -221,8 +221,12 @@ PR", "only these two commits" — use `--pick`:
 vast promote <repo> --to production --pick 812 <sha> <pr-link>
 ```
 
-Picks accept commit SHAs, PR numbers, PR links, and commit links, in any mix. A bare
-number is always a PR number. Every pick must already be on staging; `vast` refuses
+Picks accept commit SHAs, PR numbers, PR links, commit links, and **branch names or
+branch links**, in any mix. A bare number is always a PR number. A branch is treated by
+its origin: cut from production → truly merged (a loud QC-bypass warning prints — relay
+it, and afterwards relay the reminder to port the fix back to develop/staging); already
+landed on staging → resolved to its landing merge commit; floating off develop/staging →
+refused, and the fix is to land it on staging first. Every pick must already be on staging; `vast` refuses
 otherwise, and refuses picks already on production. The version advances production's
 own tag (`2.2.2 → 2.2.3`), and the deploy after the PR merges must name it:
 

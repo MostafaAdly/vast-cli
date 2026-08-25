@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   cherryPickSequence,
+  mergeSequence,
   isAncestor,
   refExists,
   trialMerge,
@@ -159,5 +160,24 @@ test('isAncestor answers both directions', () => {
     assert.equal(isAncestor(dir, 'main', root), false);
     assert.equal(refExists(dir, 'main'), true);
     assert.equal(refExists(dir, 'no-such-ref'), false);
+  });
+});
+
+test('mergeSequence merges a clean ref and reports a conflicting one', () => {
+  withFixture((dir) => {
+    const git = (...a: string[]): string =>
+      execFileSync('git', a, { cwd: dir, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    git('checkout', '-qb', 'merge-target', 'main');
+    assert.deepEqual(mergeSequence(dir, ['clean-branch']), { ok: true });
+    // clean-branch is strictly ahead, so this fast-forwards — content arrives
+    // without a merge commit, which is correct and fine.
+    assert.match(git('log', '--pretty=%s', '-1'), /other/);
+
+    const before = git('rev-parse', 'HEAD');
+    const result = mergeSequence(dir, ['feature']); // edits f.txt against main
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.ok(result.conflicts.includes('f.txt'));
+    assert.equal(git('rev-parse', 'HEAD'), before, 'failed merge must not move HEAD');
+    assert.equal(isClean(dir), true);
   });
 });
