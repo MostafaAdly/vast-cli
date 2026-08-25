@@ -48,11 +48,22 @@ test('trailing slashes and whitespace are tolerated', () => {
   });
 });
 
-test('garbage is rejected, not guessed at', () => {
+test('true garbage is rejected; ref-shaped strings become branch candidates', () => {
   assert.equal(parsePickRef(''), null);
-  assert.equal(parsePickRef('not-a-ref'), null);
-  assert.equal(parsePickRef('ghijklm'), null); // hex-length but not hex
-  assert.equal(parsePickRef('https://github.com/Vast-menu/VastPayPwa'), null);
+  assert.equal(parsePickRef('has spaces'), null);
+  assert.equal(parsePickRef('https://github.com/Vast-menu/VastPayPwa'), null); // no /tree/
+  // These now resolve as branches — existence is checked at resolution, where
+  // the error message can actually name the missing branch.
+  assert.deepEqual(parsePickRef('fix/urgent-thing'), { kind: 'branch', name: 'fix/urgent-thing' });
+  assert.deepEqual(parsePickRef('ghijklm'), { kind: 'branch', name: 'ghijklm' });
+});
+
+test('a branch link carries its repo for the paste guard', () => {
+  assert.deepEqual(parsePickRef('https://github.com/Vast-menu/VastPayPwa/tree/fix/urgent'), {
+    kind: 'branch',
+    name: 'fix/urgent',
+    repo: 'Vast-menu/VastPayPwa',
+  });
 });
 
 // -------------------------------------------------------------- resolution ---
@@ -172,6 +183,115 @@ test('all errors are reported at once, not first-only', () => {
   try {
     const { errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['garbage!', f.shas.developOnly]);
     assert.equal(errors.length, 2);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// ------------------------------------------------ branch classification -----
+
+/**
+ * production ── base
+ * develop    ── base ── dev-work (staging's fork parent)
+ * staging    ── develop@dev-work ── merge(landed-feature)
+ * prodfix    ── cut from production, 1 commit          -> case 1: true merge
+ * landed     ── forked from staging, merged into it    -> case 2: landing merge
+ * floating   ── forked from develop, unmerged          -> case 3: refused
+ */
+function branchFixture(): { dir: string; landingSha: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'vast-branch-'));
+  const git = (...a: string[]): string =>
+    execFileSync('git', a, { cwd: dir, encoding: 'utf-8', stdio: 'pipe' }).trim();
+  const commit = (file: string, msg: string): void => {
+    writeFileSync(join(dir, file), `${msg}\n`);
+    git('add', '.');
+    git('commit', '-qm', msg);
+  };
+
+  git('init', '-q', '-b', 'production');
+  git('config', 'user.email', 't@e.com');
+  git('config', 'user.name', 'T');
+  commit('f.txt', 'base');
+
+  git('checkout', '-qb', 'develop');
+  commit('d.txt', 'dev work');
+  git('checkout', '-qb', 'staging');
+
+  git('checkout', '-qb', 'landed');
+  commit('l.txt', 'landed work');
+  git('checkout', '-q', 'staging');
+  git('merge', '--no-ff', '-q', '-m', 'Merge pull request #9 from Vast-Menu/landed', 'landed');
+  const landingSha = git('rev-parse', 'HEAD');
+
+  git('checkout', '-q', 'develop');
+  git('checkout', '-qb', 'floating');
+  commit('x.txt', 'floating work');
+
+  git('checkout', '-q', 'production');
+  git('checkout', '-qb', 'prodfix');
+  commit('p.txt', 'urgent production fix');
+  git('checkout', '-q', 'production');
+
+  for (const b of ['production', 'staging', 'develop', 'landed', 'floating', 'prodfix']) {
+    git('update-ref', `refs/remotes/origin/${b}`, b);
+  }
+  return { dir, landingSha, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('a branch cut from production becomes a true merge, with a QC warning', () => {
+  const f = branchFixture();
+  try {
+    const { merges, warnings, errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['prodfix']);
+    assert.deepEqual(errors, []);
+    assert.equal(merges.length, 1);
+    assert.equal(merges[0].ref, 'origin/prodfix');
+    assert.equal(merges[0].commits, 1);
+    assert.match(warnings[0] ?? '', /QC has not seen them/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a branch already landed on staging resolves to its landing merge commit', () => {
+  const f = branchFixture();
+  try {
+    const { picks, merges, errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['landed']);
+    assert.deepEqual(errors, []);
+    assert.equal(merges.length, 0, 'must NOT be merged again');
+    assert.equal(picks.length, 1);
+    assert.equal(picks[0].sha, f.landingSha);
+    assert.equal(picks[0].isMerge, true);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('an unlanded branch off develop is refused with the drag count', () => {
+  const f = branchFixture();
+  try {
+    const { errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['floating']);
+    assert.match(errors[0] ?? '', /would drag 1 commit\(s\) of staging\/develop history/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a missing branch names itself in the error', () => {
+  const f = branchFixture();
+  try {
+    const { errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['no-such-thing']);
+    assert.match(errors[0] ?? '', /no branch 'no-such-thing' on origin/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a branch with nothing beyond production is refused as already shipped', () => {
+  const f = branchFixture();
+  try {
+    // production itself: zero commits beyond production.
+    const { errors } = resolvePicks(f.dir, 'Vast-menu', 'X', ['production']);
+    assert.match(errors[0] ?? '', /already on origin\/production/);
   } finally {
     f.cleanup();
   }

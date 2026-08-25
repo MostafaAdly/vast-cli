@@ -235,3 +235,33 @@ export function cherryPickSequence(
   }
   return { ok: true };
 }
+
+/**
+ * Truly merge a sequence of refs into the CURRENT branch, all or nothing —
+ * the branch-merge counterpart of cherryPickSequence, with the same contract:
+ * on the first conflict the in-progress merge is aborted so the tree and index
+ * end exactly as they started, and rolling back already-applied merges is the
+ * caller's job (it deletes the temp branch they landed on).
+ */
+export function mergeSequence(
+  dir: string,
+  refs: string[],
+): { ok: true } | { ok: false; failedRef: string; conflicts: string[] } {
+  for (const ref of refs) {
+    try {
+      git(dir, ['merge', '--no-edit', ref]);
+    } catch {
+      const conflicts = git(dir, ['status', '--porcelain'])
+        .split('\n')
+        .filter((l) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(l))
+        .map((l) => l.slice(3).trim());
+      try {
+        git(dir, ['merge', '--abort']);
+      } catch {
+        // Nothing in progress — tree already clean.
+      }
+      return { ok: false, failedRef: ref, conflicts };
+    }
+  }
+  return { ok: true };
+}

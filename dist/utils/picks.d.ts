@@ -18,8 +18,22 @@ export type ParsedPick = {
     kind: 'sha';
     sha: string;
     repo?: string;
+} | {
+    kind: 'branch';
+    name: string;
+    repo?: string;
 };
 export declare function parsePickRef(input: string): ParsedPick | null;
+/** A branch that will be truly MERGED into the release branch (case 1). */
+export interface BranchMerge {
+    /** What the user typed. */
+    input: string;
+    name: string;
+    /** The remote-tracking ref the merge uses. */
+    ref: string;
+    /** Commits this merge brings that production lacks. */
+    commits: number;
+}
 export interface ResolvedPick {
     /** What the user typed, for error messages. */
     input: string;
@@ -44,6 +58,8 @@ export interface ResolvedPick {
  */
 export declare function resolvePicks(dir: string, org: string, repoName: string, inputs: string[]): {
     picks: ResolvedPick[];
+    merges: BranchMerge[];
+    warnings: string[];
     errors: string[];
 };
 //# sourceMappingURL=picks.d.ts.map

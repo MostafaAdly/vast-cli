@@ -70,15 +70,19 @@ export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, 
             return false;
         }
         if (pickRefs.length > 0) {
-            const { picks, errors } = resolvePicks(dir, ORG, repo.name, pickRefs);
+            const { picks, merges, warnings, errors } = resolvePicks(dir, ORG, repo.name, pickRefs);
             if (errors.length > 0) {
                 console.log(createErrorBox(`${repo.name}: ${errors.length} pick(s) cannot be promoted`, errors.map((e) => `• ${e}`).join('\n')));
                 return false;
             }
-            if (picks.length === 0) {
+            if (picks.length === 0 && merges.length === 0) {
                 console.log(createErrorBox(`${repo.name}: nothing to pick`, 'Every ref resolved to nothing.'));
                 return false;
             }
+            // The one loudly-permitted exception to the staging-only rule: a branch
+            // cut from production skipped staging by definition.
+            for (const w of warnings)
+                log.warn(w);
             let version;
             if (targetVersion) {
                 version = targetVersion;
@@ -101,10 +105,19 @@ export function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, 
                     return false;
                 }
             }
-            log.info(`${repo.name}: ${picks.length} pick(s) → production, ${kind} ${version}`);
-            const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode);
+            const what = [
+                picks.length ? `${picks.length} pick(s)` : '',
+                merges.length ? `${merges.length} branch merge(s)` : '',
+            ]
+                .filter(Boolean)
+                .join(' + ');
+            log.info(`${repo.name}: ${what} → production, ${kind} ${version}`);
+            const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
             if (url !== null) {
                 log.muted(`  after the PR is merged:  vast deploy ${repo.name} --to production --target-version ${version}`);
+                if (merges.length > 0) {
+                    log.warn(`port the fix back: merge ${merges.map((m) => m.name).join(', ')} into develop/staging too, or the bug stays there`);
+                }
             }
             return url !== null || dryRun;
         }

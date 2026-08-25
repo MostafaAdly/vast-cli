@@ -17,8 +17,8 @@ import { join } from 'path';
 import { stripRc } from './version.js';
 import { trialMerge } from './git.js';
 import { releaseBody, type BodyMode } from './changelog.js';
-import { cherryPickSequence, currentBranch } from './git.js';
-import type { ResolvedPick } from './picks.js';
+import { cherryPickSequence, mergeSequence, currentBranch } from './git.js';
+import type { ResolvedPick, BranchMerge } from './picks.js';
 import { log } from './ui.js';
 
 const ORG_NAME = 'Vast-menu';
@@ -162,29 +162,53 @@ export function cutPickedBranch(
   picks: ResolvedPick[],
   dryRun: boolean,
   bodyMode: BodyMode = 'changelog',
+  merges: BranchMerge[] = [],
 ): string | null {
   const branch = releaseBranchName(kind, version);
 
   for (const p of picks) {
     log.info(`  pick ${p.sha.slice(0, 7)}  ${p.subject}${p.isMerge ? '  (merge, -m 1)' : ''}`);
   }
+  for (const m of merges) {
+    log.info(`  merge ${m.name}  (${m.commits} commit(s), cut from production)`);
+  }
 
   if (dryRun) {
-    log.muted(`  (dry run — would cut ${branch}, apply ${picks.length} pick(s), and open a PR into production)`);
+    const parts = [
+      picks.length ? `apply ${picks.length} pick(s)` : '',
+      merges.length ? `merge ${merges.length} branch(es)` : '',
+    ].filter(Boolean);
+    log.muted(`  (dry run — would cut ${branch}, ${parts.join(' and ')}, and open a PR into production)`);
     return null;
   }
 
   const original = currentBranch(dir);
   git(dir, ['checkout', '-B', branch, 'origin/production']);
 
-  const applied = cherryPickSequence(dir, picks);
-  if (!applied.ok) {
+  const rollback = (): void => {
     git(dir, ['checkout', original]);
     git(dir, ['branch', '-D', branch]);
+  };
+
+  const applied = cherryPickSequence(dir, picks);
+  if (!applied.ok) {
+    rollback();
     const failed = picks.find((p) => p.sha === applied.failedSha);
     log.error(`${repo}: pick ${applied.failedSha.slice(0, 7)} (${failed?.subject ?? '?'}) conflicts:`);
     for (const f of applied.conflicts) log.error(`  • ${f}`);
     log.error('Nothing was changed. Resolve on staging first, or pick a smaller set.');
+    return null;
+  }
+
+  // Branch merges come after all copies, in the order given. Same
+  // all-or-nothing promise: any conflict rolls the whole branch back.
+  const merged = mergeSequence(dir, merges.map((m) => m.ref));
+  if (!merged.ok) {
+    rollback();
+    const failed = merges.find((m) => m.ref === merged.failedRef);
+    log.error(`${repo}: merging ${failed?.name ?? merged.failedRef} conflicts:`);
+    for (const f of merged.conflicts) log.error(`  • ${f}`);
+    log.error('Nothing was changed. Resolve the conflict on the branch first.');
     return null;
   }
 

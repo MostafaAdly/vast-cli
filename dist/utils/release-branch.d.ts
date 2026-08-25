@@ -11,7 +11,7 @@
  * comes after the PR is merged.
  */
 import { type BodyMode } from './changelog.js';
-import type { ResolvedPick } from './picks.js';
+import type { ResolvedPick, BranchMerge } from './picks.js';
 declare function readVersionField(json: string): string | null;
 declare function setVersionField(json: string, version: string): string;
 /** Exported for tests only — these are internals, not API. */
@@ -34,6 +34,6 @@ export declare function cutReleaseBranch(dir: string, repo: string, kind: Releas
  *
  * @returns the PR URL, or null if nothing was opened.
  */
-export declare function cutPickedBranch(dir: string, repo: string, kind: ReleaseKind, version: string, picks: ResolvedPick[], dryRun: boolean, bodyMode?: BodyMode): string | null;
+export declare function cutPickedBranch(dir: string, repo: string, kind: ReleaseKind, version: string, picks: ResolvedPick[], dryRun: boolean, bodyMode?: BodyMode, merges?: BranchMerge[]): string | null;
 export {};
 //# sourceMappingURL=release-branch.d.ts.map

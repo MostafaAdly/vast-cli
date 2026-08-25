@@ -90,6 +90,8 @@ repo copy, and users re-download to update. Its helper's tests live in
   auto-resolved conflict is `package.json`'s version line, which CI rewrites
   per-branch on every deploy; anything else refuses.
 - `--pick` only accepts commits already reachable from `origin/staging` —
-  production never receives changes QC could not have seen.
+  production never receives changes QC could not have seen. The single, loudly
+  warned exception: a branch pick whose branch was cut from production (a true
+  emergency fix) is genuinely merged, and the user is reminded to port it back.
 - The deploy gate requires `release/<v>` or `hotfix/<v>` to be an ancestor of
   `origin/production`: a human must have merged this version's PR.
