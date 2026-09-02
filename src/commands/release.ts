@@ -5,6 +5,11 @@
  * next release candidate from the deployed Helm tag, dispatch the workflow,
  * wait for it, and merge the version-bump PR.
  *
+ * Several repos at once behave like one terminal per repo: each is promoted
+ * and dispatched in turn — seconds of local git and gh — and then every CI run
+ * is watched concurrently, so the whole thing takes about one build rather
+ * than one per repo. One repo refusing never stops another.
+ *
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one.
  */
@@ -15,7 +20,21 @@ import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { promote } from './promote.js';
 import { repoDir } from '../config/workspace.js';
-import { deployOne, notClonedOutcome, printSummary, type DeployOutcome } from './deploy.js';
+import {
+  bumpPrTitle,
+  deployOne,
+  notClonedOutcome,
+  printSummary,
+  type DeployOutcome,
+} from './deploy.js';
+import {
+  findPullRequest,
+  getRunStatus,
+  mergePullRequest,
+  runUrl,
+  runWorkflow,
+} from '../utils/github.js';
+import { formatElapsed, pollRun } from '../utils/run-poll.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
 interface ReleaseOptions {
@@ -29,6 +48,8 @@ interface ReleaseOptions {
   all: boolean;
 }
 
+const BUMP_LEVELS = ['patch', 'minor', 'major'];
+
 /**
  * Whether this repo has a develop branch to promote into staging.
  *
@@ -40,7 +61,69 @@ export function needsPromotion(repo: RepoConfig): boolean {
   return repo.promoteFrom.staging !== null;
 }
 
-async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<DeployOutcome> {
+/**
+ * Option combinations that cannot mean anything, refused before any repo is
+ * touched — never after the first repo has already been released.
+ */
+export function validateReleaseOptions(
+  names: string[],
+  options: { all: boolean; targetVersion?: string; dir?: string; bump?: string },
+): string | null {
+  if (options.all && names.length > 0) return 'Pass repository names or --all, not both.';
+  if (options.bump && options.targetVersion) return '--bump and --target-version are mutually exclusive.';
+  if (options.bump && !BUMP_LEVELS.includes(options.bump)) {
+    return `Invalid --bump level: ${options.bump}. Use patch, minor, or major.`;
+  }
+  if (names.length > 1 && options.targetVersion) {
+    return '--target-version is per repository — each repo derives its own. Release them one at a time to override.';
+  }
+  if (names.length > 1 && options.dir) {
+    return '--dir names one checkout, so it cannot be used with several repositories.';
+  }
+  return null;
+}
+
+/**
+ * Repos `vast release` acts on, in the order they were named, deduplicated.
+ *
+ * `--all` is filtered to releasable repos, so an unreleasable repo (no
+ * workflow / no Helm) that simply is not cloned yet cannot fail the whole
+ * sweep with a spurious "not cloned". Named repos are never filtered: an
+ * explicit `vast release Terraform` deserves "no deploy workflow", not
+ * "unknown repository".
+ */
+export function releaseTargets(
+  names: string[],
+  all: boolean,
+): { repos: RepoConfig[]; unknown: string[] } {
+  if (all) return { repos: REPOS.filter(isReleasable), unknown: [] };
+  const repos: RepoConfig[] = [];
+  const unknown: string[] = [];
+  for (const name of names) {
+    const repo = getRepo(name);
+    if (!repo) unknown.push(name);
+    else if (!repos.includes(repo)) repos.push(repo);
+  }
+  return { repos, unknown };
+}
+
+/** A repo that promoted cleanly and has a version: ready to dispatch. */
+interface Prepared {
+  repo: RepoConfig;
+  dir: string;
+  workflow: string;
+  version: string;
+}
+
+function isOutcome(x: Prepared | InFlight | DeployOutcome): x is DeployOutcome {
+  return 'status' in x;
+}
+
+/**
+ * Everything before the deploy: resolve the checkout, promote, derive the
+ * version. Returns an outcome instead when the repo cannot go further.
+ */
+function prepareOne(repo: RepoConfig, options: ReleaseOptions): Prepared | DeployOutcome {
   const dir = repoDir(repo, options.dir);
   if (!dir) return notClonedOutcome(repo.name, options.all);
 
@@ -84,30 +167,135 @@ async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<De
     }
   }
 
-  return deployOne(repo, 'staging', version, options.dryRun);
+  return { repo, dir, workflow: repo.workflow, version };
+}
+
+/** One repo, start to finish, exactly as it has always run — live `gh run watch` included. */
+async function releaseOne(repo: RepoConfig, options: ReleaseOptions): Promise<DeployOutcome> {
+  const prep = prepareOne(repo, options);
+  if (isOutcome(prep)) return prep;
+  return deployOne(repo, 'staging', prep.version, options.dryRun);
+}
+
+/** A dispatched run the concurrent path is waiting on. */
+interface InFlight {
+  repo: RepoConfig;
+  version: string;
+  runId: number;
 }
 
 /**
- * Repos `vast release` acts on. `--all` is filtered to releasable repos, so an
- * unreleasable repo (no workflow / no Helm) that simply is not cloned yet
- * cannot fail the whole sweep with a spurious "not cloned".
+ * Kick one repo off: promote, derive, dispatch. Run for each repo in turn so
+ * the dispatch spinner and run-id detection never interleave; the first build
+ * is already running on GitHub while the next repo promotes.
  */
-export function releaseTargets(repoName: string | undefined, all: boolean): RepoConfig[] {
-  return all
-    ? REPOS.filter(isReleasable)
-    : [getRepo(repoName ?? '')].filter((r): r is RepoConfig => Boolean(r));
+async function launchOne(repo: RepoConfig, options: ReleaseOptions): Promise<InFlight | DeployOutcome> {
+  const prep = prepareOne(repo, options);
+  if (isOutcome(prep)) return prep;
+  // deployOne logs the "deploying X" line and returns the dry-run outcome
+  // without dispatching anything, so a multi-repo dry run reads like a real one.
+  if (options.dryRun) return deployOne(repo, 'staging', prep.version, true);
+
+  log.info(`${repo.name}: deploying ${prep.version} to staging`);
+  const result = await runWorkflow({
+    repository: repo.name,
+    version: prep.version,
+    branch: 'staging',
+    workflowName: prep.workflow,
+  });
+  if (!result.success || !result.runId) {
+    return {
+      repo: repo.name,
+      version: prep.version,
+      status: 'failed',
+      detail: result.error ?? 'could not identify the dispatched run',
+    };
+  }
+  return { repo, version: prep.version, runId: result.runId };
 }
 
-async function executeRelease(
-  repoName: string | undefined,
-  options: ReleaseOptions,
-): Promise<void> {
-  if (options.bump && options.targetVersion) {
-    log.error('--bump and --target-version are mutually exclusive.');
-    process.exit(1);
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Wait for a dispatched run and merge its bump PR — deployOne's second half,
+ * written to run alongside others. `gh run watch` would block the process and
+ * repaint the screen, so the run is polled and reported one line at a time.
+ * The failure detail carries the run URL, since the live step view is gone.
+ */
+async function finishOne(flight: InFlight, labelWidth: number): Promise<DeployOutcome> {
+  const { repo, version, runId } = flight;
+  const result = await pollRun(repo.name.padEnd(labelWidth), runId, {
+    getStatus: () => getRunStatus(repo.name, runId),
+    sleep,
+    now: Date.now,
+    print: log.muted,
+  });
+  const took = formatElapsed(result.elapsedMs);
+  const url = runUrl(repo.name, runId);
+
+  if (!result.ok) {
+    const why =
+      result.error ??
+      `run ${runId} ${result.conclusion === 'failure' ? 'failed' : (result.conclusion ?? 'did not complete')}`;
+    log.error(`${repo.name}: ${why} after ${took}`);
+    log.muted(`  ${url}`);
+    return { repo: repo.name, version, status: 'failed', detail: `${why} — ${url}` };
   }
-  if (options.bump && !['patch', 'minor', 'major'].includes(options.bump)) {
-    log.error(`Invalid --bump level: ${options.bump}. Use patch, minor, or major.`);
+  log.success(`${repo.name}: run ${runId} succeeded in ${took}`);
+
+  // Same budget as deployOne: the bump PR is opened by the workflow's last
+  // step and can take a while to appear.
+  log.muted(`  ${repo.name}: looking for the bump PR...`);
+  const prTitle = bumpPrTitle(version, 'staging');
+  let prNumber: number | null = null;
+  for (let i = 0; i < 45 && prNumber === null; i++) {
+    prNumber = await findPullRequest(repo.name, prTitle);
+    if (prNumber === null) await sleep(20000);
+  }
+  if (prNumber === null) {
+    log.error(`${repo.name}: bump PR never appeared`);
+    return { repo: repo.name, version, status: 'failed', detail: 'bump PR not found' };
+  }
+
+  try {
+    await mergePullRequest(repo.name, prNumber);
+    log.success(`${repo.name}: ${version} deployed to staging, PR #${prNumber} merged`);
+    return { repo: repo.name, version, status: 'released', detail: `PR #${prNumber}` };
+  } catch (error) {
+    log.error(`${repo.name}: could not merge PR #${prNumber}`);
+    return {
+      repo: repo.name,
+      version,
+      status: 'failed',
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Several repos, like one terminal per repo. Promote and dispatch each in turn
+ * (seconds), then watch every run concurrently (minutes). Outcomes come back in
+ * the order the repos were named, so the summary reads the way it was typed.
+ */
+async function releaseMany(targets: RepoConfig[], options: ReleaseOptions): Promise<DeployOutcome[]> {
+  const launched: Array<InFlight | DeployOutcome> = [];
+  for (const repo of targets) launched.push(await launchOne(repo, options));
+
+  const flights = launched.filter((l): l is InFlight => !isOutcome(l));
+  if (flights.length > 0) {
+    log.newline();
+    log.info(`Watching ${flights.length} run(s) — one line per status change, heartbeat every 30s`);
+  }
+  const width = Math.max(...flights.map((f) => f.repo.name.length), 0);
+  const finished = await Promise.all(flights.map((f) => finishOne(f, width)));
+
+  return launched.map((l) => (isOutcome(l) ? l : finished[flights.indexOf(l)]));
+}
+
+async function executeRelease(repoNames: string[], options: ReleaseOptions): Promise<void> {
+  const problem = validateReleaseOptions(repoNames, options);
+  if (problem) {
+    log.error(problem);
     process.exit(1);
   }
 
@@ -126,21 +314,24 @@ async function executeRelease(
     process.exit(1);
   }
 
-  const targets = releaseTargets(repoName, options.all);
-
+  const { repos: targets, unknown } = releaseTargets(repoNames, options.all);
+  if (unknown.length > 0) {
+    log.error(`Unknown ${unknown.length === 1 ? 'repository' : 'repositories'}: ${unknown.join(', ')}`);
+    process.exit(1);
+  }
   if (targets.length === 0) {
-    log.error(repoName ? `Unknown repository: ${repoName}` : 'Specify a repository or --all');
+    log.error('Specify a repository or --all');
     process.exit(1);
   }
 
   console.log(createHeader('Release', `${targets.length} repo(s) | → staging`));
 
-  // Sequential: each release watches a CI run and merges a PR. Running these
-  // concurrently would interleave `gh run watch` output into an unreadable mess.
-  const outcomes: DeployOutcome[] = [];
-  for (const repo of targets) {
-    outcomes.push(await releaseOne(repo, options));
-  }
+  // A single repo keeps the live `gh run watch` view. Two or more cannot: it
+  // blocks the process and repaints the screen, so they are polled instead.
+  const outcomes =
+    targets.length === 1
+      ? [await releaseOne(targets[0], options)]
+      : await releaseMany(targets, options);
 
   printSummary(outcomes, 'staging');
   if (outcomes.some((o) => o.status === 'failed')) process.exit(1);
@@ -150,11 +341,11 @@ export function registerReleaseCommand(program: Command): void {
   program
     .command('release')
     .description('Promote develop to staging, derive the version, deploy, merge the bump PR')
-    .argument('[repository]', 'Repository name (omit and pass --all for every repo)')
+    .argument('[repositories...]', 'Repository name(s) (omit and pass --all for every repo)')
     .option('-t, --to <env>', 'Target environment (staging only)', 'staging')
     .option('-a, --all', 'Release every configured repo', false)
-    .option('--dir <path>', 'Override the local checkout path')
-    .option('-v, --target-version <version>', 'Override the derived version entirely')
+    .option('--dir <path>', 'Override the local checkout path (one repo only)')
+    .option('-v, --target-version <version>', 'Override the derived version entirely (one repo only)')
     .option('--bump <level>', 'Start a new series: patch, minor, or major')
     .option('--skip-promote', 'Deploy what is already on the branch', false)
     .option('-n, --dry-run', 'Report what would happen without merging or deploying', false)
@@ -169,7 +360,14 @@ Version derivation (from the tag currently deployed to staging):
   $ vast release VastPayPwa --bump major     1.5.5-rc15 -> 2.0.0-rc1    new major series
 
   $ vast release VastPayPwa --dry-run        show the derived version, deploy nothing
+  $ vast release VastPayPwa VastMenuPwa      both at once, one summary
   $ vast release --all                       every configured repo, one summary
+
+Several repos release side by side, as if each had its own terminal: each is
+promoted and dispatched in turn, then every CI run is watched at the same time
+and reported one line per status change. One repo refusing never stops another.
+--bump, --skip-promote and --dry-run apply to every repo named; --target-version
+and --dir are per-repo and only accepted with a single repo.
 `,
     )
     .action(executeRelease);

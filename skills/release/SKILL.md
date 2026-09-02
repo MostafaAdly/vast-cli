@@ -22,6 +22,7 @@ This skill lives beside the CLI it drives. The helper it uses is at
 
 ```
 /release <repo>                  promote + deploy to staging
+/release <repo> <repo> ...       several repos to staging, side by side
 /release <repo> --to production  cut the release PR (never deploys)
 /release triage <repo>           diagnose the last failed run only
 /release notes <repo>            draft QC notes only
@@ -101,6 +102,22 @@ If the user asked for a new version series, pass it through: `--bump patch`,
 `--bump minor`, or `--bump major`. Do not invent a version. `--target-version`
 is only for repos whose tag `vast` cannot parse — it says so explicitly, naming
 the tag, for example `1.1.3-rc4-health`.
+
+**Several repos at once.** Pass them all to one command, in one dry run and one
+real run:
+
+```bash
+vast release <repo> <repo> --dry-run
+vast release <repo> <repo>
+```
+
+`vast` promotes and dispatches each in turn, then watches every CI run at the
+same time and prints one line per repo whenever its run changes status, with a
+heartbeat every 30 seconds. One repo refusing never stops the others: report
+each repo's outcome from the summary separately, and handle a conflict (§2) or a
+failed run (§4) for just that repo. A failed run's summary line carries its run
+URL. `--target-version` and `--dir` are per-repo, so `vast` refuses them with
+more than one repo — release that repo on its own instead.
 
 ---
 

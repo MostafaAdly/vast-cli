@@ -5,14 +5,18 @@
  * and repositories in the Vast-menu organization.
  */
 
-import { execSync, spawn } from "child_process";
+import { execFile, execSync } from "child_process";
+import { promisify } from "util";
 import chalk from "chalk";
 import { createSpinner, log } from "./ui.js";
+import type { RunStatus } from "./run-poll.js";
 import type {
   GitHubWorkflow,
   WorkflowRunParams,
   WorkflowRunResult,
 } from "../types/index.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Vast-menu organization name */
 const ORG_NAME = "Vast-menu";
@@ -262,6 +266,29 @@ export async function waitForWorkflowCompletion(
   } catch {
     return false; // Non-zero exit code means failure
   }
+}
+
+/**
+ * A run's current status, read without blocking the process.
+ *
+ * The multi-repo release watches several runs concurrently, which
+ * waitForWorkflowCompletion cannot do — `gh run watch` under execSync
+ * freezes the event loop for the whole build. gh reports an empty
+ * conclusion until the run completes; that is surfaced as null.
+ */
+export async function getRunStatus(repo: string, runId: number): Promise<RunStatus> {
+  const { stdout } = await execFileAsync(
+    "gh",
+    ["run", "view", String(runId), "--repo", `${ORG_NAME}/${repo}`, "--json", "status,conclusion"],
+    { encoding: "utf-8" },
+  );
+  const parsed = JSON.parse(stdout) as { status: string; conclusion: string };
+  return { status: parsed.status, conclusion: parsed.conclusion || null };
+}
+
+/** Where a human goes to read a run's failed steps. */
+export function runUrl(repo: string, runId: number): string {
+  return `https://github.com/${ORG_NAME}/${repo}/actions/runs/${runId}`;
 }
 
 // The repository list moved to src/config/repos.ts, which carries canonical

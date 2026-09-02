@@ -4,6 +4,7 @@
  * Wrapper around the `gh` CLI for interacting with GitHub workflows
  * and repositories in the Vast-menu organization.
  */
+import type { RunStatus } from "./run-poll.js";
 import type { GitHubWorkflow, WorkflowRunParams, WorkflowRunResult } from "../types/index.js";
 /**
  * Check if the gh CLI is installed and authenticated
@@ -59,4 +60,15 @@ export declare function mergePullRequest(repo: string, prNumber: number): Promis
  * @returns true if the run concluded successfully
  */
 export declare function waitForWorkflowCompletion(repo: string, runId: number): Promise<boolean>;
+/**
+ * A run's current status, read without blocking the process.
+ *
+ * The multi-repo release watches several runs concurrently, which
+ * waitForWorkflowCompletion cannot do — `gh run watch` under execSync
+ * freezes the event loop for the whole build. gh reports an empty
+ * conclusion until the run completes; that is surfaced as null.
+ */
+export declare function getRunStatus(repo: string, runId: number): Promise<RunStatus>;
+/** Where a human goes to read a run's failed steps. */
+export declare function runUrl(repo: string, runId: number): string;
 //# sourceMappingURL=github.d.ts.map
