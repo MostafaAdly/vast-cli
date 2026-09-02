@@ -16,6 +16,8 @@
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
 import { type DeployOutcome } from './deploy.js';
+import { type PollTiming } from '../utils/run-poll.js';
+import { type StatusBoard } from '../utils/status-board.js';
 export interface ReleaseOptions {
     to: string;
     dir?: string;
@@ -70,10 +72,27 @@ export interface InFlight {
  * two- or three-repo release as responsive as a single one.
  */
 export declare function pollIntervalFor(runCount: number): number;
+/**
+ * The polling timing for a whole watch, live or piped.
+ *
+ * When the board is live each repo owns one line that is rewritten in place, so
+ * a heartbeat on every poll costs no scrollback and keeps the elapsed time on
+ * every line moving. Piped output appends instead, so it keeps the slow default
+ * heartbeat rather than one line per repo every few seconds.
+ */
+export declare function pollTimingFor(runCount: number, live: boolean): PollTiming;
+/** The one line of the board a repo owns, and how wide its name is padded. */
+export interface FinishSlot {
+    board: StatusBoard;
+    row: number;
+    labelWidth: number;
+}
 /** The two halves of a multi-repo release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps {
     launch: (repo: RepoConfig, options: ReleaseOptions) => Promise<InFlight | DeployOutcome>;
-    finish: (flight: InFlight, labelWidth: number, pollMs: number) => Promise<DeployOutcome>;
+    finish: (flight: InFlight, slot: FinishSlot, timing: PollTiming) => Promise<DeployOutcome>;
+    /** Injectable so a test can record what each repo wrote to its line. */
+    board?: (rows: number) => StatusBoard;
 }
 /**
  * Several repos, like one terminal per repo. Promote and dispatch each in turn

@@ -196,21 +196,29 @@ build instead of one per repo. Whichever run finishes first gets its bump PR mer
 immediately. One repo refusing (a conflict, a dirty tree) never stops the others; the
 summary lists every outcome and the command exits non-zero if any failed.
 
-With more than one repo the live `gh run watch` view is replaced by one line per repo
-whenever its run changes status, plus a heartbeat every 30 seconds:
+With more than one repo the live `gh run watch` view is replaced by a status block. On a
+terminal each watched run owns one line, rewritten in place as it goes:
 
 ```
-  VastPayPwaV2  run 19384772  in_progress  2m30s
-  VastPayPwa    run 19384791  queued       2m30s
+  VastMenu-DashBoard  run 33633763604  in_progress  1m05s
+  VastPayPwa          run 33633763712  queued       1m05s
 ```
+
+The elapsed time refreshes on every status check. When a run finishes its line becomes
+`succeeded  8m12s  looking for the bump PR...`, then `succeeded  8m12s  PR #123 merged`;
+a failed run's line becomes `failed  8m12s  <run URL>`. Lines longer than the terminal
+width are cut to fit — the full detail, including the URL, is in the summary below the
+block.
+
+When the output is piped there is no cursor to move, so the CLI appends one line per
+status change instead, plus a heartbeat every 30 seconds. That is what the `/release`
+Claude skill sees.
 
 Status is checked every 5 seconds for up to five runs, then one second slower per run
 beyond that, so a nine-repo `--all` sweep checks every 9 seconds — a full sweep stays
 well inside GitHub's API allowance. A read that fails prints `status read failed,
-retrying` and polling carries on; only twelve failures in a row, about a minute, report
-that repo as failed. A failed run's summary line carries the run URL, since the
-step-by-step output is no longer on screen. A single repo keeps the live view exactly as
-before.
+retrying` once per streak and polling carries on; only twelve failures in a row, about a
+minute, report that repo as failed. A single repo keeps the live view exactly as before.
 
 Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
 name anywhere refuses the whole command before anything runs. `--bump`,

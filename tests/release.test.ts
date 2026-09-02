@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pollIntervalFor,
+  pollTimingFor,
   releaseMany,
   releaseTargets,
   validateReleaseOptions,
@@ -10,6 +11,7 @@ import {
 } from '../src/commands/release.js';
 import { notClonedOutcome, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
+import type { StatusBoard } from '../src/utils/status-board.js';
 
 // Regression: `vast release --all` must never include an unreleasable repo.
 // It previously iterated the raw REPOS list, so an unreleasable repo
@@ -155,6 +157,30 @@ test('the poll interval is one second per run, floored at five seconds', () => {
   assert.equal(pollIntervalFor(9), 9000);
 });
 
+// On a TTY every line is rewritten in place, so the heartbeat can fire on every
+// poll: the elapsed time on each repo's line stays live at no extra cost in
+// scrollback. Piped output appends, so it keeps the slow 30s heartbeat.
+test('a live board heartbeats on every poll, piped output every 30s', () => {
+  assert.deepEqual(pollTimingFor(2, true), {
+    pollMs: 5000,
+    heartbeatMs: 5000,
+    maxConsecutiveErrors: 12,
+  });
+  assert.deepEqual(pollTimingFor(2, false), {
+    pollMs: 5000,
+    heartbeatMs: 30000,
+    maxConsecutiveErrors: 12,
+  });
+});
+
+test('the live heartbeat follows the scaled poll interval', () => {
+  assert.deepEqual(pollTimingFor(9, true), {
+    pollMs: 9000,
+    heartbeatMs: 9000,
+    maxConsecutiveErrors: 12,
+  });
+});
+
 const MANY_OPTIONS: ReleaseOptions = {
   to: 'staging',
   dryRun: false,
@@ -210,6 +236,42 @@ test('a repo that fails to launch does not stop the others being finished', asyn
     },
   });
   assert.deepEqual(finished.sort(), ['VastMenu-DashBoard', 'VastMenuPwa']);
+});
+
+// Each in-flight repo owns exactly one line of the board, numbered in launch
+// order, and every repo shares one board — two boards would each believe they
+// own the cursor and overwrite each other's lines.
+test('every in-flight repo gets its own row on one shared board', async () => {
+  const board: StatusBoard = { update: () => {} };
+  const seen: Array<[string, number, number, unknown]> = [];
+  await releaseMany(
+    targetsFor(FOUR),
+    MANY_OPTIONS,
+    {
+      launch: async (repo) => alternatingLaunch(repo),
+      finish: async (flight, slot) => {
+        seen.push([flight.repo.name, slot.row, slot.labelWidth, slot.board]);
+        return released(flight);
+      },
+      board: () => board,
+    },
+  );
+  assert.deepEqual(
+    seen.map(([name, row]) => [name, row]),
+    [
+      ['VastMenuPwa', 0],
+      ['VastMenu-DashBoard', 1],
+    ],
+  );
+  // Padded to the longest in-flight name, so 'run 123' lines up across repos.
+  assert.deepEqual(
+    seen.map(([, , width]) => width),
+    ['VastMenu-DashBoard'.length, 'VastMenu-DashBoard'.length],
+  );
+  assert.ok(
+    seen.every(([, , , b]) => b === board),
+    'every repo must write to the same board',
+  );
 });
 
 test('a finish that throws fails only its own repo', async () => {
