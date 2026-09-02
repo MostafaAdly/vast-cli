@@ -45,6 +45,11 @@ export declare function verifyReleaseMerged(dir: string, version: string): Promi
  * dropped: staging 2.1.0-rc45 -> production 2.1.0.
  */
 export declare function versionFor(env: 'staging' | 'production', stagingTag: string): string;
+/**
+ * The title the deploy workflow gives its version-bump PR. Both `deploy` and
+ * the concurrent `release` path search by it, so it lives in one place.
+ */
+export declare function bumpPrTitle(version: string, env: 'staging' | 'production'): string;
 export declare function confirmProduction(repo: string, version: string): Promise<boolean>;
 export declare function deployOne(repo: RepoConfig, env: 'staging' | 'production', version: string, dryRun: boolean): Promise<DeployOutcome>;
 export declare function printSummary(outcomes: DeployOutcome[], env: string): void;

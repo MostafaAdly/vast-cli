@@ -77,6 +77,13 @@ export async function verifyReleaseMerged(dir, version) {
 export function versionFor(env, stagingTag) {
     return env === 'production' ? stripRc(stagingTag) : nextRc(stagingTag);
 }
+/**
+ * The title the deploy workflow gives its version-bump PR. Both `deploy` and
+ * the concurrent `release` path search by it, so it lives in one place.
+ */
+export function bumpPrTitle(version, env) {
+    return `chore: bump version to ${version} in ${getEnvName(env)} environment`;
+}
 export async function confirmProduction(repo, version) {
     const { ok } = await inquirer.prompt([
         {
@@ -113,7 +120,7 @@ export async function deployOne(repo, env, version, dryRun) {
     if (!(await waitForWorkflowCompletion(repo.name, result.runId))) {
         return { repo: repo.name, version, status: 'failed', detail: `run ${result.runId} failed` };
     }
-    const prTitle = `chore: bump version to ${version} in ${getEnvName(env)} environment`;
+    const prTitle = bumpPrTitle(version, env);
     const spinner = createSpinner(`${repo.name}: looking for the bump PR...`);
     spinner.start();
     let prNumber = null;

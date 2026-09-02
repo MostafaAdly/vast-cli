@@ -49,3 +49,15 @@ test('either way the outcome says the repo is not cloned', () => {
     assert.match(outcome.detail, /vast clone/);
   }
 });
+
+// The bump PR is found by title, and `vast release` searches for the same
+// title on its concurrent path — so the exact wording is a contract with the
+// deploy workflow, not a cosmetic string.
+test('bumpPrTitle is the title the deploy workflow gives its PR', async () => {
+  const { bumpPrTitle } = await import('../src/commands/deploy.js');
+  assert.equal(
+    bumpPrTitle('1.2.3-rc4', 'staging'),
+    'chore: bump version to 1.2.3-rc4 in stage environment',
+  );
+  assert.equal(bumpPrTitle('1.2.3', 'production'), 'chore: bump version to 1.2.3 in prod environment');
+});

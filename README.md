@@ -9,8 +9,9 @@ ritual with a few commands, and derives version numbers from what is actually de
 rather than from memory.
 
 ```bash
-vast status --all          # what is live everywhere
-vast release VastPayPwa    # develop → staging, versioned, deployed, bump PR merged
+vast status --all                     # what is live everywhere
+vast release VastPayPwa               # develop → staging, versioned, deployed, bump PR merged
+vast release VastPayPwa VastMenuPwa   # both at once, side by side
 ```
 
 ---
@@ -181,6 +182,41 @@ vast release VastPayPwa --dry-run       # show the derived version, change nothi
 Zero-padded series (`1.6.9-rc03`) keep their padding. A tag with an ad-hoc suffix
 (`1.1.3-rc4-health`) is ambiguous to increment, so it is refused rather than guessed —
 pass `--target-version` there.
+
+### Several repos at once
+
+```bash
+vast release VastPayPwaV2 VastPayPwa    # as if each had its own terminal
+vast release --all                      # every releasable repo the same way
+```
+
+Each repo is promoted and dispatched in turn — seconds of local `git` and `gh` — and
+then every CI run is watched **at the same time**, so the whole thing takes about one
+build instead of one per repo. Whichever run finishes first gets its bump PR merged
+immediately. One repo refusing (a conflict, a dirty tree) never stops the others; the
+summary lists every outcome and the command exits non-zero if any failed.
+
+With more than one repo the live `gh run watch` view is replaced by one line per repo
+whenever its run changes status, plus a heartbeat every 30 seconds:
+
+```
+  VastPayPwaV2  run 19384772  in_progress  2m30s
+  VastPayPwa    run 19384791  queued       2m30s
+```
+
+Status is checked every 5 seconds for up to five runs, then one second slower per run
+beyond that, so a nine-repo `--all` sweep checks every 9 seconds — a full sweep stays
+well inside GitHub's API allowance. A read that fails prints `status read failed,
+retrying` and polling carries on; only twelve failures in a row, about a minute, report
+that repo as failed. A failed run's summary line carries the run URL, since the
+step-by-step output is no longer on screen. A single repo keeps the live view exactly as
+before.
+
+Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
+name anywhere refuses the whole command before anything runs. `--bump`,
+`--skip-promote` and `--dry-run` apply to every repo; `--target-version` and `--dir`
+are per-repo and are refused with `--all` or with more than one repo — one name repeated
+in another casing is still a single repo, so it is still accepted.
 
 ### Production
 
@@ -355,7 +391,7 @@ Still stuck? `vast <command> --help` carries worked examples for every command.
 ## Development
 
 ```bash
-npm test          # node:test suite (168 tests)
+npm test          # node:test suite (253 tests)
 npm run typecheck # tsc --noEmit
 npm run build     # regenerate src/version.ts, then tsc
 npm run bundle    # single-file ESM bundle for a release
