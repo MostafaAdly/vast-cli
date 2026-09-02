@@ -204,14 +204,19 @@ whenever its run changes status, plus a heartbeat every 30 seconds:
   VastPayPwa    run 19384791  queued       2m30s
 ```
 
-Status is checked every 5 seconds, so completion is noticed almost as fast as `gh run
-watch`. A failed run's summary line carries the run URL, since the step-by-step output
-is no longer on screen. A single repo keeps the live view exactly as before.
+Status is checked every 5 seconds for up to five runs, then one second slower per run
+beyond that, so a nine-repo `--all` sweep checks every 9 seconds — a full sweep stays
+well inside GitHub's API allowance. A read that fails prints `status read failed,
+retrying` and polling carries on; only twelve failures in a row, about a minute, report
+that repo as failed. A failed run's summary line carries the run URL, since the
+step-by-step output is no longer on screen. A single repo keeps the live view exactly as
+before.
 
 Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
 name anywhere refuses the whole command before anything runs. `--bump`,
 `--skip-promote` and `--dry-run` apply to every repo; `--target-version` and `--dir`
-are per-repo and are refused with more than one.
+are per-repo and are refused with `--all` or with more than one repo — one name repeated
+in another casing is still a single repo, so it is still accepted.
 
 ### Production
 
@@ -386,7 +391,7 @@ Still stuck? `vast <command> --help` carries worked examples for every command.
 ## Development
 
 ```bash
-npm test          # node:test suite (243 tests)
+npm test          # node:test suite (253 tests)
 npm run typecheck # tsc --noEmit
 npm run build     # regenerate src/version.ts, then tsc
 npm run bundle    # single-file ESM bundle for a release

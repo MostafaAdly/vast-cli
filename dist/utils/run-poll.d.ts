@@ -47,8 +47,9 @@ export declare function formatElapsed(ms: number): string;
 /**
  * Watch one run until it completes or its status cannot be read any more.
  *
- * Prints only on a status change or when a heartbeat is due; the completion
- * line is the caller's, since only it knows how to colour success or failure.
+ * Prints on a status change, when a heartbeat is due, or when a streak of
+ * failed reads begins; the completion line is the caller's, since only it
+ * knows how to colour success or failure.
  */
 export declare function pollRun(label: string, runId: number, deps: PollDeps, timing?: PollTiming): Promise<PollResult>;
 //# sourceMappingURL=run-poll.d.ts.map

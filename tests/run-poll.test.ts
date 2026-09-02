@@ -33,6 +33,8 @@ const queued: RunStatus = { status: 'queued', conclusion: null };
 const running: RunStatus = { status: 'in_progress', conclusion: null };
 const success: RunStatus = { status: 'completed', conclusion: 'success' };
 const failure: RunStatus = { status: 'completed', conclusion: 'failure' };
+const waiting: RunStatus = { status: 'waiting', conclusion: null };
+const cancelled: RunStatus = { status: 'completed', conclusion: 'cancelled' };
 
 const timing = { pollMs: 5000, heartbeatMs: 30000, maxConsecutiveErrors: 3 };
 
@@ -78,10 +80,22 @@ test('prints a heartbeat every heartbeat interval while the status is unchanged'
   ]);
 });
 
-test('a transient error reading the status is retried, not fatal', async () => {
-  const { deps } = scripted([running, new Error('gh: connection reset'), success]);
+test('a transient error reading the status is retried, not fatal, and says so once', async () => {
+  const { deps, lines } = scripted([running, new Error('gh: connection reset'), success]);
   const result = await pollRun('VastPayPwa', 42, deps, timing);
   assert.equal(result.ok, true);
+  assert.deepEqual(lines, [
+    '  VastPayPwa  run 42  in_progress  0s',
+    '  VastPayPwa  run 42  status read failed, retrying  5s',
+  ]);
+});
+
+test('a streak of read errors prints one retry line, not one per error', async () => {
+  const boom = new Error('gh: down');
+  const { deps, lines } = scripted([boom, boom, success]);
+  const result = await pollRun('VastPayPwa', 42, deps, timing);
+  assert.equal(result.ok, true);
+  assert.deepEqual(lines, ['  VastPayPwa  run 42  status read failed, retrying  0s']);
 });
 
 test('gives up after too many consecutive read errors', async () => {
@@ -93,11 +107,30 @@ test('gives up after too many consecutive read errors', async () => {
   assert.equal(reads(), timing.maxConsecutiveErrors);
 });
 
-test('a successful read resets the error count', async () => {
+test('a successful read resets the error count, so a new streak speaks up again', async () => {
   const boom = new Error('gh: down');
-  const { deps } = scripted([boom, boom, running, boom, boom, success]);
+  const { deps, lines } = scripted([boom, boom, running, boom, boom, success]);
   const result = await pollRun('VastPayPwa', 42, deps, timing);
   assert.equal(result.ok, true);
+  assert.deepEqual(lines, [
+    '  VastPayPwa  run 42  status read failed, retrying  0s',
+    '  VastPayPwa  run 42  in_progress  10s',
+    '  VastPayPwa  run 42  status read failed, retrying  15s',
+  ]);
+});
+
+test('a waiting run is reported like any other status, then completes', async () => {
+  const { deps, lines } = scripted([waiting, success]);
+  const result = await pollRun('VastPayPwa', 42, deps, timing);
+  assert.equal(result.ok, true);
+  assert.deepEqual(lines, ['  VastPayPwa  run 42  waiting  0s']);
+});
+
+test('a cancelled run is not ok, and reports the cancellation', async () => {
+  const { deps } = scripted([running, cancelled]);
+  const result = await pollRun('VastPayPwa', 42, deps, timing);
+  assert.equal(result.ok, false);
+  assert.equal(result.conclusion, 'cancelled');
 });
 
 test('formatElapsed reads like a stopwatch', () => {

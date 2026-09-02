@@ -15,6 +15,17 @@
  */
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
+import { type DeployOutcome } from './deploy.js';
+export interface ReleaseOptions {
+    to: string;
+    dir?: string;
+    dryRun: boolean;
+    targetVersion?: string;
+    /** Start a new version series instead of continuing the current rc run. */
+    bump?: 'patch' | 'minor' | 'major';
+    skipPromote: boolean;
+    all: boolean;
+}
 /**
  * Whether this repo has a develop branch to promote into staging.
  *
@@ -46,5 +57,34 @@ export declare function releaseTargets(names: string[], all: boolean): {
     repos: RepoConfig[];
     unknown: string[];
 };
+/** A dispatched run the concurrent path is waiting on. */
+export interface InFlight {
+    repo: RepoConfig;
+    version: string;
+    runId: number;
+}
+/**
+ * How often to ask GitHub for each run's status, given how many are being
+ * watched. One second per run keeps a big `--all` sweep from hammering the API
+ * with one request per run every five seconds, and the floor keeps the common
+ * two- or three-repo release as responsive as a single one.
+ */
+export declare function pollIntervalFor(runCount: number): number;
+/** The two halves of a multi-repo release, injectable so they can be faked in tests. */
+export interface ReleaseManyDeps {
+    launch: (repo: RepoConfig, options: ReleaseOptions) => Promise<InFlight | DeployOutcome>;
+    finish: (flight: InFlight, labelWidth: number, pollMs: number) => Promise<DeployOutcome>;
+}
+/**
+ * Several repos, like one terminal per repo. Promote and dispatch each in turn
+ * (seconds), then watch every run concurrently (minutes). Outcomes come back in
+ * the order the repos were named, so the summary reads the way it was typed.
+ *
+ * allSettled rather than all: one repo's watch throwing must not swallow the
+ * outcomes of the repos that finished fine. That is the whole promise of the
+ * multi-repo path, so it is structural here rather than a matter of every
+ * caller downstream remembering to catch.
+ */
+export declare function releaseMany(targets: RepoConfig[], options: ReleaseOptions, deps?: ReleaseManyDeps): Promise<DeployOutcome[]>;
 export declare function registerReleaseCommand(program: Command): void;
 //# sourceMappingURL=release.d.ts.map

@@ -116,8 +116,10 @@ same time and prints one line per repo whenever its run changes status, with a
 heartbeat every 30 seconds. One repo refusing never stops the others: report
 each repo's outcome from the summary separately, and handle a conflict (§2) or a
 failed run (§4) for just that repo. A failed run's summary line carries its run
-URL. `--target-version` and `--dir` are per-repo, so `vast` refuses them with
-more than one repo — release that repo on its own instead.
+URL; a `status read failed, retrying` line is a transient read, not a failed run.
+`--target-version` and `--dir` are per-repo, so `vast` refuses them with `--all`
+or with more than one repo — release that repo on its own instead. Repeating one
+name in a different casing still counts as a single repo.
 
 ---
 

@@ -36,8 +36,9 @@ export function formatElapsed(ms) {
 /**
  * Watch one run until it completes or its status cannot be read any more.
  *
- * Prints only on a status change or when a heartbeat is due; the completion
- * line is the caller's, since only it knows how to colour success or failure.
+ * Prints on a status change, when a heartbeat is due, or when a streak of
+ * failed reads begins; the completion line is the caller's, since only it
+ * knows how to colour success or failure.
  */
 export async function pollRun(label, runId, deps, timing = DEFAULT_TIMING) {
     const start = deps.now();
@@ -52,6 +53,12 @@ export async function pollRun(label, runId, deps, timing = DEFAULT_TIMING) {
         }
         catch (error) {
             consecutiveErrors++;
+            // Say something the first time a streak starts: otherwise a dead API is a
+            // silent minute followed by a failure, which reads as a hang. Only the
+            // first, so a long outage does not scroll one line per retry.
+            if (consecutiveErrors === 1) {
+                deps.print(`  ${label}  run ${runId}  status read failed, retrying  ${formatElapsed(deps.now() - start)}`);
+            }
             if (consecutiveErrors >= timing.maxConsecutiveErrors) {
                 return {
                     ok: false,
