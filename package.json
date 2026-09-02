@@ -15,7 +15,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "test:watch": "node --import tsx --test --watch tests/*.test.ts",
     "bundle": "node scripts/sync-version.mjs && esbuild src/cli-entry.ts --bundle --platform=node --target=node18 --format=esm --outfile=build/vast.mjs --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\"",
-    "version": "node scripts/sync-version.mjs && git add src/version.ts"
+    "version": "npm run build && git add src/version.ts dist"
   },
   "dependencies": {
     "boxen": "^8.0.1",

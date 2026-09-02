@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isSweep,
   pollIntervalFor,
   pollTimingFor,
   releaseMany,
@@ -8,17 +9,50 @@ import {
   validateReleaseOptions,
   type InFlight,
   type ReleaseOptions,
+  type Sweep,
 } from '../src/commands/release.js';
 import { notClonedOutcome, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
+
+/** The sweep flags, so a test only has to name the one it cares about. */
+function sweep(over: Partial<Sweep> = {}): Sweep {
+  return { all: false, frontend: false, backend: false, ...over };
+}
+
+/** Validation options, likewise: the booleans always exist, defaulted to off. */
+function opts(
+  over: Partial<{
+    all: boolean;
+    frontend: boolean;
+    backend: boolean;
+    targetVersion: string;
+    dir: string;
+    bump: string;
+  }> = {},
+): { all: boolean; frontend: boolean; backend: boolean; targetVersion?: string; dir?: string; bump?: string } {
+  return { all: false, frontend: false, backend: false, ...over };
+}
+
+const FRONTEND_TRAIN = [
+  'VastMenu-DashBoard',
+  'VastMenuPwa',
+  'VastMenuPwaV2',
+  'VastPay-DashBoard',
+  'VastPayPwa',
+  'VastPayPwaV2',
+];
+const BACKEND_TRAIN = ['VastMenu-BackEnd', 'VastPay-BackEnd'];
+
+const targetNames = (names: string[], s: Sweep): string[] =>
+  releaseTargets(names, s).repos.map((r) => r.name);
 
 // Regression: `vast release --all` must never include an unreleasable repo.
 // It previously iterated the raw REPOS list, so an unreleasable repo
 // (Terraform, vastpay-payment-odoo, Vast-Finance) that simply was not cloned
 // yet produced a 'failed' outcome and took process.exit(1) down with it.
 test('--all targets only releasable repos', () => {
-  const names = releaseTargets([], true).repos.map((r) => r.name);
+  const names = targetNames([], sweep({ all: true }));
   assert.ok(!names.includes('Terraform'), 'Terraform is not releasable and must not be a target');
   assert.ok(
     !names.includes('vastpay-payment-odoo'),
@@ -28,13 +62,68 @@ test('--all targets only releasable repos', () => {
   assert.ok(names.includes('VastPayPwa'), 'a releasable repo must still be a target');
 });
 
+// The trains are the whole point of a sweep: --all is the frontend train
+// followed by the backend train, nothing else, in that order.
+test('--all is the six frontend repos then the two backend repos', () => {
+  const names = targetNames([], sweep({ all: true }));
+  assert.equal(names.length, FRONTEND_TRAIN.length + BACKEND_TRAIN.length);
+  const front = names.slice(0, FRONTEND_TRAIN.length);
+  const back = names.slice(FRONTEND_TRAIN.length);
+  assert.deepEqual([...front].sort(), FRONTEND_TRAIN);
+  assert.deepEqual([...back].sort(), BACKEND_TRAIN);
+  // The block order is the trains', not the config's: frontend, then backend.
+  assert.deepEqual(names, [
+    ...targetNames([], sweep({ frontend: true })),
+    ...targetNames([], sweep({ backend: true })),
+  ]);
+});
+
+// vast-menu-payments is deliberately in no train — it is releasable by name
+// only. The infra and finance repos are not releasable at all.
+test('--all leaves out vast-menu-payments and every unreleasable repo', () => {
+  const names = targetNames([], sweep({ all: true }));
+  assert.ok(
+    !names.includes('vast-menu-payments'),
+    'vast-menu-payments is in no train on purpose — release it by name',
+  );
+  for (const off of ['Terraform', 'Vast-Finance', 'vastpay-payment-odoo']) {
+    assert.ok(!names.includes(off), `${off} must never be swept`);
+  }
+});
+
+test('--frontend is exactly the frontend train', () => {
+  assert.deepEqual(targetNames([], sweep({ frontend: true })).sort(), FRONTEND_TRAIN);
+});
+
+test('--backend is exactly the backend train', () => {
+  assert.deepEqual(targetNames([], sweep({ backend: true })).sort(), BACKEND_TRAIN);
+});
+
+test('--frontend --backend together is the same as --all', () => {
+  assert.deepEqual(
+    targetNames([], sweep({ frontend: true, backend: true })),
+    targetNames([], sweep({ all: true })),
+  );
+});
+
+test('vast-menu-payments is still releasable when it is named', () => {
+  assert.deepEqual(targetNames(['vast-menu-payments'], sweep()), ['vast-menu-payments']);
+});
+
+test('isSweep is true for any sweep flag and false for none', () => {
+  assert.equal(isSweep(sweep()), false);
+  assert.equal(isSweep(sweep({ all: true })), true);
+  assert.equal(isSweep(sweep({ frontend: true })), true);
+  assert.equal(isSweep(sweep({ backend: true })), true);
+});
+
 test('a named repo is targeted regardless of releasability', () => {
-  const names = releaseTargets(['Terraform'], false).repos.map((r) => r.name);
+  const names = targetNames(['Terraform'], sweep());
   assert.deepEqual(names, ['Terraform']);
 });
 
 test('an unknown repo name targets nothing and is reported', () => {
-  const { repos, unknown } = releaseTargets(['NotARepo'], false);
+  const { repos, unknown } = releaseTargets(['NotARepo'], sweep());
   assert.deepEqual(repos, []);
   assert.deepEqual(unknown, ['NotARepo']);
 });
@@ -43,19 +132,17 @@ test('an unknown repo name targets nothing and is reported', () => {
 // and keep the order they were typed in, so the output reads top to bottom
 // the way the user thinks about it.
 test('several names resolve to canonical configs in the order given', () => {
-  const names = releaseTargets(['Vastmenu-Dashboard', 'Vastpay-Dashboard'], false).repos.map(
-    (r) => r.name,
-  );
+  const names = targetNames(['Vastmenu-Dashboard', 'Vastpay-Dashboard'], sweep());
   assert.deepEqual(names, ['VastMenu-DashBoard', 'VastPay-DashBoard']);
 });
 
 test('the same repo named twice, in any casing, is one target', () => {
-  const names = releaseTargets(['VastPayPwa', 'vastpaypwa'], false).repos.map((r) => r.name);
+  const names = targetNames(['VastPayPwa', 'vastpaypwa'], sweep());
   assert.deepEqual(names, ['VastPayPwa']);
 });
 
 test('every unknown name is reported while the known ones still resolve', () => {
-  const { repos, unknown } = releaseTargets(['VastPayPwa', 'Nope', 'Nada'], false);
+  const { repos, unknown } = releaseTargets(['VastPayPwa', 'Nope', 'Nada'], sweep());
   assert.deepEqual(
     repos.map((r) => r.name),
     ['VastPayPwa'],
@@ -66,40 +153,59 @@ test('every unknown name is reported while the known ones still resolve', () => 
 // Option validation runs before anything is touched: a bad combination must
 // refuse the whole command, never release the first repo and then complain.
 test('--all together with names is refused', () => {
-  assert.match(validateReleaseOptions(['VastPayPwa'], { all: true }) ?? '', /--all/);
+  assert.match(validateReleaseOptions(['VastPayPwa'], opts({ all: true })) ?? '', /--all/);
+});
+
+// Every sweep flag is exclusive with names, not just --all.
+test('--frontend together with a name is refused', () => {
+  assert.match(
+    validateReleaseOptions(['VastPayPwa'], opts({ frontend: true })) ?? '',
+    /--frontend/,
+  );
 });
 
 test('--target-version is per-repo, so it is refused with more than one repo', () => {
-  const err = validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], {
-    all: false,
-    targetVersion: '1.2.3',
-  });
+  const err = validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], opts({ targetVersion: '1.2.3' }));
   assert.match(err ?? '', /--target-version/);
-  assert.equal(validateReleaseOptions(['VastPayPwa'], { all: false, targetVersion: '1.2.3' }), null);
+  assert.equal(validateReleaseOptions(['VastPayPwa'], opts({ targetVersion: '1.2.3' })), null);
 });
 
 test('--dir names one checkout, so it is refused with more than one repo', () => {
-  const err = validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], { all: false, dir: '/tmp/x' });
+  const err = validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], opts({ dir: '/tmp/x' }));
   assert.match(err ?? '', /--dir/);
-  assert.equal(validateReleaseOptions(['VastPayPwa'], { all: false, dir: '/tmp/x' }), null);
+  assert.equal(validateReleaseOptions(['VastPayPwa'], opts({ dir: '/tmp/x' })), null);
+});
+
+test('--backend is refused with --dir', () => {
+  assert.match(validateReleaseOptions([], opts({ backend: true, dir: '/tmp/x' })) ?? '', /--dir/);
+});
+
+test('--frontend is refused with --target-version', () => {
+  assert.match(
+    validateReleaseOptions([], opts({ frontend: true, targetVersion: '1.2.3' })) ?? '',
+    /--target-version/,
+  );
+});
+
+test('both trains at once with --bump is a valid combination', () => {
+  assert.equal(
+    validateReleaseOptions([], opts({ frontend: true, backend: true, bump: 'minor' })),
+    null,
+  );
 });
 
 test('--bump and --target-version are mutually exclusive', () => {
-  const err = validateReleaseOptions(['VastPayPwa'], {
-    all: false,
-    bump: 'minor',
-    targetVersion: '1.2.3',
-  });
+  const err = validateReleaseOptions(['VastPayPwa'], opts({ bump: 'minor', targetVersion: '1.2.3' }));
   assert.match(err ?? '', /mutually exclusive/);
 });
 
 test('an unknown --bump level is refused', () => {
-  assert.match(validateReleaseOptions(['VastPayPwa'], { all: false, bump: 'huge' }) ?? '', /--bump/);
+  assert.match(validateReleaseOptions(['VastPayPwa'], opts({ bump: 'huge' })) ?? '', /--bump/);
 });
 
 test('several repos with --bump is a valid combination', () => {
   assert.equal(
-    validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], { all: false, bump: 'minor' }),
+    validateReleaseOptions(['VastPayPwa', 'VastMenuPwa'], opts({ bump: 'minor' })),
     null,
   );
 });
@@ -131,19 +237,19 @@ test('release skips promotion for repos with no develop, and only those', async 
 // be refused there too — the help text and README both say they are. And a
 // repo named twice is still one repo, so casing must not turn it into "many".
 test('--all is refused with --dir', () => {
-  assert.match(validateReleaseOptions([], { all: true, dir: '/tmp/x' }) ?? '', /--dir/);
+  assert.match(validateReleaseOptions([], opts({ all: true, dir: '/tmp/x' })) ?? '', /--dir/);
 });
 
 test('--all is refused with --target-version', () => {
   assert.match(
-    validateReleaseOptions([], { all: true, targetVersion: '1.2.3' }) ?? '',
+    validateReleaseOptions([], opts({ all: true, targetVersion: '1.2.3' })) ?? '',
     /--target-version/,
   );
 });
 
 test('one repo named twice in different casing still accepts --target-version', () => {
   assert.equal(
-    validateReleaseOptions(['VastPayPwa', 'vastpaypwa'], { all: false, targetVersion: '1.2.3' }),
+    validateReleaseOptions(['VastPayPwa', 'vastpaypwa'], opts({ targetVersion: '1.2.3' })),
     null,
   );
 });
@@ -186,6 +292,8 @@ const MANY_OPTIONS: ReleaseOptions = {
   dryRun: false,
   skipPromote: false,
   all: false,
+  frontend: false,
+  backend: false,
 };
 
 const FOUR = ['VastPayPwa', 'VastMenuPwa', 'VastPay-DashBoard', 'VastMenu-DashBoard'];

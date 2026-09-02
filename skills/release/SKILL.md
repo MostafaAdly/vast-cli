@@ -23,6 +23,8 @@ This skill lives beside the CLI it drives. The helper it uses is at
 ```
 /release <repo>                  promote + deploy to staging
 /release <repo> <repo> ...       several repos to staging, side by side
+/release --frontend              the frontend release train
+/release --backend               the backend release train
 /release <repo> --to production  cut the release PR (never deploys)
 /release triage <repo>           diagnose the last failed run only
 /release notes <repo>            draft QC notes only
@@ -111,6 +113,13 @@ vast release <repo> <repo> --dry-run
 vast release <repo> <repo>
 ```
 
+Whole teams have their own flags: `--frontend` releases VastMenu-DashBoard,
+VastMenuPwa, VastMenuPwaV2, VastPayPwa, VastPayPwaV2 and VastPay-DashBoard;
+`--backend` releases VastPay-BackEnd and VastMenu-BackEnd; `--all` is both trains.
+`vast-menu-payments` is in neither train, so a sweep never touches it — release it by
+naming it explicitly. Repo names cannot be mixed with a sweep flag, and a repo the user
+has not cloned is skipped by a sweep rather than failing it.
+
 `vast` promotes and dispatches each in turn, then watches every CI run at the
 same time. Because this skill's output is piped, `vast` prints one line per repo
 whenever its run changes status, with a heartbeat every 30 seconds; a human at a
@@ -119,7 +128,7 @@ stops the others: report each repo's outcome from the summary separately, and
 handle a conflict (§2) or a failed run (§4) for just that repo. A failed run's
 summary line carries its run URL; a `status read failed, retrying` line is a
 transient read, not a failed run. `--target-version` and `--dir` are per-repo,
-so `vast` refuses them with `--all` or with more than one repo — release that
+so `vast` refuses them with a sweep flag or with more than one repo — release that
 repo on its own instead. Repeating one name in a different casing still counts
 as a single repo.
 

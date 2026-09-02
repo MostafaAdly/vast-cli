@@ -17,9 +17,12 @@ works without an authenticated `gh`.
 - **`dist/` is committed on purpose** — `bin/vast.js` loads from it so the CLI
   runs straight from a clone. Run `npm run build` before manually testing or
   you are testing stale code, and commit the rebuilt `dist/` with source changes.
+  The `version` lifecycle hook rebuilds `dist/` too, so a tag never ships a
+  stale dist.
 - **`src/version.ts` is generated** from `package.json` by
   `scripts/sync-version.mjs`. Never hand-edit it; `npm version <level>`
-  regenerates and stages it via the `version` lifecycle hook.
+  regenerates it, rebuilds `dist/`, and stages both via the `version` lifecycle
+  hook.
 - **The release bundle ships as `vast.mjs`, never `.js`.** Node 18 and 20 cannot
   detect ESM in a `.js` file and fail with "Cannot use import statement outside
   a module". Do not rename it anywhere: bundle script, workflow, installer.

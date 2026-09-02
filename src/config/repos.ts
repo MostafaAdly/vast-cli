@@ -5,6 +5,11 @@
  * this list for cloning can never leak an infra or integration repo into
  * status, promote, or deploy.
  *
+ * Two different groupings live here and must not be conflated: `teams` drives
+ * `vast clone --team`, while `releaseTeam` drives the `vast release --frontend`
+ * / `--backend` sweeps. A repo can be cloned with a team without riding its
+ * release train.
+ *
  * Names are the canonical GitHub spellings, matching
  * ~/.claude/vast-routines/scripts/repos.txt. Do not "fix" the casing —
  * tests/repos.test.ts guards against drift in either direction. The config
@@ -13,6 +18,9 @@
  * Workflow names and Helm paths below were read from GitHub on 2026-08-04,
  * not assumed.
  */
+
+export type ReleaseTeam = 'frontend' | 'backend';
+export const RELEASE_TEAMS: ReleaseTeam[] = ['frontend', 'backend'];
 
 export interface RepoConfig {
   /** Canonical GitHub repo name. */
@@ -36,6 +44,13 @@ export interface RepoConfig {
    * Empty means it exists in the list but no profile clones it.
    */
   teams: string[];
+  /**
+   * Which `vast release` sweep this repo rides in — `--frontend`, `--backend`,
+   * or none (released only by name). Distinct from `teams`, which drives
+   * `vast clone`: vast-menu-payments is cloned with the frontend but is not
+   * part of the frontend release train.
+   */
+  releaseTeam: ReleaseTeam | null;
 }
 
 const HELM = {
@@ -50,12 +65,14 @@ const fe = (
   name: string,
   workflow: string | null,
   teams: string[] = ['frontend'],
+  releaseTeam: ReleaseTeam | null = 'frontend',
 ): RepoConfig => ({
   name,
   workflow,
   helm: { ...HELM },
   promoteFrom: { ...FRONTEND_PROMOTION },
   teams,
+  releaseTeam,
 });
 
 export const REPOS: RepoConfig[] = [
@@ -65,7 +82,9 @@ export const REPOS: RepoConfig[] = [
   fe('VastMenuPwaV2', 'pwa-v2-ci-new'),
   fe('VastPayPwa', 'vastpay-pwa-ci-new'),
   fe('VastMenu-DashBoard', 'dashboard-ci-new'),
-  fe('vast-menu-payments', 'payments-ci-new'),
+  // Cloned with the frontend but deliberately out of the frontend release
+  // train — it ships on its own cadence and is released by name only.
+  fe('vast-menu-payments', 'payments-ci-new', ['frontend'], null),
 
   // Vast-Finance has no Helm directory and no CI workflow — only review bots
   // (Claude PR Review, Copilot, CodeQL). Verified via the GitHub API on
@@ -77,6 +96,7 @@ export const REPOS: RepoConfig[] = [
     helm: { staging: null, production: null },
     promoteFrom: { ...FRONTEND_PROMOTION },
     teams: ['frontend'],
+    releaseTeam: null,
   },
 
   // Dead `develop` — no promotion source into staging. Human PRs in these two
@@ -87,6 +107,7 @@ export const REPOS: RepoConfig[] = [
     helm: { ...HELM },
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
+    releaseTeam: 'backend',
   },
   {
     name: 'VastMenu-BackEnd',
@@ -94,6 +115,7 @@ export const REPOS: RepoConfig[] = [
     helm: { ...HELM },
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
+    releaseTeam: 'backend',
   },
 
   // Cloneable, not releasable: no Helm values and no deploy workflow here, so
@@ -104,6 +126,7 @@ export const REPOS: RepoConfig[] = [
     helm: { staging: null, production: null },
     promoteFrom: { staging: null, production: null },
     teams: ['backend'],
+    releaseTeam: null,
   },
   {
     name: 'Terraform',
@@ -111,6 +134,7 @@ export const REPOS: RepoConfig[] = [
     helm: { staging: null, production: null },
     promoteFrom: { staging: null, production: null },
     teams: ['infra'],
+    releaseTeam: null,
   },
 ];
 
@@ -132,6 +156,11 @@ export const TEAMS = ['frontend', 'backend', 'infra', 'all'];
 export function reposForTeam(team: string): RepoConfig[] {
   if (team === 'all') return REPOS.filter((r) => r.teams.length > 0);
   return REPOS.filter((r) => r.teams.includes(team));
+}
+
+/** Repos a `vast release --<team>` sweep acts on, in REPOS order. */
+export function reposForRelease(team: ReleaseTeam): RepoConfig[] {
+  return REPOS.filter((r) => r.releaseTeam === team);
 }
 
 /**
