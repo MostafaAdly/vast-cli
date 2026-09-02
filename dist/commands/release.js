@@ -13,7 +13,7 @@
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one.
  */
-import { REPOS, getRepo, isReleasable } from '../config/repos.js';
+import { getRepo, reposForRelease } from '../config/repos.js';
 import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { readDeployedTag } from '../utils/helm.js';
 import { promote } from './promote.js';
@@ -24,6 +24,9 @@ import { DEFAULT_TIMING, formatElapsed, pollRun } from '../utils/run-poll.js';
 import { createStatusBoard } from '../utils/status-board.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 const BUMP_LEVELS = ['patch', 'minor', 'major'];
+export function isSweep(s) {
+    return s.all || s.frontend || s.backend;
+}
 /**
  * Whether this repo has a develop branch to promote into staging.
  *
@@ -39,8 +42,9 @@ export function needsPromotion(repo) {
  * touched — never after the first repo has already been released.
  */
 export function validateReleaseOptions(names, options) {
-    if (options.all && names.length > 0)
-        return 'Pass repository names or --all, not both.';
+    if (isSweep(options) && names.length > 0) {
+        return 'Pass repository names or a sweep flag (--all, --frontend, --backend), not both.';
+    }
     if (options.bump && options.targetVersion)
         return '--bump and --target-version are mutually exclusive.';
     if (options.bump && !BUMP_LEVELS.includes(options.bump)) {
@@ -48,27 +52,43 @@ export function validateReleaseOptions(names, options) {
     }
     // A repo named twice is still one repo, so the count is of distinct names —
     // matching how releaseTargets dedupes, casing and all.
-    const many = options.all || new Set(names.map((n) => n.toLowerCase())).size > 1;
+    const many = isSweep(options) || new Set(names.map((n) => n.toLowerCase())).size > 1;
     if (many && options.targetVersion) {
-        return '--target-version is per repository — each repo derives its own. It cannot be used with --all or more than one repository.';
+        return '--target-version is per repository — each repo derives its own. It cannot be used with a sweep flag or more than one repository.';
     }
     if (many && options.dir) {
-        return '--dir names one checkout, so it cannot be used with --all or more than one repository.';
+        return '--dir names one checkout, so it cannot be used with a sweep flag or more than one repository.';
     }
     return null;
 }
 /**
  * Repos `vast release` acts on, in the order they were named, deduplicated.
  *
- * `--all` is filtered to releasable repos, so an unreleasable repo (no
- * workflow / no Helm) that simply is not cloned yet cannot fail the whole
- * sweep with a spurious "not cloned". Named repos are never filtered: an
+ * A sweep releases whole trains, declared per repo in the config rather than
+ * derived here: a repo outside both trains (vast-menu-payments) and an
+ * unreleasable one (Terraform, Vast-Finance, vastpay-payment-odoo) are simply
+ * never swept, so a sweep can never fail on a repo the user was not asking
+ * about. `--all` is the frontend train then the backend one; naming the trains
+ * individually keeps that same order. Named repos are never filtered: an
  * explicit `vast release Terraform` deserves "no deploy workflow", not
  * "unknown repository".
  */
-export function releaseTargets(names, all) {
-    if (all)
-        return { repos: REPOS.filter(isReleasable), unknown: [] };
+export function releaseTargets(names, sweep) {
+    if (isSweep(sweep)) {
+        const trains = sweep.all
+            ? ['frontend', 'backend']
+            : [
+                ...(sweep.frontend ? ['frontend'] : []),
+                ...(sweep.backend ? ['backend'] : []),
+            ];
+        const swept = [];
+        for (const train of trains) {
+            for (const repo of reposForRelease(train))
+                if (!swept.includes(repo))
+                    swept.push(repo);
+        }
+        return { repos: swept, unknown: [] };
+    }
     const repos = [];
     const unknown = [];
     for (const name of names) {
@@ -89,8 +109,10 @@ function isOutcome(x) {
  */
 function prepareOne(repo, options) {
     const dir = repoDir(repo, options.dir);
+    // Any sweep, not just --all: a repo the user did not name is skipped when it
+    // is not on this machine, and failed only when they asked for it by name.
     if (!dir)
-        return notClonedOutcome(repo.name, options.all);
+        return notClonedOutcome(repo.name, isSweep(options));
     if (!repo.workflow) {
         return { repo: repo.name, version: '—', status: 'skipped', detail: 'no deploy workflow exists' };
     }
@@ -318,13 +340,13 @@ async function executeRelease(repoNames, options) {
             'The promote works any time; only the deploy needs `vast production enable`.'));
         process.exit(1);
     }
-    const { repos: targets, unknown } = releaseTargets(repoNames, options.all);
+    const { repos: targets, unknown } = releaseTargets(repoNames, options);
     if (unknown.length > 0) {
         log.error(`Unknown ${unknown.length === 1 ? 'repository' : 'repositories'}: ${unknown.join(', ')}`);
         process.exit(1);
     }
     if (targets.length === 0) {
-        log.error('Specify a repository or --all');
+        log.error('Specify a repository, or --all / --frontend / --backend');
         process.exit(1);
     }
     console.log(createHeader('Release', `${targets.length} repo(s) | → staging`));
@@ -337,13 +359,21 @@ async function executeRelease(repoNames, options) {
     if (outcomes.some((o) => o.status === 'failed'))
         process.exit(1);
 }
+/** The train members, listed from the config so the help can never drift from it. */
+function trainNames(team) {
+    return reposForRelease(team)
+        .map((r) => r.name)
+        .join(', ');
+}
 export function registerReleaseCommand(program) {
     program
         .command('release')
         .description('Promote develop to staging, derive the version, deploy, merge the bump PR')
-        .argument('[repositories...]', 'Repository name(s) (omit and pass --all for every repo)')
+        .argument('[repositories...]', 'Repository name(s) (omit and pass --all, --frontend or --backend)')
         .option('-t, --to <env>', 'Target environment (staging only)', 'staging')
-        .option('-a, --all', 'Release every configured repo', false)
+        .option('-a, --all', 'Release the frontend and backend repos', false)
+        .option('--frontend', 'Release the frontend repos', false)
+        .option('--backend', 'Release the backend repos', false)
         .option('--dir <path>', 'Override the local checkout path (one repo only)')
         .option('-v, --target-version <version>', 'Override the derived version entirely (one repo only)')
         .option('--bump <level>', 'Start a new series: patch, minor, or major')
@@ -359,14 +389,22 @@ Version derivation (from the tag currently deployed to staging):
 
   $ vast release VastPayPwa --dry-run        show the derived version, deploy nothing
   $ vast release VastPayPwa VastMenuPwa      both at once, one summary
-  $ vast release --all                       every configured repo, one summary
+  $ vast release --frontend                  the frontend repos, side by side
+  $ vast release --backend                   the backend repos
+  $ vast release --all                       frontend and backend, one summary
 
 Several repos release side by side, as if each had its own terminal: each is
 promoted and dispatched in turn, then every CI run is watched at the same time,
 each on its own line that updates in place (one line per change when output is
 piped). One repo refusing never stops another.
+
+Release trains (--all is both):
+  --frontend   ${trainNames('frontend')}
+  --backend    ${trainNames('backend')}
+vast-menu-payments is in neither train — release it by name.
+
 --bump, --skip-promote and --dry-run apply to every repo named; --target-version
-and --dir are per-repo and refused with --all or more than one repo.
+and --dir are per-repo and refused with a sweep flag or more than one repo.
 `)
         .action(executeRelease);
 }

@@ -27,7 +27,23 @@ export interface ReleaseOptions {
     bump?: 'patch' | 'minor' | 'major';
     skipPromote: boolean;
     all: boolean;
+    frontend: boolean;
+    backend: boolean;
 }
+/**
+ * The flags that mean "a whole release train" rather than named repos.
+ *
+ * `--all` is both trains; `--frontend` and `--backend` are one each, and may be
+ * combined. Everything downstream that used to branch on `--all` — the
+ * per-repo option refusals, the not-cloned skip — branches on `isSweep`, so a
+ * team sweep behaves exactly like `--all` did.
+ */
+export interface Sweep {
+    all: boolean;
+    frontend: boolean;
+    backend: boolean;
+}
+export declare function isSweep(s: Sweep): boolean;
 /**
  * Whether this repo has a develop branch to promote into staging.
  *
@@ -40,8 +56,7 @@ export declare function needsPromotion(repo: RepoConfig): boolean;
  * Option combinations that cannot mean anything, refused before any repo is
  * touched — never after the first repo has already been released.
  */
-export declare function validateReleaseOptions(names: string[], options: {
-    all: boolean;
+export declare function validateReleaseOptions(names: string[], options: Sweep & {
     targetVersion?: string;
     dir?: string;
     bump?: string;
@@ -49,13 +64,16 @@ export declare function validateReleaseOptions(names: string[], options: {
 /**
  * Repos `vast release` acts on, in the order they were named, deduplicated.
  *
- * `--all` is filtered to releasable repos, so an unreleasable repo (no
- * workflow / no Helm) that simply is not cloned yet cannot fail the whole
- * sweep with a spurious "not cloned". Named repos are never filtered: an
+ * A sweep releases whole trains, declared per repo in the config rather than
+ * derived here: a repo outside both trains (vast-menu-payments) and an
+ * unreleasable one (Terraform, Vast-Finance, vastpay-payment-odoo) are simply
+ * never swept, so a sweep can never fail on a repo the user was not asking
+ * about. `--all` is the frontend train then the backend one; naming the trains
+ * individually keeps that same order. Named repos are never filtered: an
  * explicit `vast release Terraform` deserves "no deploy workflow", not
  * "unknown repository".
  */
-export declare function releaseTargets(names: string[], all: boolean): {
+export declare function releaseTargets(names: string[], sweep: Sweep): {
     repos: RepoConfig[];
     unknown: string[];
 };

@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { REPOS, getRepo, isReleasable, reposForTeam, TEAMS } from '../src/config/repos.js';
+import {
+  REPOS,
+  getRepo,
+  isReleasable,
+  reposForTeam,
+  TEAMS,
+  RELEASE_TEAMS,
+  reposForRelease,
+} from '../src/config/repos.js';
 
 test('covers every configured repo', () => {
   assert.equal(REPOS.length, 12);
@@ -113,4 +121,52 @@ test('nine of the twelve repos are releasable', () => {
 // reorders it for every test that runs after this one.
 test('TEAMS lists the profiles offered', () => {
   assert.deepEqual([...TEAMS].sort(), ['all', 'backend', 'frontend', 'infra']);
+});
+
+// The release trains `vast release --frontend` / `--backend` sweep. These are
+// declared per repo, not derived from `teams`, so the two lists are asserted
+// exactly: a repo silently joining or leaving a train is a release-scope bug.
+test('the frontend release train is exactly the six frontend apps', () => {
+  const names = reposForRelease('frontend').map((r) => r.name);
+  assert.deepEqual(
+    [...names].sort(),
+    [
+      'VastMenu-DashBoard',
+      'VastMenuPwa',
+      'VastMenuPwaV2',
+      'VastPay-DashBoard',
+      'VastPayPwa',
+      'VastPayPwaV2',
+    ].sort(),
+  );
+});
+
+test('the backend release train is exactly the two backend services', () => {
+  const names = reposForRelease('backend').map((r) => r.name);
+  assert.deepEqual([...names].sort(), ['VastMenu-BackEnd', 'VastPay-BackEnd'].sort());
+});
+
+// Deliberate per the release-train spec: vast-menu-payments is cloned with the
+// frontend and can be released by name, but it must never ride a `--frontend`
+// sweep. releaseTeam is what separates the two, which is why it is null here
+// while teams still says 'frontend'.
+test('vast-menu-payments is releasable by name only, never in a sweep', () => {
+  const payments = getRepo('vast-menu-payments')!;
+  assert.equal(isReleasable(payments), true);
+  assert.equal(payments.releaseTeam, null);
+  assert.ok(payments.teams.includes('frontend'), 'still cloned with the frontend');
+});
+
+// Guards against ever putting a workflow-less repo in a sweep: everything a
+// sweep touches must be something the release commands can actually act on.
+test('every repo in a release train is releasable', () => {
+  for (const repo of REPOS.filter((r) => r.releaseTeam !== null)) {
+    assert.ok(isReleasable(repo), `${repo.name} rides a sweep but is not releasable`);
+  }
+});
+
+// Copy before sorting is unnecessary here — the order itself is the contract,
+// since it decides the order the flags are documented and offered in.
+test('RELEASE_TEAMS lists the sweep flags', () => {
+  assert.deepEqual(RELEASE_TEAMS, ['frontend', 'backend']);
 });

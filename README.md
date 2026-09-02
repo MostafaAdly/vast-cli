@@ -187,8 +187,19 @@ pass `--target-version` there.
 
 ```bash
 vast release VastPayPwaV2 VastPayPwa    # as if each had its own terminal
-vast release --all                      # every releasable repo the same way
+vast release --frontend                 # the six frontend repos
+vast release --backend                  # the two backend repos
+vast release --all                      # both trains, eight repos
 ```
+
+The frontend train is VastMenu-DashBoard, VastMenuPwa, VastMenuPwaV2, VastPayPwa,
+VastPayPwaV2 and VastPay-DashBoard; the backend train is VastPay-BackEnd and
+VastMenu-BackEnd. `--all` is both, and `--frontend --backend` together means the same.
+`vast-menu-payments` is in neither train — it is released only when you name it
+(`vast release vast-menu-payments`), while still being cloned by `vast clone --team
+frontend` and still showing in `vast status --all`. Repository names cannot be combined
+with a sweep flag. A repo you have not cloned is skipped in a sweep, and only fails when
+you name it.
 
 Each repo is promoted and dispatched in turn — seconds of local `git` and `gh` — and
 then every CI run is watched **at the same time**, so the whole thing takes about one
@@ -215,7 +226,7 @@ status change instead, plus a heartbeat every 30 seconds. That is what the `/rel
 Claude skill sees.
 
 Status is checked every 5 seconds for up to five runs, then one second slower per run
-beyond that, so a nine-repo `--all` sweep checks every 9 seconds — a full sweep stays
+beyond that, so an eight-repo `--all` sweep checks every 8 seconds — a full sweep stays
 well inside GitHub's API allowance. A read that fails prints `status read failed,
 retrying` once per streak and polling carries on; only twelve failures in a row, about a
 minute, report that repo as failed. A single repo keeps the live view exactly as before.
@@ -223,8 +234,9 @@ minute, report that repo as failed. A single repo keeps the live view exactly as
 Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
 name anywhere refuses the whole command before anything runs. `--bump`,
 `--skip-promote` and `--dry-run` apply to every repo; `--target-version` and `--dir`
-are per-repo and are refused with `--all` or with more than one repo — one name repeated
-in another casing is still a single repo, so it is still accepted.
+are per-repo and are refused with a sweep flag (`--all`, `--frontend`, `--backend`) or
+with more than one repo — one name repeated in another casing is still a single repo, so
+it is still accepted.
 
 ### Production
 
@@ -336,15 +348,15 @@ in step with the CLI it drives.
 Twelve repos are configured. Nine are **releasable** — a repo is releasable when it has
 both a deploy workflow and staging Helm values, which is derived, not declared:
 
-| Repo | Team | Releasable |
-|---|---|---|
-| VastPayPwa, VastPayPwaV2, VastPay-DashBoard | frontend | ✅ |
-| VastMenuPwa, VastMenuPwaV2, VastMenu-DashBoard | frontend | ✅ |
-| vast-menu-payments | frontend | ✅ |
-| Vast-Finance | frontend | ❌ no workflow or Helm values |
-| VastPay-BackEnd, VastMenu-BackEnd | backend | ✅ |
-| vastpay-payment-odoo | backend | ❌ |
-| Terraform | infra | ❌ |
+| Repo | Team | Releasable | Release train |
+|---|---|---|---|
+| VastPayPwa, VastPayPwaV2, VastPay-DashBoard | frontend | ✅ | `--frontend` |
+| VastMenuPwa, VastMenuPwaV2, VastMenu-DashBoard | frontend | ✅ | `--frontend` |
+| vast-menu-payments | frontend | ✅ | none — release it by name |
+| Vast-Finance | frontend | ❌ no workflow or Helm values | — |
+| VastPay-BackEnd, VastMenu-BackEnd | backend | ✅ | `--backend` |
+| vastpay-payment-odoo | backend | ❌ | — |
+| Terraform | infra | ❌ | — |
 
 Unreleasable repos can be cloned but never appear in `status --all`, and cannot be
 promoted or deployed.
@@ -399,7 +411,7 @@ Still stuck? `vast <command> --help` carries worked examples for every command.
 ## Development
 
 ```bash
-npm test          # node:test suite (253 tests)
+npm test          # node:test suite (282 tests)
 npm run typecheck # tsc --noEmit
 npm run build     # regenerate src/version.ts, then tsc
 npm run bundle    # single-file ESM bundle for a release
@@ -421,7 +433,8 @@ release. A tag whose tests fail produces no release — better none than one tha
 broken CLI over everyone's working copy.
 
 `src/version.ts` is generated from `package.json` and staged automatically by the `version`
-lifecycle hook, so the tag is always self-consistent.
+lifecycle hook, so the tag is always self-consistent. The same hook rebuilds and stages
+`dist/`, so a fresh clone at a tag reports that tag's version.
 
 > `install.sh` is served from `main`, not from a release, so installer fixes take effect
 > without a version bump — once GitHub's raw CDN expires its cache, usually a few minutes.
