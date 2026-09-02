@@ -34,7 +34,8 @@ import {
   runUrl,
   runWorkflow,
 } from '../utils/github.js';
-import { DEFAULT_TIMING, formatElapsed, pollRun } from '../utils/run-poll.js';
+import { DEFAULT_TIMING, formatElapsed, pollRun, type PollTiming } from '../utils/run-poll.js';
+import { createStatusBoard, type StatusBoard, type Tone } from '../utils/status-board.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
 export interface ReleaseOptions {
@@ -229,27 +230,58 @@ export function pollIntervalFor(runCount: number): number {
 }
 
 /**
+ * The polling timing for a whole watch, live or piped.
+ *
+ * When the board is live each repo owns one line that is rewritten in place, so
+ * a heartbeat on every poll costs no scrollback and keeps the elapsed time on
+ * every line moving. Piped output appends instead, so it keeps the slow default
+ * heartbeat rather than one line per repo every few seconds.
+ */
+export function pollTimingFor(runCount: number, live: boolean): PollTiming {
+  const pollMs = pollIntervalFor(runCount);
+  return {
+    pollMs,
+    heartbeatMs: live ? pollMs : DEFAULT_TIMING.heartbeatMs,
+    maxConsecutiveErrors: DEFAULT_TIMING.maxConsecutiveErrors,
+  };
+}
+
+/** The one line of the board a repo owns, and how wide its name is padded. */
+export interface FinishSlot {
+  board: StatusBoard;
+  row: number;
+  labelWidth: number;
+}
+
+/**
  * Wait for a dispatched run and merge its bump PR — deployOne's second half,
  * written to run alongside others. `gh run watch` would block the process and
- * repaint the screen, so the run is polled and reported one line at a time.
- * The failure detail carries the run URL, since the live step view is gone.
+ * repaint the screen, so the run is polled instead and every stage of it is
+ * reported onto this repo's own line of the board.
+ *
+ * Nothing here may print directly: on a TTY the board tracks the cursor by
+ * counting its own lines, so one stray `console.log` scrolls the rows out from
+ * under it and every later update lands on the wrong line. The failure detail
+ * still carries the run URL, since the live step view is gone.
  */
 async function finishOne(
   flight: InFlight,
-  labelWidth: number,
-  pollMs: number,
+  slot: FinishSlot,
+  timing: PollTiming,
 ): Promise<DeployOutcome> {
   const { repo, version, runId } = flight;
+  const label = repo.name.padEnd(slot.labelWidth);
+  const say = (line: string, tone: Tone): void => slot.board.update(slot.row, line, tone);
   const result = await pollRun(
-    repo.name.padEnd(labelWidth),
+    label,
     runId,
     {
       getStatus: () => getRunStatus(repo.name, runId),
       sleep,
       now: Date.now,
-      print: log.muted,
+      print: (line) => slot.board.update(slot.row, line, 'muted'),
     },
-    { ...DEFAULT_TIMING, pollMs },
+    timing,
   );
   const took = formatElapsed(result.elapsedMs);
   const url = runUrl(repo.name, runId);
@@ -258,15 +290,20 @@ async function finishOne(
     const why =
       result.error ??
       `run ${runId} ${result.conclusion === 'failure' ? 'failed' : (result.conclusion ?? 'completed without a conclusion')}`;
-    log.error(`${repo.name}: ${why} after ${took}`);
-    log.muted(`  ${url}`);
+    // A run that could not be read has no conclusion to name and no useful run
+    // page to point at, so the line carries the read error instead.
+    const word = result.error
+      ? 'unreadable'
+      : result.conclusion === 'failure'
+        ? 'failed'
+        : (result.conclusion ?? 'completed without a conclusion');
+    say(`  ${label}  run ${runId}  ${word}  ${took}  ${result.error ?? url}`, 'error');
     return { repo: repo.name, version, status: 'failed', detail: `${why} — ${url}` };
   }
-  log.success(`${repo.name}: run ${runId} succeeded in ${took}`);
 
   // Same budget as deployOne: the bump PR is opened by the workflow's last
   // step and can take a while to appear.
-  log.muted(`  ${repo.name}: looking for the bump PR...`);
+  say(`  ${label}  run ${runId}  succeeded  ${took}  looking for the bump PR...`, 'success');
   const prTitle = bumpPrTitle(version, 'staging');
   let prNumber: number | null = null;
   for (let i = 0; i < 45 && prNumber === null; i++) {
@@ -274,16 +311,16 @@ async function finishOne(
     if (prNumber === null) await sleep(20000);
   }
   if (prNumber === null) {
-    log.error(`${repo.name}: bump PR never appeared`);
+    say(`  ${label}  run ${runId}  succeeded  ${took}  bump PR not found`, 'error');
     return { repo: repo.name, version, status: 'failed', detail: 'bump PR not found' };
   }
 
   try {
     await mergePullRequest(repo.name, prNumber);
-    log.success(`${repo.name}: ${version} deployed to staging, PR #${prNumber} merged`);
+    say(`  ${label}  run ${runId}  succeeded  ${took}  PR #${prNumber} merged`, 'success');
     return { repo: repo.name, version, status: 'released', detail: `PR #${prNumber}` };
   } catch (error) {
-    log.error(`${repo.name}: could not merge PR #${prNumber}`);
+    say(`  ${label}  run ${runId}  succeeded  ${took}  could not merge PR #${prNumber}`, 'error');
     return {
       repo: repo.name,
       version,
@@ -296,7 +333,9 @@ async function finishOne(
 /** The two halves of a multi-repo release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps {
   launch: (repo: RepoConfig, options: ReleaseOptions) => Promise<InFlight | DeployOutcome>;
-  finish: (flight: InFlight, labelWidth: number, pollMs: number) => Promise<DeployOutcome>;
+  finish: (flight: InFlight, slot: FinishSlot, timing: PollTiming) => Promise<DeployOutcome>;
+  /** Injectable so a test can record what each repo wrote to its line. */
+  board?: (rows: number) => StatusBoard;
 }
 
 /**
@@ -318,16 +357,26 @@ export async function releaseMany(
   for (const repo of targets) launched.push(await deps.launch(repo, options));
 
   const flights = launched.filter((l): l is InFlight => !isOutcome(l));
-  const pollMs = pollIntervalFor(flights.length);
+  // Only a TTY can rewrite a line. Piped output (the /release skill runs the
+  // CLI that way) appends instead, so it keeps the old one-line-per-change log.
+  const live = process.stdout.isTTY === true;
+  const timing = pollTimingFor(flights.length, live);
+  const every = Math.round(timing.pollMs / 1000);
   if (flights.length > 0) {
     log.newline();
     log.info(
-      `Watching ${flights.length} run(s) — status every ${Math.round(pollMs / 1000)}s, ` +
-        'one line per change, heartbeat every 30s',
+      live
+        ? `Watching ${flights.length} run(s) — status every ${every}s`
+        : `Watching ${flights.length} run(s) — status every ${every}s, ` +
+            'one line per change, heartbeat every 30s',
     );
   }
-  const width = Math.max(...flights.map((f) => f.repo.name.length), 0);
-  const settled = await Promise.allSettled(flights.map((f) => deps.finish(f, width, pollMs)));
+  const labelWidth = Math.max(...flights.map((f) => f.repo.name.length), 0);
+  // One board for every repo: two would each believe they own the cursor.
+  const board = (deps.board ?? createStatusBoard)(flights.length);
+  const settled = await Promise.allSettled(
+    flights.map((f, i) => deps.finish(f, { board, row: i, labelWidth }, timing)),
+  );
   const finished = settled.map((r, i): DeployOutcome =>
     r.status === 'fulfilled'
       ? r.value
@@ -415,8 +464,9 @@ Version derivation (from the tag currently deployed to staging):
   $ vast release --all                       every configured repo, one summary
 
 Several repos release side by side, as if each had its own terminal: each is
-promoted and dispatched in turn, then every CI run is watched at the same time
-and reported one line per status change. One repo refusing never stops another.
+promoted and dispatched in turn, then every CI run is watched at the same time,
+each on its own line that updates in place (one line per change when output is
+piped). One repo refusing never stops another.
 --bump, --skip-promote and --dry-run apply to every repo named; --target-version
 and --dir are per-repo and refused with --all or more than one repo.
 `,

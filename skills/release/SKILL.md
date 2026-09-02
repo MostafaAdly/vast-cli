@@ -112,14 +112,16 @@ vast release <repo> <repo>
 ```
 
 `vast` promotes and dispatches each in turn, then watches every CI run at the
-same time and prints one line per repo whenever its run changes status, with a
-heartbeat every 30 seconds. One repo refusing never stops the others: report
-each repo's outcome from the summary separately, and handle a conflict (§2) or a
-failed run (§4) for just that repo. A failed run's summary line carries its run
-URL; a `status read failed, retrying` line is a transient read, not a failed run.
-`--target-version` and `--dir` are per-repo, so `vast` refuses them with `--all`
-or with more than one repo — release that repo on its own instead. Repeating one
-name in a different casing still counts as a single repo.
+same time. Because this skill's output is piped, `vast` prints one line per repo
+whenever its run changes status, with a heartbeat every 30 seconds; a human at a
+terminal instead sees each repo's line update in place. One repo refusing never
+stops the others: report each repo's outcome from the summary separately, and
+handle a conflict (§2) or a failed run (§4) for just that repo. A failed run's
+summary line carries its run URL; a `status read failed, retrying` line is a
+transient read, not a failed run. `--target-version` and `--dir` are per-repo,
+so `vast` refuses them with `--all` or with more than one repo — release that
+repo on its own instead. Repeating one name in a different casing still counts
+as a single repo.
 
 ---
 
