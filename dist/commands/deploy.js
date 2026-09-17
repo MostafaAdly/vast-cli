@@ -18,7 +18,7 @@ import inquirer from 'inquirer';
 import { argoApp, getRepo, reposForRelease, } from '../config/repos.js';
 import { productionRefusal } from '../config/production-lock.js';
 import { argocdAppUrl, argocdHost, readArgocdToken } from '../config/argocd.js';
-import { ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
+import { ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, refreshApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
@@ -171,6 +171,7 @@ export const DEFAULT_DEPLOY_DEPS = {
     failedStepName,
     waitForRollout,
     getApplication,
+    refreshApplication,
     readArgocdToken,
     argocdHost,
     argocdAppUrl,
@@ -289,6 +290,16 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
         say(`  ${label}  run ${runId}  succeeded  ${ranFor}  ${why}`, 'success');
         return outcome('released', `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
             '`vast argocd login` to confirm next time)');
+    }
+    // The tag is committed. ArgoCD would notice on its next ~3 minute poll; asking
+    // it to refresh now turns that into seconds. Best effort — a refresh that
+    // fails just means the wait below runs on ArgoCD's own timer, and an
+    // unauthorized answer will surface from the wait with the login hint.
+    try {
+        await deps.refreshApplication(host, token, app);
+    }
+    catch {
+        // Deliberately ignored; see above.
     }
     // When the tag was already live the waiter cannot use the tag alone, so it is
     // given a predicate that also demands ArgoCD moved to a new revision. Said
@@ -498,7 +509,8 @@ What a deploy does now (there is no version-bump PR any more):
   1. dispatch build-deploy, which builds the image and commits the tag
      into Vast-deployments
   2. watch the run
-  3. watch ArgoCD until that tag is Synced/Healthy on the app
+  3. ask ArgoCD to refresh the app, then watch it until that tag is
+     Synced/Healthy
 
 Step 3 needs an ArgoCD session token, so log in once per token lifetime:
 

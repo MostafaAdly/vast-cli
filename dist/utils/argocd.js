@@ -91,6 +91,25 @@ export async function getApplication(host, token, app, fetchFn = fetch) {
     };
 }
 /**
+ * Ask ArgoCD to re-read git for this app right now.
+ *
+ * ArgoCD polls the repo every ~3 minutes; after a green build that poll is
+ * most of the wait. With automated sync on, a refresh alone starts the rollout,
+ * so the wait afterwards measures the rollout and not ArgoCD's timer. The
+ * response body is the same application document and is deliberately ignored:
+ * the waiter reads the state on its own schedule.
+ */
+export async function refreshApplication(host, token, app, fetchFn = fetch) {
+    const res = await fetchFn(`${host}/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`, { headers: { authorization: `Bearer ${token}` } });
+    const body = await res.text();
+    if (res.status === 401 || res.status === 403) {
+        throw new ArgoUnauthorizedError(`argocd rejected the token: ${serverMessage(body, res.status)}`);
+    }
+    if (!res.ok) {
+        throw new Error(`argocd refresh ${app}: ${serverMessage(body, res.status)}`);
+    }
+}
+/**
  * 5s matches `pollRun`. Ten minutes is generous for a staging rollout and short
  * enough that a stuck sync does not hold a release open all afternoon.
  */

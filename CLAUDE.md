@@ -107,7 +107,7 @@ in `Vast-deployments`:
   upstream — never "fix" it).
 - Each repo dispatches its own `build-deploy` workflow, one `version` input, on
   the env branch. It builds the image and commits the tag to `Vast-deployments`;
-  ArgoCD syncs from there, usually within ~3 minutes. There are no bump PRs.
+  ArgoCD syncs from there. The CLI asks ArgoCD to refresh the app as soon as the run is green, so the usual ~3 minute git poll is skipped and the wait is the rollout itself. There are no bump PRs.
 - The concurrent sweep is proven, not theoretical: a full six-repo
   `vast release --frontend` on 2026-09-17 (2.0.1) shipped every repo through
   `build-deploy` and ArgoCD with no lost tag commit. The private update-helm

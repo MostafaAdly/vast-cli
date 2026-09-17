@@ -214,7 +214,8 @@ What a release does (there is no version-bump PR any more — staging is GitOps)
   2. dispatch build-deploy, which builds the image and commits the tag into
      Vast-deployments
   3. watch the run
-  4. watch ArgoCD until that tag is Synced/Healthy on the app
+  4. ask ArgoCD to refresh the app, then watch it until that tag is
+     Synced/Healthy
 
 Step 4 needs an ArgoCD session token, so log in once per token lifetime:
 

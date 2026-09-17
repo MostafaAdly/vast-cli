@@ -366,3 +366,27 @@ test('a custom predicate does not change the state text', async () => {
     '  pwa  argocd pwa  OutOfSync/Progressing  1s',
   ]);
 });
+
+// A refresh makes ArgoCD re-read git now instead of on its ~3 minute poll; with
+// automated sync on, that alone starts the rollout. It is the difference between
+// a 3 minute wait and a 30 second one after every green build.
+test('refreshApplication asks ArgoCD for a normal refresh of the app', async () => {
+  const { refreshApplication } = await import('../src/utils/argocd.js');
+  const urls: string[] = [];
+  const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(url));
+    assert.equal((init?.headers as Record<string, string>).authorization, 'Bearer tok');
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  await refreshApplication('https://argo.example', 'tok', 'vastpay-pwa', fetchFn);
+  assert.deepEqual(urls, ['https://argo.example/api/v1/applications/vastpay-pwa?refresh=normal']);
+});
+
+test('refreshApplication reports a rejected token as unauthorized', async () => {
+  const { refreshApplication, ArgoUnauthorizedError } = await import('../src/utils/argocd.js');
+  const fetchFn = (async () => new Response('{"error":"no session"}', { status: 401 })) as typeof fetch;
+  await assert.rejects(
+    () => refreshApplication('https://argo.example', 'tok', 'vastpay-pwa', fetchFn),
+    ArgoUnauthorizedError,
+  );
+});

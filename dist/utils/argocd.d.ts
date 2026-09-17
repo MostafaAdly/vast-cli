@@ -42,6 +42,16 @@ export declare function userinfo(host: string, token: string, fetchFn?: FetchFn)
     username?: string;
 }>;
 export declare function getApplication(host: string, token: string, app: string, fetchFn?: FetchFn): Promise<ArgoApp>;
+/**
+ * Ask ArgoCD to re-read git for this app right now.
+ *
+ * ArgoCD polls the repo every ~3 minutes; after a green build that poll is
+ * most of the wait. With automated sync on, a refresh alone starts the rollout,
+ * so the wait afterwards measures the rollout and not ArgoCD's timer. The
+ * response body is the same application document and is deliberately ignored:
+ * the waiter reads the state on its own schedule.
+ */
+export declare function refreshApplication(host: string, token: string, app: string, fetchFn?: FetchFn): Promise<void>;
 export interface RolloutDeps {
     getApp: () => Promise<ArgoApp>;
     sleep: (ms: number) => Promise<void>;

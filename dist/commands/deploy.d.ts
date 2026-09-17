@@ -16,7 +16,7 @@
  */
 import { Command } from 'commander';
 import { type DeployEnv, type RepoConfig } from '../config/repos.js';
-import { getApplication, waitForRollout, type RolloutTiming } from '../utils/argocd.js';
+import { getApplication, refreshApplication, waitForRollout, type RolloutTiming } from '../utils/argocd.js';
 import { getRunStatus, runWorkflow } from '../utils/github.js';
 import { type PollTiming } from '../utils/run-poll.js';
 import { type StatusBoard } from '../utils/status-board.js';
@@ -113,6 +113,7 @@ export interface DeployDeps {
     failedStepName: (repo: string, runId: number) => Promise<string | null>;
     waitForRollout: typeof waitForRollout;
     getApplication: typeof getApplication;
+    refreshApplication: typeof refreshApplication;
     readArgocdToken: (env: DeployEnv) => string | null;
     argocdHost: (env: DeployEnv) => string;
     argocdAppUrl: (env: DeployEnv, app: string) => string;

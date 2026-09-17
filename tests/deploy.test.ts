@@ -150,10 +150,12 @@ interface Calls {
   rollouts: string[];
   /** The done-predicate each rollout wait was given, so a test can exercise it. */
   isDone: Array<((app: ArgoApp) => boolean) | undefined>;
+  /** `<app>@<rollouts so far>` — proves the refresh landed before the wait. */
+  refreshed: string[];
 }
 
 function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls } {
-  const calls: Calls = { dispatched: [], rollouts: [], isDone: [] };
+  const calls: Calls = { dispatched: [], rollouts: [], isDone: [], refreshed: [] };
   const base: DeployDeps = {
     runWorkflow: async (params) => {
       calls.dispatched.push(`${params.repository}@${params.version}->${params.branch}`);
@@ -167,6 +169,9 @@ function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls 
       return { ok: true, elapsedMs: 42000, app: HEALTHY };
     },
     getApplication: async () => STALE,
+    refreshApplication: async (_host, _token, app) => {
+      calls.refreshed.push(`${app}@${calls.rollouts.length}`);
+    },
     readArgocdToken: () => 'a-token',
     argocdHost: () => 'https://argocd-stg.example.com',
     argocdAppUrl: (_env, app) => `https://argocd-stg.example.com/applications/${app}`,
@@ -422,4 +427,35 @@ test('the released detail and the board line share one ArgoCD app URL', async ()
   const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
   assert.match(outcome.detail, /https:\/\/argocd\.test\/applications\/vastpay-pwa/);
   assert.match(lines[lines.length - 1], /https:\/\/argocd\.test\/applications\/vastpay-pwa/);
+});
+
+// ArgoCD polls git every ~3 minutes. Asking it to refresh right after the build
+// commits the tag turns that poll into seconds, so the wait measures the rollout
+// and not ArgoCD's timer.
+test('after a green run the app is refreshed once, before the rollout wait', async () => {
+  const { slot } = recordingSlot();
+  const { deps: d, calls } = deps();
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(calls.refreshed, ['vastpay-pwa@0']);
+  assert.deepEqual(calls.rollouts, ['vastpay-pwa:1.5.7-rc1']);
+});
+
+test('a failed refresh does not fail the deploy — the wait still runs', async () => {
+  const { slot } = recordingSlot();
+  const { deps: d, calls } = deps({
+    refreshApplication: async () => {
+      throw new Error('argocd: 503');
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(calls.rollouts, ['vastpay-pwa:1.5.7-rc1']);
+});
+
+test('without a token there is nothing to refresh with', async () => {
+  const { slot } = recordingSlot();
+  const { deps: d, calls } = deps({ readArgocdToken: () => null });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.deepEqual(calls.refreshed, []);
 });
