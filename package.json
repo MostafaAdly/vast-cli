@@ -1,6 +1,6 @@
 {
   "name": "vast-cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "CLI toolkit for managing Vast-menu GitHub workflows and operations",
   "license": "MIT",
   "type": "module",
