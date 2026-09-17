@@ -108,6 +108,13 @@ in `Vast-deployments`:
 - Each repo dispatches its own `build-deploy` workflow, one `version` input, on
   the env branch. It builds the image and commits the tag to `Vast-deployments`;
   ArgoCD syncs from there, usually within ~3 minutes. There are no bump PRs.
+- The concurrent sweep is proven, not theoretical: a full six-repo
+  `vast release --frontend` on 2026-09-17 (2.0.1) shipped every repo through
+  `build-deploy` and ArgoCD with no lost tag commit. The private update-helm
+  action still pushes to Vast-deployments `main` with no visible retry, so two
+  builds finishing together *could* race; it has not happened yet, and the CLI
+  reports it as `failed committing the tag — image may already be built` if it
+  does (re-run that repo with the same version).
 - A deploy is not done when the workflow goes green — that only means the tag was
   committed. It is done when ArgoCD reports `Synced/Healthy` on an image carrying
   the tag. Ceiling 15 minutes (a VastPayPwa rollout took 10m20s on 2026-09-17). Without a stored token the deploy is **not**
