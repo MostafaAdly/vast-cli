@@ -133,6 +133,15 @@ export class VastCli {
                 this.program.outputHelp();
                 return;
             }
+            // `vast -v` answers with the version. It is handled here rather than as
+            // a Commander option because a root-level `-v` is parsed anywhere on the
+            // line, which would swallow the `-v` that release/deploy/promote use for
+            // --target-version. Only a bare `vast -v` qualifies; `-V` and --version
+            // stay as Commander's own.
+            if (process.argv.length === 3 && process.argv[2] === '-v') {
+                process.stdout.write(`${VERSION}\n`);
+                return;
+            }
             // Skipped for the internal refresh itself, which would otherwise spawn
             // another one and recurse.
             if (process.argv[2] !== '__update-check')

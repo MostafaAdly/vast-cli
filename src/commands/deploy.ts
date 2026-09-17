@@ -33,6 +33,7 @@ import {
   ArgoUnauthorizedError,
   DEFAULT_ROLLOUT_TIMING,
   getApplication,
+  refreshApplication,
   rolloutDone,
   waitForRollout,
   type ArgoApp,
@@ -240,6 +241,7 @@ export interface DeployDeps {
   failedStepName: (repo: string, runId: number) => Promise<string | null>;
   waitForRollout: typeof waitForRollout;
   getApplication: typeof getApplication;
+  refreshApplication: typeof refreshApplication;
   readArgocdToken: (env: DeployEnv) => string | null;
   argocdHost: (env: DeployEnv) => string;
   argocdAppUrl: (env: DeployEnv, app: string) => string;
@@ -253,6 +255,7 @@ export const DEFAULT_DEPLOY_DEPS: DeployDeps = {
   failedStepName,
   waitForRollout,
   getApplication,
+  refreshApplication,
   readArgocdToken,
   argocdHost,
   argocdAppUrl,
@@ -399,6 +402,16 @@ export async function deployOne(
       `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
         '`vast argocd login` to confirm next time)',
     );
+  }
+
+  // The tag is committed. ArgoCD would notice on its next ~3 minute poll; asking
+  // it to refresh now turns that into seconds. Best effort — a refresh that
+  // fails just means the wait below runs on ArgoCD's own timer, and an
+  // unauthorized answer will surface from the wait with the login hint.
+  try {
+    await deps.refreshApplication(host, token, app);
+  } catch {
+    // Deliberately ignored; see above.
   }
 
   // When the tag was already live the waiter cannot use the tag alone, so it is
@@ -675,7 +688,8 @@ What a deploy does now (there is no version-bump PR any more):
   1. dispatch build-deploy, which builds the image and commits the tag
      into Vast-deployments
   2. watch the run
-  3. watch ArgoCD until that tag is Synced/Healthy on the app
+  3. ask ArgoCD to refresh the app, then watch it until that tag is
+     Synced/Healthy
 
 Step 3 needs an ArgoCD session token, so log in once per token lifetime:
 

@@ -120,7 +120,7 @@ vast release <repo>
 
 Staging is GitOps, so this has two halves and both matter. The `build-deploy`
 workflow builds the image and commits the new tag to `Vast-deployments`; ArgoCD
-then syncs the cluster, usually within about three minutes. `vast` waits for
+then syncs the cluster. `vast` asks ArgoCD to refresh the app the moment the run is green, so the usual three-minute poll is skipped, and waits for
 that second half and reports the repo's ArgoCD line as it goes — `waiting for
 <tag>`, then ArgoCD's own sync/health pair.
 

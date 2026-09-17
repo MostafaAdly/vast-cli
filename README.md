@@ -167,7 +167,7 @@ develop  ──▶  staging  ──▶  production
 Staging is GitOps. There are no bump PRs any more. `vast release` promotes the branch,
 derives the version, and dispatches the repo's `build-deploy` workflow. That workflow
 builds the image and commits the new tag to `Vast-deployments`; ArgoCD notices the commit
-and syncs the cluster, usually within about three minutes.
+and syncs the cluster. The CLI asks ArgoCD to refresh the app the moment the run is green, so ArgoCD's usual three-minute git poll is skipped and the wait is the rollout itself, typically under a minute.
 
 Because the workflow going green only means the tag was *committed*, the CLI does not stop
 there. It then watches the repo's ArgoCD application until it reports **Synced/Healthy**

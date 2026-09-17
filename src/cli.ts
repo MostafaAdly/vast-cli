@@ -78,6 +78,8 @@ export class VastCli {
 
     // Add global options
     this.program.option('--verbose', 'Enable verbose output');
+
+
   }
 
   /**
@@ -142,6 +144,16 @@ export class VastCli {
       // inside that screen, so there is no separate banner to print.
       if (process.argv.slice(2).length === 0) {
         this.program.outputHelp();
+        return;
+      }
+
+      // `vast -v` answers with the version. It is handled here rather than as
+      // a Commander option because a root-level `-v` is parsed anywhere on the
+      // line, which would swallow the `-v` that release/deploy/promote use for
+      // --target-version. Only a bare `vast -v` qualifies; `-V` and --version
+      // stay as Commander's own.
+      if (process.argv.length === 3 && process.argv[2] === '-v') {
+        process.stdout.write(`${VERSION}\n`);
         return;
       }
 

@@ -169,7 +169,7 @@ export function renderRootHelp(version: string): string {
     ...EXAMPLES.map((r) => exampleRow(r, exWidth)),
     '',
     heading('GLOBAL OPTIONS'),
-    `    ${colors.muted('-V, --version    -h, --help    --verbose')}`,
+    `    ${colors.muted('-v, --version    -h, --help    --verbose')}`,
     '',
     `  ${colors.muted('vast')} ${colors.highlight('<command>')} ${colors.muted('--help')}   ${colors.muted('for options and more examples')}`,
     '',
