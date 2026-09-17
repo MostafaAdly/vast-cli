@@ -19,6 +19,7 @@ import { registerPromoteCommand } from './commands/promote.js';
 import { registerDeployCommand } from './commands/deploy.js';
 import { registerReleaseCommand } from './commands/release.js';
 import { registerProductionCommand } from './commands/production.js';
+import { registerArgocdCommand } from './commands/argocd.js';
 import { log } from './utils/ui.js';
 
 /**
@@ -94,6 +95,7 @@ export class VastCli {
     registerDeployCommand(this.program);
     registerWorkflowCommand(this.program);
     registerProductionCommand(this.program);
+    registerArgocdCommand(this.program);
     registerUpgradeCommand(this.program);
 
     // Internal: refreshes the update cache and exits. Spawned detached by

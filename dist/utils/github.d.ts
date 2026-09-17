@@ -27,46 +27,32 @@ export declare function listWorkflows(repo: string): Promise<void>;
  * @param params - Workflow run parameters
  * @returns Result of the workflow run attempt
  */
-export declare function runWorkflow(params: WorkflowRunParams): Promise<WorkflowRunResult>;
+export interface RunWorkflowOptions {
+    /**
+     * Suppress the spinner and the resolved-workflow line.
+     *
+     * The deploy path draws a status board that tracks the cursor by counting its
+     * own lines, so a spinner painting over it would scroll every row out from
+     * under it. Board-driven callers dispatch quietly and report on their own row.
+     */
+    quiet?: boolean;
+}
+export declare function runWorkflow(params: WorkflowRunParams, options?: RunWorkflowOptions): Promise<WorkflowRunResult>;
 /**
- * Get the environment name from the branch name
- * @param branch - Branch name
- * @returns Environment name (stage, prod, or original branch)
- */
-export declare function getEnvName(branch: string): string;
-/**
- * Find a pull request by title
- * @param repo - Repository name
- * @param title - PR title to search for
- * @returns PR number or null if not found
- */
-export declare function findPullRequest(repo: string, title: string): Promise<number | null>;
-/**
- * Merge a pull request
- * @param repo - Repository name
- * @param prNumber - PR number
- */
-export declare function mergePullRequest(repo: string, prNumber: number): Promise<void>;
-/**
- * Watch a specific run to completion.
+ * The name of the step that failed in a run, or null.
  *
- * Takes the run id returned by runWorkflow rather than rediscovering it. The
- * previous "newest run on the branch, created under 2 minutes ago" heuristic
- * could attach to a concurrent deploy's run — and then a bump PR would be
- * merged on the strength of an unrelated run's success.
- *
- * @param repo - Repository name
- * @param runId - The run id returned by runWorkflow
- * @returns true if the run concluded successfully
+ * The one distinction that matters to a human: a run that failed while
+ * committing the tag into Vast-deployments has usually already BUILT and pushed
+ * the image, so the fix is a retry of the commit, not of the whole build.
  */
-export declare function waitForWorkflowCompletion(repo: string, runId: number): Promise<boolean>;
+export declare function failedStepName(repo: string, runId: number): Promise<string | null>;
 /**
  * A run's current status, read without blocking the process.
  *
- * The multi-repo release watches several runs concurrently, which
- * waitForWorkflowCompletion cannot do — `gh run watch` under execSync
- * freezes the event loop for the whole build. gh reports an empty
- * conclusion until the run completes; that is surfaced as null.
+ * The deploy path watches several runs concurrently, which `gh run watch`
+ * cannot do: under execSync it freezes the event loop for the whole build and
+ * repaints the terminal the status board owns. gh reports an empty conclusion
+ * until the run completes; that is surfaced as null.
  */
 export declare function getRunStatus(repo: string, runId: number): Promise<RunStatus>;
 /** Where a human goes to read a run's failed steps. */

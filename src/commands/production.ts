@@ -14,24 +14,54 @@ import {
   disableProduction,
   enabledSince,
   lockFile,
+  productionPipelineReady,
+  PRODUCTION_NOT_READY_MESSAGE,
 } from '../config/production-lock.js';
-import { createHeader, createSuccessBox, createInfoBox, log, formatKeyValue } from '../utils/ui.js';
+import {
+  createHeader,
+  createSuccessBox,
+  createErrorBox,
+  createInfoBox,
+  log,
+  formatKeyValue,
+} from '../utils/ui.js';
 
 function showStatus(): void {
   const enabled = isProductionEnabled();
+  const ready = productionPipelineReady();
   console.log(
     createInfoBox('Production lock', [
+      // The pipeline line comes first because it outranks the lock: while it
+      // says "not migrated", the lock's state changes nothing.
+      formatKeyValue(
+        'Pipeline',
+        ready ? 'migrated — deploys allowed' : 'not migrated — deploys blocked',
+      ),
       formatKeyValue('State', enabled ? 'ENABLED — production deploys allowed' : 'LOCKED — production deploys refused'),
       formatKeyValue('Since', enabledSince() ?? 'n/a'),
       formatKeyValue('Lock file', lockFile()),
     ]),
   );
-  if (enabled) {
+  if (!ready) {
+    log.warn(
+      'Production has not moved to the new deploy pipeline — every production ' +
+        'deploy path refuses regardless of this lock.',
+    );
+  }
+  if (enabled && ready) {
     log.warn('Production is currently unlocked. Run `vast production disable` when you are done.');
   }
 }
 
 async function enable(options: { yes: boolean }): Promise<void> {
+  // Lifting the lock would be a lie while the pipeline is blocked: every
+  // production deploy path refuses before it ever reads the lock file.
+  if (!productionPipelineReady()) {
+    console.log(createErrorBox('Production deploys are blocked', PRODUCTION_NOT_READY_MESSAGE));
+    process.exitCode = 1;
+    return;
+  }
+
   if (isProductionEnabled()) {
     log.info('Production is already enabled.');
     return showStatus();
@@ -80,6 +110,10 @@ Examples:
   $ vast production enable     allow production deploys
   $ vast production disable    refuse them again
 
+Production is currently BLOCKED above this lock: it has not moved to the new
+Vast-deployments + ArgoCD deploy pipeline, so \`vast production enable\` refuses
+and every production deploy path refuses before the lock is even read.
+
 What the lock does and does not cover:
 
   LOCKED blocks    vast deploy --to production
@@ -88,8 +122,8 @@ What the lock does and does not cover:
   Always allowed   vast promote --to production            cut release/X.Y.Z + PR
                    vast promote --to production --as hotfix
 
-Preparing a release ships nothing, so it is never gated. Independently of the
-lock, this CLI never pushes to production at all — production is reached only
+Preparing a release ships nothing, so it is never gated. Independently of both
+gates, this CLI never pushes to production at all — production is reached only
 by merging the reviewed release PR.
 `,
     );

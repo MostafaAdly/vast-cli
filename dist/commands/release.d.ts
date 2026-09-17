@@ -2,22 +2,23 @@
  * Release Command
  *
  * The whole staging ritual in one line: promote develop → staging, derive the
- * next release candidate from the deployed Helm tag, dispatch the workflow,
- * wait for it, and merge the version-bump PR.
+ * next release candidate from the tag Vast-deployments says is live, dispatch
+ * build-deploy, watch the run, and watch ArgoCD until the new tag is actually
+ * running. There is no version-bump PR any more — staging is GitOps.
  *
- * Several repos at once behave like one terminal per repo: each is promoted
- * and dispatched in turn — seconds of local git and gh — and then every CI run
- * is watched concurrently, so the whole thing takes about one build rather
- * than one per repo. One repo refusing never stops another.
+ * Several repos at once behave like one terminal per repo: each is promoted in
+ * turn — seconds of local git — and then every deploy runs concurrently, so the
+ * whole thing takes about one build rather than one per repo. One repo refusing
+ * never stops another.
  *
  * Staging only. Production has a human review gate in the middle, so it is two
- * commands (promote, then deploy) rather than one.
+ * commands (promote, then deploy) rather than one — and its deploy is blocked
+ * outright until DevOps has migrated it.
  */
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
-import { type DeployOutcome } from './deploy.js';
-import { type PollTiming } from '../utils/run-poll.js';
-import { type StatusBoard } from '../utils/status-board.js';
+import { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type DeployManyDeps, type DeployOutcome, type Sweep } from './deploy.js';
+export { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type Sweep };
 export interface ReleaseOptions {
     to: string;
     dir?: string;
@@ -30,20 +31,6 @@ export interface ReleaseOptions {
     frontend: boolean;
     backend: boolean;
 }
-/**
- * The flags that mean "a whole release train" rather than named repos.
- *
- * `--all` is both trains; `--frontend` and `--backend` are one each, and may be
- * combined. Everything downstream that used to branch on `--all` — the
- * per-repo option refusals, the not-cloned skip — branches on `isSweep`, so a
- * team sweep behaves exactly like `--all` did.
- */
-export interface Sweep {
-    all: boolean;
-    frontend: boolean;
-    backend: boolean;
-}
-export declare function isSweep(s: Sweep): boolean;
 /**
  * Whether this repo has a develop branch to promote into staging.
  *
@@ -77,50 +64,25 @@ export declare function releaseTargets(names: string[], sweep: Sweep): {
     repos: RepoConfig[];
     unknown: string[];
 };
-/** A dispatched run the concurrent path is waiting on. */
-export interface InFlight {
-    repo: RepoConfig;
-    version: string;
-    runId: number;
-}
 /**
- * How often to ask GitHub for each run's status, given how many are being
- * watched. One second per run keeps a big `--all` sweep from hammering the API
- * with one request per run every five seconds, and the floor keeps the common
- * two- or three-repo release as responsive as a single one.
- */
-export declare function pollIntervalFor(runCount: number): number;
-/**
- * The polling timing for a whole watch, live or piped.
+ * Everything before the deploy: resolve the checkout, promote, derive the
+ * version. Returns an outcome instead when the repo cannot go further.
  *
- * When the board is live each repo owns one line that is rewritten in place, so
- * a heartbeat on every poll costs no scrollback and keeps the elapsed time on
- * every line moving. Piped output appends instead, so it keeps the slow default
- * heartbeat rather than one line per repo every few seconds.
+ * Async because the deployed tag now comes from Vast-deployments over the API,
+ * not from a file in the local checkout.
  */
-export declare function pollTimingFor(runCount: number, live: boolean): PollTiming;
-/** The one line of the board a repo owns, and how wide its name is padded. */
-export interface FinishSlot {
-    board: StatusBoard;
-    row: number;
-    labelWidth: number;
-}
-/** The two halves of a multi-repo release, injectable so they can be faked in tests. */
-export interface ReleaseManyDeps {
-    launch: (repo: RepoConfig, options: ReleaseOptions) => Promise<InFlight | DeployOutcome>;
-    finish: (flight: InFlight, slot: FinishSlot, timing: PollTiming) => Promise<DeployOutcome>;
-    /** Injectable so a test can record what each repo wrote to its line. */
-    board?: (rows: number) => StatusBoard;
+export declare function prepareOne(repo: RepoConfig, options: ReleaseOptions): Promise<Deployable | DeployOutcome>;
+/** The two halves of a release, injectable so they can be faked in tests. */
+export interface ReleaseManyDeps extends DeployManyDeps {
+    prepare?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
 }
 /**
- * Several repos, like one terminal per repo. Promote and dispatch each in turn
- * (seconds), then watch every run concurrently (minutes). Outcomes come back in
- * the order the repos were named, so the summary reads the way it was typed.
+ * Every repo, like one terminal per repo. Promote and derive each in turn
+ * (seconds of local git), then deploy them all concurrently on one shared
+ * board (minutes of CI and ArgoCD).
  *
- * allSettled rather than all: one repo's watch throwing must not swallow the
- * outcomes of the repos that finished fine. That is the whole promise of the
- * multi-repo path, so it is structural here rather than a matter of every
- * caller downstream remembering to catch.
+ * One repo takes the same path with a single-row board: a second code path for
+ * the common case is a second place for the ArgoCD wait to be forgotten.
  */
 export declare function releaseMany(targets: RepoConfig[], options: ReleaseOptions, deps?: ReleaseManyDeps): Promise<DeployOutcome[]>;
 export declare function registerReleaseCommand(program: Command): void;

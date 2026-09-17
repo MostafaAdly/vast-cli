@@ -1,11 +1,9 @@
 /**
- * Reads the deployed image tag out of a repo's Helm values.
+ * Parses the deployed image tag out of a values file.
  *
- * Uses `git show <ref>:<path>` so nothing is checked out — the committed state
- * on the remote branch is what is deployed, and it reflects everyone's deploys,
- * not just this machine's.
+ * The file itself now comes from Vast-deployments over the API (see
+ * `utils/deployments.ts`); this module is only the parser.
  */
-/** First uncommented `tag:` value in a Helm values file. */
+/** First uncommented `tag:` value in a values file. */
 export declare function extractTag(yaml: string): string;
-export declare function readDeployedTag(repoDir: string, ref: string, helmPath: string): string;
 //# sourceMappingURL=helm.d.ts.map

@@ -58,4 +58,41 @@ export const PRODUCTION_LOCKED_MESSAGE = [
     'Lift the deploy lock: vast production enable',
     'Check the state:      vast production status',
 ].join('\n');
+/**
+ * The second, harder gate: production has not moved to the new deploy pipeline.
+ *
+ * Staging is GitOps — `build-deploy` commits the image tag into
+ * Vast-deployments and ArgoCD rolls it out. Production still has the old shape:
+ * its workflow inputs, its values-file folder names and its ArgoCD host are
+ * ASSUMPTIONS in this config, not facts read from GitHub. Dispatching against
+ * an assumption is how you ship nothing and report success, so every production
+ * deploy path refuses on this constant before it even looks at the file lock.
+ *
+ * Unlike the lock, no file or flag can lift it: re-enabling production means
+ * flipping this constant, and only after the prod workflow inputs and folder
+ * names have been verified with DevOps.
+ */
+export const PRODUCTION_PIPELINE_READY = false;
+export function productionPipelineReady() {
+    return PRODUCTION_PIPELINE_READY;
+}
+/** Human-readable refusal for every blocked production deploy path. */
+export const PRODUCTION_NOT_READY_MESSAGE = [
+    'Production has not moved to the new deploy pipeline yet.',
+    'Nothing was built or shipped.',
+    '',
+    'Staging deploys through Vast-deployments + ArgoCD now. The',
+    'production workflow inputs, values-file folder names and ArgoCD',
+    'host are still unverified assumptions, so this CLI refuses to',
+    'dispatch against them.',
+    '',
+    'Still works, and ships nothing on its own:',
+    '  vast promote <repo> --to production',
+    '  vast promote <repo> --to production --as hotfix',
+    '',
+    'Deploy production by hand until DevOps has migrated it.',
+    'Re-enabling it here means verifying the production workflow',
+    'inputs and folder names with DevOps, then flipping',
+    'PRODUCTION_PIPELINE_READY in src/config/production-lock.ts.',
+].join('\n');
 //# sourceMappingURL=production-lock.js.map

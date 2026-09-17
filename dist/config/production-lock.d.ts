@@ -22,4 +22,22 @@ export declare function enableProduction(stamp: string): void;
 export declare function disableProduction(): void;
 /** Human-readable refusal, shared by every production code path. */
 export declare const PRODUCTION_LOCKED_MESSAGE: string;
+/**
+ * The second, harder gate: production has not moved to the new deploy pipeline.
+ *
+ * Staging is GitOps — `build-deploy` commits the image tag into
+ * Vast-deployments and ArgoCD rolls it out. Production still has the old shape:
+ * its workflow inputs, its values-file folder names and its ArgoCD host are
+ * ASSUMPTIONS in this config, not facts read from GitHub. Dispatching against
+ * an assumption is how you ship nothing and report success, so every production
+ * deploy path refuses on this constant before it even looks at the file lock.
+ *
+ * Unlike the lock, no file or flag can lift it: re-enabling production means
+ * flipping this constant, and only after the prod workflow inputs and folder
+ * names have been verified with DevOps.
+ */
+export declare const PRODUCTION_PIPELINE_READY = false;
+export declare function productionPipelineReady(): boolean;
+/** Human-readable refusal for every blocked production deploy path. */
+export declare const PRODUCTION_NOT_READY_MESSAGE: string;
 //# sourceMappingURL=production-lock.d.ts.map

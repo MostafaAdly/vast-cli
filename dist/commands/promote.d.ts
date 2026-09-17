@@ -15,7 +15,13 @@ import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
 import { type ReleaseKind } from '../utils/release-branch.js';
 import type { BodyMode } from '../utils/changelog.js';
-/** @returns true when the promotion completed (or would have, under dryRun). */
-export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string, bodyMode?: BodyMode, pickRefs?: string[]): boolean;
+/**
+ * @returns true when the promotion completed (or would have, under dryRun).
+ *
+ * Async because a production promotion derives its version from the tag
+ * Vast-deployments says is live, read over the API — the app checkouts no
+ * longer carry a Helm file to read.
+ */
+export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string, bodyMode?: BodyMode, pickRefs?: string[]): Promise<boolean>;
 export declare function registerPromoteCommand(program: Command): void;
 //# sourceMappingURL=promote.d.ts.map

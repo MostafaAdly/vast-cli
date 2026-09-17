@@ -1,12 +1,10 @@
 /**
- * Reads the deployed image tag out of a repo's Helm values.
+ * Parses the deployed image tag out of a values file.
  *
- * Uses `git show <ref>:<path>` so nothing is checked out — the committed state
- * on the remote branch is what is deployed, and it reflects everyone's deploys,
- * not just this machine's.
+ * The file itself now comes from Vast-deployments over the API (see
+ * `utils/deployments.ts`); this module is only the parser.
  */
-import { execFileSync } from 'child_process';
-/** First uncommented `tag:` value in a Helm values file. */
+/** First uncommented `tag:` value in a values file. */
 export function extractTag(yaml) {
     for (const line of yaml.split('\n')) {
         const stripped = line.trim();
@@ -17,19 +15,5 @@ export function extractTag(yaml) {
             return m[1];
     }
     throw new Error('No `tag:` found in Helm values file');
-}
-export function readDeployedTag(repoDir, ref, helmPath) {
-    let yaml;
-    try {
-        yaml = execFileSync('git', ['show', `${ref}:${helmPath}`], {
-            cwd: repoDir,
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
-    }
-    catch {
-        throw new Error(`Could not read ${helmPath} at ${ref}. Is the ref fetched?`);
-    }
-    return extractTag(yaml);
 }
 //# sourceMappingURL=helm.js.map

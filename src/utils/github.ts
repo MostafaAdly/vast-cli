@@ -95,15 +95,27 @@ export async function listWorkflows(repo: string): Promise<void> {
  * @param params - Workflow run parameters
  * @returns Result of the workflow run attempt
  */
+export interface RunWorkflowOptions {
+  /**
+   * Suppress the spinner and the resolved-workflow line.
+   *
+   * The deploy path draws a status board that tracks the cursor by counting its
+   * own lines, so a spinner painting over it would scroll every row out from
+   * under it. Board-driven callers dispatch quietly and report on their own row.
+   */
+  quiet?: boolean;
+}
+
 export async function runWorkflow(
   params: WorkflowRunParams,
+  options: RunWorkflowOptions = {},
 ): Promise<WorkflowRunResult> {
   const { repository, version, branch, workflowName, inputs } = params;
 
-  const spinner = createSpinner(
-    `Triggering workflow for ${repository} @ ${version} (${branch})...`,
-  );
-  spinner.start();
+  const spinner = options.quiet
+    ? null
+    : createSpinner(`Triggering workflow for ${repository} @ ${version} (${branch})...`);
+  spinner?.start();
 
   try {
     // Resolve the workflow name first — it is needed both to dispatch and to
@@ -117,7 +129,7 @@ export async function runWorkflow(
         throw new Error(`No workflows found for ${repository}`);
       } else if (workflows.length === 1) {
         resolvedWorkflow = workflows[0].name;
-        log.info(`Using workflow: ${resolvedWorkflow}`);
+        if (!options.quiet) log.info(`Using workflow: ${resolvedWorkflow}`);
       } else {
         const workflowNames = workflows.map((w) => w.name).join(", ");
         throw new Error(
@@ -168,7 +180,7 @@ export async function runWorkflow(
       if (newest && newest !== priorRunId) runId = newest;
     }
 
-    spinner.succeed(`Workflow triggered successfully!`);
+    spinner?.succeed(`Workflow triggered successfully!`);
 
     return {
       success: true,
@@ -176,7 +188,7 @@ export async function runWorkflow(
       message: `Workflow triggered for ${repository} with version ${version} on branch ${branch}`,
     };
   } catch (error) {
-    spinner.fail("Failed to trigger workflow");
+    spinner?.fail("Failed to trigger workflow");
 
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
@@ -190,91 +202,42 @@ export async function runWorkflow(
 }
 
 /**
- * Get the environment name from the branch name
- * @param branch - Branch name
- * @returns Environment name (stage, prod, or original branch)
+ * The name of the step that failed in a run, or null.
+ *
+ * The one distinction that matters to a human: a run that failed while
+ * committing the tag into Vast-deployments has usually already BUILT and pushed
+ * the image, so the fix is a retry of the commit, not of the whole build.
  */
-export function getEnvName(branch: string): string {
-  const map: Record<string, string> = {
-    staging: "stage",
-    production: "prod",
-  };
-  return map[branch.toLowerCase()] || branch;
-}
-
-/**
- * Find a pull request by title
- * @param repo - Repository name
- * @param title - PR title to search for
- * @returns PR number or null if not found
- */
-export async function findPullRequest(
-  repo: string,
-  title: string,
-): Promise<number | null> {
+export async function failedStepName(repo: string, runId: number): Promise<string | null> {
   try {
-    // Escape quotes in title for the search query
-    const escapedTitle = title.replace(/"/g, '\\"');
-    const cmd = `gh pr list --repo ${ORG_NAME}/${repo} --search "${escapedTitle} in:title" --state open --json number --limit 1`;
-
-    const output = execSync(cmd, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const prs = JSON.parse(output) as Array<{ number: number }>;
-
-    return prs.length > 0 ? prs[0].number : null;
-  } catch (error) {
+    const { stdout } = await execFileAsync(
+      "gh",
+      ["run", "view", String(runId), "--repo", `${ORG_NAME}/${repo}`, "--json", "jobs"],
+      { encoding: "utf-8" },
+    );
+    const parsed = JSON.parse(stdout) as {
+      jobs?: Array<{ steps?: Array<{ name: string; conclusion: string | null }> }>;
+    };
+    for (const job of parsed.jobs ?? []) {
+      for (const step of job.steps ?? []) {
+        if (step.conclusion === "failure") return step.name;
+      }
+    }
     return null;
-  }
-}
-
-/**
- * Merge a pull request
- * @param repo - Repository name
- * @param prNumber - PR number
- */
-export async function mergePullRequest(
-  repo: string,
-  prNumber: number,
-): Promise<void> {
-  const cmd = `gh pr merge ${prNumber} --repo ${ORG_NAME}/${repo} --merge --delete-branch`;
-  execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] });
-}
-
-/**
- * Watch a specific run to completion.
- *
- * Takes the run id returned by runWorkflow rather than rediscovering it. The
- * previous "newest run on the branch, created under 2 minutes ago" heuristic
- * could attach to a concurrent deploy's run — and then a bump PR would be
- * merged on the strength of an unrelated run's success.
- *
- * @param repo - Repository name
- * @param runId - The run id returned by runWorkflow
- * @returns true if the run concluded successfully
- */
-export async function waitForWorkflowCompletion(
-  repo: string,
-  runId: number,
-): Promise<boolean> {
-  try {
-    execSync(`gh run watch ${runId} --repo ${ORG_NAME}/${repo} --exit-status`, {
-      stdio: "inherit", // Let the user see the output
-    });
-    return true;
   } catch {
-    return false; // Non-zero exit code means failure
+    // Best-effort colour on a failure that is already being reported. Never
+    // turn "the run failed" into "we could not read why the run failed".
+    return null;
   }
 }
 
 /**
  * A run's current status, read without blocking the process.
  *
- * The multi-repo release watches several runs concurrently, which
- * waitForWorkflowCompletion cannot do — `gh run watch` under execSync
- * freezes the event loop for the whole build. gh reports an empty
- * conclusion until the run completes; that is surfaced as null.
+ * The deploy path watches several runs concurrently, which `gh run watch`
+ * cannot do: under execSync it freezes the event loop for the whole build and
+ * repaints the terminal the status board owns. gh reports an empty conclusion
+ * until the run completes; that is surfaced as null.
  */
 export async function getRunStatus(repo: string, runId: number): Promise<RunStatus> {
   const { stdout } = await execFileAsync(

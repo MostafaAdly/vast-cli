@@ -15,21 +15,32 @@
  * tests/repos.test.ts guards against drift in either direction. The config
  * now deliberately exceeds that manifest.
  *
- * Workflow names and Helm paths below were read from GitHub on 2026-08-04,
- * not assumed.
+ * Workflow names and Vast-deployments paths below were read from GitHub on
+ * 2026-09-17, not assumed. Staging is GitOps: `build-deploy` builds the image
+ * and commits the tag into Vast-deployments, which ArgoCD watches. Production
+ * paths are the same shape but are assumptions until DevOps migrates it.
  */
 export type ReleaseTeam = 'frontend' | 'backend';
 export declare const RELEASE_TEAMS: ReleaseTeam[];
+/** The environments a repo can be deployed to, in promotion order. */
+export type DeployEnv = 'staging' | 'production';
+export declare const DEPLOY_ENVS: DeployEnv[];
 export interface RepoConfig {
     /** Canonical GitHub repo name. */
     name: string;
     /**
-     * GitHub Actions workflow that builds the image and opens the bump PR.
-     * null means the repo has no deploy workflow and cannot be released.
+     * GitHub Actions workflow that builds the image and commits the tag into
+     * Vast-deployments, per env. null means the repo cannot be deployed there.
      */
-    workflow: string | null;
-    /** Helm values file holding the deployed image tag, per env. null if absent. */
-    helm: {
+    workflow: {
+        staging: string | null;
+        production: string | null;
+    };
+    /**
+     * Values file in Vast-deployments holding the deployed image tag, per env.
+     * null means the repo is not deployed to that env.
+     */
+    deployments: {
         staging: string | null;
         production: string | null;
     };
@@ -67,6 +78,13 @@ export declare const TEAMS: string[];
 export declare function reposForTeam(team: string): RepoConfig[];
 /** Repos a `vast release --<team>` sweep acts on, in REPOS order. */
 export declare function reposForRelease(team: ReleaseTeam): RepoConfig[];
+/** Path in Vast-deployments holding this repo's deployed tag for an env. */
+export declare function deploymentsFile(repo: RepoConfig, env: DeployEnv): string | null;
+/**
+ * The ArgoCD application name for an env: the folder the values file sits in.
+ * Derived from the path so the two can never disagree.
+ */
+export declare function argoApp(repo: RepoConfig, env: DeployEnv): string | null;
 /**
  * Whether the release commands can act on this repo.
  *

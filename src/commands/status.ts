@@ -9,9 +9,9 @@
 import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { REPOS, getRepo, isReleasable, type RepoConfig } from '../config/repos.js';
+import { DEPLOY_ENVS, REPOS, getRepo, isReleasable, type DeployEnv, type RepoConfig } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
-import { readDeployedTag } from '../utils/helm.js';
+import { deployedTag } from '../utils/deployments.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 
@@ -60,28 +60,64 @@ async function refreshAll(targets: RepoConfig[], dirs: Map<string, string | null
   return failed;
 }
 
-function inspect(repo: RepoConfig, dir: string | null, fetchFailed: boolean): Row {
+/**
+ * The deployed tag per env, for every repo at once.
+ *
+ * Each read is one `gh api` call against Vast-deployments — the app checkouts
+ * no longer carry the answer — so they run concurrently: serially this is one
+ * round trip per repo per env and the command stops feeling instant. A repo
+ * that is not deployed to an env reads "n/a"; a read that fails reads "?",
+ * because a broken lookup is not the same claim as "nothing is deployed".
+ */
+export type TagReader = (repo: RepoConfig, env: DeployEnv) => Promise<string>;
+
+/** The reader's own wording for "that file is not in the repo" (see deployments.ts). */
+const MISSING_FILE = /^no .* in Vast-deployments$/;
+
+export async function readTags(
+  targets: RepoConfig[],
+  read: TagReader = deployedTag,
+): Promise<Map<string, Record<DeployEnv, string>>> {
+  const entries = await Promise.all(
+    targets.map(async (repo) => {
+      const tags = { staging: 'n/a', production: 'n/a' } as Record<DeployEnv, string>;
+      await Promise.all(
+        DEPLOY_ENVS.map(async (env) => {
+          if (!repo.deployments[env]) return;
+          try {
+            tags[env] = await read(repo, env);
+          } catch (error) {
+            // A folder that is not there yet is the normal state while
+            // production is unmigrated — a question mark would read as a
+            // failure and send someone chasing a network problem.
+            const message = error instanceof Error ? error.message : String(error);
+            tags[env] = MISSING_FILE.test(message) ? 'not migrated' : '?';
+          }
+        }),
+      );
+      return [repo.name, tags] as const;
+    }),
+  );
+  return new Map(entries);
+}
+
+function inspect(
+  repo: RepoConfig,
+  dir: string | null,
+  fetchFailed: boolean,
+  tags: Record<DeployEnv, string>,
+): Row {
+  // The tags come from Vast-deployments, so they are known even for a repo that
+  // is not cloned; only the drift column needs a checkout.
   if (!dir || !existsSync(join(dir, '.git'))) {
-    return { name: repo.name, staging: '—', production: '—', drift: 'not cloned' };
+    return { name: repo.name, staging: tags.staging, production: tags.production, drift: 'not cloned' };
   }
-
-  if (fetchFailed) {
-    return { name: repo.name, staging: '?', production: '?', drift: 'fetch failed' };
-  }
-
-  const tag = (env: 'staging' | 'production'): string => {
-    const path = repo.helm[env];
-    if (!path) return 'n/a';
-    try {
-      return readDeployedTag(dir, `origin/${env}`, path);
-    } catch {
-      return '?';
-    }
-  };
 
   let drift: string;
   const source = repo.promoteFrom.staging;
-  if (!source) {
+  if (fetchFailed) {
+    drift = 'fetch failed';
+  } else if (!source) {
     drift = 'no develop';
   } else {
     try {
@@ -92,7 +128,7 @@ function inspect(repo: RepoConfig, dir: string | null, fetchFailed: boolean): Ro
     }
   }
 
-  return { name: repo.name, staging: tag('staging'), production: tag('production'), drift };
+  return { name: repo.name, staging: tags.staging, production: tags.production, drift };
 }
 
 async function executeStatus(
@@ -128,7 +164,10 @@ async function executeStatus(
 
   console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
 
-  const rows = targets.map((r) => inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name)));
+  const tags = await readTags(targets);
+  const rows = targets.map((r) =>
+    inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name), tags.get(r.name)!),
+  );
 
   // Widths come from the data, not constants — real tags run long
   // ("1.1.3-rc4-health") and a fixed width silently breaks the columns.
@@ -155,7 +194,7 @@ export function registerStatusCommand(program: Command): void {
     .description('Show deployed versions and branch drift across repos')
     .argument('[repository]', 'Repository name (omit and pass --all for every repo)')
     .option('-a, --all', 'Report on every configured repo', false)
-    .option('--no-fetch', 'Read local refs only — instant, but possibly stale')
+    .option('--no-fetch', 'Skip the git fetch — DRIFT may be stale (tags are always read live)')
     .option('--dir <path>', 'Override the local checkout path')
     .addHelpText(
       'after',
@@ -167,10 +206,17 @@ Examples:
 Reads only — it fetches and reports, and changes nothing.
 
 Columns:
-  STAGING / PRODUCTION   the image tag deployed to each, from Helm values
+  STAGING / PRODUCTION   the image tag ArgoCD is running, read from the
+                         Vast-deployments values file for that environment
+                         "n/a" means the repo is not deployed to that env
+                         "not migrated" means the file is not in Vast-deployments yet
+                         "?"   means the file could not be read
   DRIFT                  commits waiting on develop that staging lacks
                          "no develop" means the repo has no promotion source
-                         "n/a" means the repo has no Helm values to read
+                         "not cloned" means the drift cannot be computed here
+
+The tags come from Vast-deployments over the API, so they are reported even for
+a repo you have not cloned. Only DRIFT needs a local checkout.
 `,
     )
     .action(executeStatus);
