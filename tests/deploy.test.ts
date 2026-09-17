@@ -185,18 +185,48 @@ test('a dry run reports the version and dispatches nothing', async () => {
   assert.match(lines.join('\n'), /1\.5\.7-rc1/, 'the derived version is what a dry run is for');
 });
 
-// The whole point of the ArgoCD wait is that a deploy is confirmed. Dispatching
-// without a token would push an image and commit a tag while reporting a
-// failure, leaving nobody able to say whether the cluster took it.
-test('a missing ArgoCD token refuses before anything is dispatched', async () => {
-  const { slot } = recordingSlot();
-  const d = deps({ readArgocdToken: () => null });
+// Not being logged in to ArgoCD must not stop a deploy: the build and the tag
+// commit are perfectly valid without it. All that is lost is the confirmation,
+// and the summary says so out loud rather than claiming the tag is live.
+test('without an ArgoCD token the deploy runs and is reported as unconfirmed', async () => {
+  const { slot, lines } = recordingSlot();
+  const reads: string[] = [];
+  const d = deps({
+    readArgocdToken: () => null,
+    getApplication: async (_host, _token, app) => {
+      reads.push(app);
+      return STALE;
+    },
+  });
   const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
-  assert.equal(outcome.status, 'failed');
-  assert.match(outcome.detail, /no ArgoCD token for staging/);
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(d.calls.dispatched, ['VastPayPwa@1.5.7-rc1->staging'], 'the build must still run');
+  assert.deepEqual(reads, [], 'there is no token to read the application with');
+  assert.deepEqual(d.calls.rollouts, [], 'there is no token to wait on ArgoCD with');
+  assert.match(outcome.detail, /rollout not confirmed/);
+  assert.match(outcome.detail, /no ArgoCD token/);
   assert.match(outcome.detail, /vast argocd login/);
-  assert.deepEqual(d.calls.dispatched, [], 'nothing may be dispatched without a way to confirm it');
-  assert.deepEqual(d.calls.rollouts, []);
+  assert.ok(!/live on/.test(outcome.detail), 'nothing may claim the tag is live');
+  assert.match(lines[lines.length - 1], /run 77 {2}succeeded/);
+  assert.match(lines[lines.length - 1], /tag committed — rollout not confirmed \(no ArgoCD token\)/);
+});
+
+// The token path is the whole point of the wait, so it must not be weakened by
+// the unconfirmed path existing next to it.
+test('with an ArgoCD token the ArgoCD wait still runs', async () => {
+  const { slot } = recordingSlot();
+  const reads: string[] = [];
+  const d = deps({
+    getApplication: async (_host, _token, app) => {
+      reads.push(app);
+      return STALE;
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(reads, ['vastpay-pwa'], 'the pre-dispatch snapshot still happens');
+  assert.deepEqual(d.calls.rollouts, ['vastpay-pwa:1.5.7-rc1']);
+  assert.match(outcome.detail, /live on vastpay-pwa/);
 });
 
 test('a repo with no workflow for the env is skipped, not failed', async () => {

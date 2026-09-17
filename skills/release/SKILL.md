@@ -51,14 +51,18 @@ vast upgrade --check
   say so; do not attempt a release.
 - **`gh` not authenticated** → `gh auth login`. Every `vast` command talks to
   GitHub through `gh`, so nothing will work. Stop.
-- **No ArgoCD token for staging.** A deploy waits for ArgoCD to confirm the new
-  tag is live, so `vast` refuses before it starts a build. **Stop and tell the
-  user to run `vast argocd login` themselves.** Never run it for them, never ask
-  them for their ArgoCD username or password, and never handle credentials of any
-  kind — it prompts for a hidden password and is theirs to type. Once they say
-  they have done it, re-run `vast argocd status` to confirm, then carry on.
-  A token that exists but is reported invalid means the same thing: they log in
-  again.
+- **No ArgoCD token for staging.** This is **not** a stop condition. A deploy
+  waits for ArgoCD to confirm the new tag is live, and without a token it simply
+  skips that wait: the build runs, the tag is committed, and the summary says
+  `tag committed — rollout not confirmed (no ArgoCD token)`. **Proceed with the
+  release**, then relay plainly that the rollout was not confirmed and suggest
+  the user run `vast argocd login` so the next deploy is confirmed for them.
+  Never run it for them, never ask them for their ArgoCD username or password,
+  and never handle credentials of any kind — it prompts for a hidden password and
+  is theirs to type. If they log in mid-session, re-run `vast argocd status` to
+  confirm before continuing. A token that exists but is reported invalid is
+  different: that one *does* stop the deploy in front of the build (see §4,
+  `argocd unauthorized`), and they log in again.
 - **A newer release exists.** `vast upgrade --check` says
   `Latest is X; you have Y`. Run `vast upgrade` now, before starting, and say
   that you did. The instructions in this skill describe the current CLI, so
@@ -295,9 +299,17 @@ committed and ArgoCD is already trying. On a retry of an already-live version,
 this same timeout may simply mean nothing new was committed, as above — check
 which of the two the summary reports before calling it a failure.
 
+**`tag committed — rollout not confirmed (no ArgoCD token)`.** Not a failure.
+The build ran and the tag was committed; there was no stored token, so the CLI
+skipped the ArgoCD wait rather than refusing the deploy. Report the repo as
+released-but-unconfirmed, say that the rollout almost certainly happened and can
+be checked in ArgoCD, and suggest the user run `vast argocd login` so the next
+deploy is confirmed for them. Do not re-run the deploy to "make it green".
+
 **`argocd unauthorized`.** The stored token expired or was revoked. Nothing was
 built: the token is used to read the application *before* the dispatch, so the
-deploy stops in front of the build. Tell the user to run `vast argocd login`
+deploy stops in front of the build. (A *missing* token is different — it does not
+stop anything, see above.) Tell the user to run `vast argocd login`
 themselves — never handle their credentials — then run the deploy again.
 
 **`dispatched, but its run could not be identified`.** The build was triggered but

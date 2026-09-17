@@ -135,8 +135,9 @@ Why this exists:
   Staging deploys through GitOps. The build workflow only commits the image tag
   into Vast-deployments — ArgoCD is what actually rolls it out. So \`vast release\`
   and \`vast deploy\` wait on the ArgoCD API until the new tag reports
-  Synced/Healthy, and they refuse to dispatch a build without a token, rather
-  than starting something they cannot confirm.
+  Synced/Healthy. Without a token the deploy still runs, but the CLI cannot
+  confirm the rollout and says so in the summary; log in with
+  \`vast argocd login\` to get live confirmation.
 
   ArgoCD uses local accounts, so this is a real login: once per token lifetime,
   not once per release.

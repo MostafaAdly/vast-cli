@@ -300,16 +300,12 @@ export async function deployOne(
   say(`  ${label}  ${version} → ${env}`, 'muted');
   if (dryRun) return outcome('skipped', 'dry run');
 
-  // Refuse BEFORE dispatching. A build we cannot confirm is worse than no
-  // build: the image would be pushed and the tag committed while the CLI
-  // reports a failure, and the next person would have no idea whether the
-  // cluster took it.
+  // No token is not a reason to refuse. The build and the tag commit are valid
+  // work that needs no ArgoCD session at all; the only thing lost is the
+  // confirmation that the cluster took the tag. So the deploy runs, the wait is
+  // skipped, and the outcome says plainly that the rollout was not confirmed
+  // rather than claiming the version is live.
   const token = deps.readArgocdToken(env);
-  if (!token) {
-    const why = `no ArgoCD token for ${env} — run \`vast argocd login\``;
-    say(`  ${label}  ${why}`, 'error');
-    return outcome('failed', why);
-  }
 
   const host = deps.argocdHost(env);
   const appUrl = deps.argocdAppUrl(env, app);
@@ -324,7 +320,7 @@ export async function deployOne(
   // common case rather than a corner one.
   let before: ArgoApp | undefined;
   try {
-    before = await deps.getApplication(host, token, app);
+    if (token) before = await deps.getApplication(host, token, app);
   } catch (error) {
     if (error instanceof ArgoUnauthorizedError) {
       const why = 'argocd unauthorized — run `vast argocd login`';
@@ -390,6 +386,19 @@ export async function deployOne(
       : `run ${runId} ${word} — ${url}`;
     say(`  ${label}  run ${runId}  ${word}  ${ranFor}  ${url}`, 'error');
     return outcome('failed', detail);
+  }
+
+  // Without a token there is nothing to wait on. The run went green, so the tag
+  // IS committed and ArgoCD will almost certainly pick it up — but "almost
+  // certainly" is not "confirmed", and the line says which of the two this is.
+  if (!token) {
+    const why = 'tag committed — rollout not confirmed (no ArgoCD token)';
+    say(`  ${label}  run ${runId}  succeeded  ${ranFor}  ${why}`, 'success');
+    return outcome(
+      'released',
+      `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
+        '`vast argocd login` to confirm next time)',
+    );
   }
 
   // When the tag was already live the waiter cannot use the tag alone, so it is
@@ -673,8 +682,9 @@ Step 3 needs an ArgoCD session token, so log in once per token lifetime:
   $ vast argocd login              store a staging token
   $ vast argocd status             is it still valid?
 
-Without a token the deploy refuses BEFORE dispatching, so a build is never
-started that could not be confirmed.
+Without a token the deploy still runs, but the CLI cannot confirm the rollout
+and says so in the summary. Log in with \`vast argocd login\` to get live
+confirmation.
 
   $ vast deploy VastPayPwa             one repo
   $ vast deploy VastPayPwa VastMenuPwa both at once, one summary

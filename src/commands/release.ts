@@ -286,8 +286,9 @@ Step 4 needs an ArgoCD session token, so log in once per token lifetime:
   $ vast argocd login              store a staging token
   $ vast argocd status             is it still valid?
 
-Without a token a repo refuses BEFORE dispatching, so a build is never started
-that could not be confirmed.
+Without a token the deploy still runs, but the CLI cannot confirm the rollout
+and says so in the summary. Log in with \`vast argocd login\` to get live
+confirmation.
 
 Several repos release side by side, as if each had its own terminal: each is
 promoted in turn, then every deploy runs at the same time, each on its own line

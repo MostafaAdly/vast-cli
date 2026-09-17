@@ -110,7 +110,10 @@ in `Vast-deployments`:
   ArgoCD syncs from there, usually within ~3 minutes. There are no bump PRs.
 - A deploy is not done when the workflow goes green — that only means the tag was
   committed. It is done when ArgoCD reports `Synced/Healthy` on an image carrying
-  the tag. Ceiling 10 minutes.
+  the tag. Ceiling 10 minutes. Without a stored token the deploy is **not**
+  refused: it dispatches, skips the ArgoCD wait, and reports `tag committed —
+  rollout not confirmed`. An *expired* token still stops it in front of the build,
+  because the pre-dispatch read fails.
 - `vast argocd login` stores a session token in `~/.vast-cli/argocd/<env>.json`,
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.
