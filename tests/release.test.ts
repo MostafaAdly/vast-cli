@@ -7,11 +7,10 @@ import {
   releaseMany,
   releaseTargets,
   validateReleaseOptions,
-  type InFlight,
   type ReleaseOptions,
   type Sweep,
 } from '../src/commands/release.js';
-import { notClonedOutcome, type DeployOutcome } from '../src/commands/deploy.js';
+import { notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
 
@@ -302,24 +301,24 @@ function targetsFor(names: string[]): RepoConfig[] {
   return names.map((n) => getRepo(n)!);
 }
 
-/** A and C refuse at launch; B and D dispatch a run. */
-function alternatingLaunch(repo: RepoConfig): InFlight | DeployOutcome {
+/** A and C refuse while promoting; B and D come out ready to deploy. */
+function alternatingPrepare(repo: RepoConfig): Deployable | DeployOutcome {
   if (repo.name === 'VastPayPwa' || repo.name === 'VastPay-DashBoard') {
     return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
   }
-  return { repo, version: '2.0.0-rc1', runId: 100 };
+  return { repo, version: '2.0.0-rc1' };
 }
 
-function released(flight: InFlight): DeployOutcome {
-  return { repo: flight.repo.name, version: flight.version, status: 'released', detail: 'PR #1' };
+function released(repo: RepoConfig, version: string): DeployOutcome {
+  return { repo: repo.name, version, status: 'released', detail: `${version} live on app` };
 }
 
 // The summary must read the way the command was typed, even though the
 // launches and the finishes happen in two separate passes.
 test('releaseMany returns outcomes in the order the repos were named', async () => {
   const outcomes = await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
-    launch: async (repo) => alternatingLaunch(repo),
-    finish: async (flight) => released(flight),
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => released(repo, version),
   });
   assert.deepEqual(
     outcomes.map((o) => [o.repo, o.status]),
@@ -332,34 +331,48 @@ test('releaseMany returns outcomes in the order the repos were named', async () 
   );
 });
 
-// One repo refusing never stops another: the repos that did dispatch are all
-// still watched.
-test('a repo that fails to launch does not stop the others being finished', async () => {
-  const finished: string[] = [];
+// One repo refusing never stops another: every repo that did promote is still
+// deployed.
+test('a repo that fails to prepare does not stop the others being deployed', async () => {
+  const deployed: string[] = [];
   await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
-    launch: async (repo) => alternatingLaunch(repo),
-    finish: async (flight) => {
-      finished.push(flight.repo.name);
-      return released(flight);
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => {
+      deployed.push(repo.name);
+      return released(repo, version);
     },
   });
-  assert.deepEqual(finished.sort(), ['VastMenu-DashBoard', 'VastMenuPwa']);
+  assert.deepEqual(deployed.sort(), ['VastMenu-DashBoard', 'VastMenuPwa']);
 });
 
-// Each in-flight repo owns exactly one line of the board, numbered in launch
+// Everything a release deploys goes to staging. `release --to production` is
+// refused at the command level, and nothing below it may quietly widen that.
+test('releaseMany only ever deploys to staging', async () => {
+  const envs: string[] = [];
+  await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, env, version) => {
+      envs.push(env);
+      return released(repo, version);
+    },
+  });
+  assert.deepEqual(envs, ['staging', 'staging']);
+});
+
+// Each deploying repo owns exactly one line of the board, numbered in prepare
 // order, and every repo shares one board — two boards would each believe they
 // own the cursor and overwrite each other's lines.
-test('every in-flight repo gets its own row on one shared board', async () => {
+test('every deploying repo gets its own row on one shared board', async () => {
   const board: StatusBoard = { update: () => {} };
   const seen: Array<[string, number, number, unknown]> = [];
   await releaseMany(
     targetsFor(FOUR),
     MANY_OPTIONS,
     {
-      launch: async (repo) => alternatingLaunch(repo),
-      finish: async (flight, slot) => {
-        seen.push([flight.repo.name, slot.row, slot.labelWidth, slot.board]);
-        return released(flight);
+      prepare: async (repo) => alternatingPrepare(repo),
+      deploy: async (repo, _env, version, _dryRun, slot) => {
+        seen.push([repo.name, slot.row, slot.labelWidth, slot.board]);
+        return released(repo, version);
       },
       board: () => board,
     },
@@ -382,12 +395,12 @@ test('every in-flight repo gets its own row on one shared board', async () => {
   );
 });
 
-test('a finish that throws fails only its own repo', async () => {
+test('a deploy that throws fails only its own repo', async () => {
   const outcomes = await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
-    launch: async (repo) => alternatingLaunch(repo),
-    finish: async (flight) => {
-      if (flight.repo.name === 'VastMenuPwa') throw new Error('gh exploded');
-      return released(flight);
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => {
+      if (repo.name === 'VastMenuPwa') throw new Error('gh exploded');
+      return released(repo, version);
     },
   });
   assert.deepEqual(
@@ -396,7 +409,7 @@ test('a finish that throws fails only its own repo', async () => {
       ['VastPayPwa', 'failed', 'promotion refused'],
       ['VastMenuPwa', 'failed', 'gh exploded'],
       ['VastPay-DashBoard', 'failed', 'promotion refused'],
-      ['VastMenu-DashBoard', 'released', 'PR #1'],
+      ['VastMenu-DashBoard', 'released', '2.0.0-rc1 live on app'],
     ],
   );
 });

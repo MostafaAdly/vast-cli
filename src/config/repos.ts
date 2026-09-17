@@ -15,23 +15,32 @@
  * tests/repos.test.ts guards against drift in either direction. The config
  * now deliberately exceeds that manifest.
  *
- * Workflow names and Helm paths below were read from GitHub on 2026-08-04,
- * not assumed.
+ * Workflow names and Vast-deployments paths below were read from GitHub on
+ * 2026-09-17, not assumed. Staging is GitOps: `build-deploy` builds the image
+ * and commits the tag into Vast-deployments, which ArgoCD watches. Production
+ * paths are the same shape but are assumptions until DevOps migrates it.
  */
 
 export type ReleaseTeam = 'frontend' | 'backend';
 export const RELEASE_TEAMS: ReleaseTeam[] = ['frontend', 'backend'];
 
+/** The environments a repo can be deployed to, in promotion order. */
+export type DeployEnv = 'staging' | 'production';
+export const DEPLOY_ENVS: DeployEnv[] = ['staging', 'production'];
+
 export interface RepoConfig {
   /** Canonical GitHub repo name. */
   name: string;
   /**
-   * GitHub Actions workflow that builds the image and opens the bump PR.
-   * null means the repo has no deploy workflow and cannot be released.
+   * GitHub Actions workflow that builds the image and commits the tag into
+   * Vast-deployments, per env. null means the repo cannot be deployed there.
    */
-  workflow: string | null;
-  /** Helm values file holding the deployed image tag, per env. null if absent. */
-  helm: { staging: string | null; production: string | null };
+  workflow: { staging: string | null; production: string | null };
+  /**
+   * Values file in Vast-deployments holding the deployed image tag, per env.
+   * null means the repo is not deployed to that env.
+   */
+  deployments: { staging: string | null; production: string | null };
   /**
    * Branch a promotion into each env merges FROM.
    * null means promotion into that env is unsupported for this repo — both
@@ -53,47 +62,57 @@ export interface RepoConfig {
   releaseTeam: ReleaseTeam | null;
 }
 
-const HELM = {
-  staging: 'Helm/values-stage.yaml',
-  production: 'Helm/values-prod.yaml',
-} as const;
+/** Every releasable repo builds and commits its tag through the same workflow. */
+const BUILD_DEPLOY = { staging: 'build-deploy', production: 'build-deploy' } as const;
+
+const NO_DEPLOY = { staging: null, production: null } as const;
+
+/**
+ * Staging folder names are ArgoCD app names hand-written in Vast-deployments,
+ * not derived from the repo name — `vastpay-dasaboard` is misspelled upstream
+ * and must stay that way here, or the app lookup misses.
+ */
+const deployments = (name: string, stagingFolder: string) => ({
+  staging: `deployments/helm/staging/${stagingFolder}/stage.yaml`,
+  production: `deployments/helm/production/${name}/prod.yaml`,
+});
 
 const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' } as const;
 
-/** Frontend repo: develop -> staging -> production, standard Helm layout. */
+/** Frontend repo: develop -> staging -> production. */
 const fe = (
   name: string,
-  workflow: string | null,
+  stagingFolder: string,
   teams: string[] = ['frontend'],
   releaseTeam: ReleaseTeam | null = 'frontend',
 ): RepoConfig => ({
   name,
-  workflow,
-  helm: { ...HELM },
+  workflow: { ...BUILD_DEPLOY },
+  deployments: deployments(name, stagingFolder),
   promoteFrom: { ...FRONTEND_PROMOTION },
   teams,
   releaseTeam,
 });
 
 export const REPOS: RepoConfig[] = [
-  fe('VastPayPwaV2', 'vastpaypwa-v2-ci-new'),
-  fe('VastPay-DashBoard', 'vastpay-dashboard-ci-new'),
-  fe('VastMenuPwa', 'pwa-ci-new'),
-  fe('VastMenuPwaV2', 'pwa-v2-ci-new'),
-  fe('VastPayPwa', 'vastpay-pwa-ci-new'),
-  fe('VastMenu-DashBoard', 'dashboard-ci-new'),
+  fe('VastPayPwaV2', 'vastpay-pwa-v2'),
+  fe('VastPay-DashBoard', 'vastpay-dasaboard'),
+  fe('VastMenuPwa', 'pwa'),
+  fe('VastMenuPwaV2', 'pwav2'),
+  fe('VastPayPwa', 'vastpay-pwa'),
+  fe('VastMenu-DashBoard', 'vastmenu-dashboard'),
   // Cloned with the frontend but deliberately out of the frontend release
   // train — it ships on its own cadence and is released by name only.
-  fe('vast-menu-payments', 'payments-ci-new', ['frontend'], null),
+  fe('vast-menu-payments', 'vastmenu-payments', ['frontend'], null),
 
-  // Vast-Finance has no Helm directory and no CI workflow — only review bots
-  // (Claude PR Review, Copilot, CodeQL). Verified via the GitHub API on
-  // 2026-08-04. It is listed so `status` and `--all` acknowledge it, but every
+  // Vast-Finance has no deployments folder and no build-deploy workflow — only
+  // review bots (Claude PR Review, Copilot, CodeQL). Verified via the GitHub
+  // API. It is listed so `status` and `--all` acknowledge it, but every
   // release path skips it with a reason rather than pretending it can ship.
   {
     name: 'Vast-Finance',
-    workflow: null,
-    helm: { staging: null, production: null },
+    workflow: { ...NO_DEPLOY },
+    deployments: { ...NO_DEPLOY },
     promoteFrom: { ...FRONTEND_PROMOTION },
     teams: ['frontend'],
     releaseTeam: null,
@@ -103,35 +122,35 @@ export const REPOS: RepoConfig[] = [
   // target `staging` directly.
   {
     name: 'VastPay-BackEnd',
-    workflow: 'vastpay-backend-ci-new',
-    helm: { ...HELM },
+    workflow: { ...BUILD_DEPLOY },
+    deployments: deployments('VastPay-BackEnd', 'vastpay-backend'),
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
     releaseTeam: 'backend',
   },
   {
     name: 'VastMenu-BackEnd',
-    workflow: 'vastmenu-backend-ci-new',
-    helm: { ...HELM },
+    workflow: { ...BUILD_DEPLOY },
+    deployments: deployments('VastMenu-BackEnd', 'vastmenu-backend'),
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
     releaseTeam: 'backend',
   },
 
-  // Cloneable, not releasable: no Helm values and no deploy workflow here, so
+  // Cloneable, not releasable: no deployments file and no deploy workflow, so
   // isReleasable() keeps them out of status, promote, and deploy.
   {
     name: 'vastpay-payment-odoo',
-    workflow: null,
-    helm: { staging: null, production: null },
+    workflow: { ...NO_DEPLOY },
+    deployments: { ...NO_DEPLOY },
     promoteFrom: { staging: null, production: null },
     teams: ['backend'],
     releaseTeam: null,
   },
   {
     name: 'Terraform',
-    workflow: null,
-    helm: { staging: null, production: null },
+    workflow: { ...NO_DEPLOY },
+    deployments: { ...NO_DEPLOY },
     promoteFrom: { staging: null, production: null },
     teams: ['infra'],
     releaseTeam: null,
@@ -163,6 +182,22 @@ export function reposForRelease(team: ReleaseTeam): RepoConfig[] {
   return REPOS.filter((r) => r.releaseTeam === team);
 }
 
+/** Path in Vast-deployments holding this repo's deployed tag for an env. */
+export function deploymentsFile(repo: RepoConfig, env: DeployEnv): string | null {
+  return repo.deployments[env];
+}
+
+/**
+ * The ArgoCD application name for an env: the folder the values file sits in.
+ * Derived from the path so the two can never disagree.
+ */
+export function argoApp(repo: RepoConfig, env: DeployEnv): string | null {
+  const file = deploymentsFile(repo, env);
+  if (!file) return null;
+  const parts = file.split('/');
+  return parts[parts.length - 2] ?? null;
+}
+
 /**
  * Whether the release commands can act on this repo.
  *
@@ -170,5 +205,5 @@ export function reposForRelease(team: ReleaseTeam): RepoConfig[] {
  * makes a docs or infra repo show up in `status --all` or become promotable.
  */
 export function isReleasable(repo: RepoConfig): boolean {
-  return Boolean(repo.workflow && repo.helm.staging);
+  return Boolean(repo.workflow.staging && repo.deployments.staging);
 }

@@ -13,20 +13,17 @@ import {
   runWorkflow,
   listWorkflows,
   checkGhCli,
-  getEnvName,
-  findPullRequest,
-  mergePullRequest,
-  waitForWorkflowCompletion,
+  runUrl,
 } from '../utils/github.js';
 import { getRepo, repoNames } from '../config/repos.js';
-import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE } from '../config/production-lock.js';
+import { productionRefusal } from '../config/production-lock.js';
+import { NEVER_PUSH } from '../utils/git.js';
 import { confirmProduction } from './deploy.js';
 import { 
   createHeader, 
   createSuccessBox, 
   createErrorBox,
   createInfoBox,
-  createSpinner,
   log,
   formatKeyValue,
   formatList,
@@ -36,6 +33,17 @@ import {
 export const COMMAND_NAME = 'workflow';
 export const COMMAND_DESCRIPTION = 'Run GitHub Actions workflows for Vast-menu repositories';
 export const COMMAND_ALIASES = ['wf', 'run'];
+
+/**
+ * Is this branch one the CLI must never dispatch on?
+ *
+ * The list is NEVER_PUSH itself rather than a second copy of it: the two drifted
+ * once already (`master` was pushable through `workflow` but not through git),
+ * and an untrimmed `-b ' production'` slipped past the old membership test.
+ */
+export function isProtectedBranch(branch: string): boolean {
+  return NEVER_PUSH.includes(branch.trim().toLowerCase());
+}
 
 interface WorkflowOptions {
   /** Version to deploy (semantic versioning format) */
@@ -50,8 +58,6 @@ interface WorkflowOptions {
   dryRun: boolean;
   /** Show detailed output */
   verbose: boolean;
-  /** Auto-merge the resulting PR */
-  approve: boolean;
   /** Additional inputs as key=value pairs */
   inputs?: string[];
 }
@@ -132,6 +138,26 @@ async function executeWorkflow(
     }
   }
 
+  // Production is blocked outright, and locked on top of that. The gate sits
+  // ABOVE the dry run: `--dry-run` on a protected branch must refuse the same
+  // way `deploy --to production --dry-run` does, rather than print a plan for
+  // something this CLI will never do.
+  if (isProtectedBranch(options.branch)) {
+    const refusal = productionRefusal('production');
+    if (refusal) {
+      console.log(createErrorBox(
+        `Refusing to dispatch on ${options.branch}`,
+        refusal
+      ));
+      process.exit(1);
+    }
+    log.warn(`⚠️  You are targeting the ${chalk.bold(options.branch)} branch!`);
+    if (!(await confirmProduction(repo, options.targetVersion))) {
+      log.info('Aborted.');
+      process.exit(0);
+    }
+  }
+
   // Dry run mode
   if (options.dryRun) {
     console.log(createInfoBox('Dry Run Mode - Parameters', [
@@ -143,23 +169,6 @@ async function executeWorkflow(
     ]));
     log.muted('\nNo workflow was triggered (dry-run mode)');
     return;
-  }
-
-  // Production is locked by default and requires an explicit confirmation.
-  const protectedBranches = ['production', 'prod', 'main'];
-  if (protectedBranches.includes(options.branch.toLowerCase())) {
-    if (!isProductionEnabled()) {
-      console.log(createErrorBox(
-        `Refusing to dispatch on ${options.branch}`,
-        PRODUCTION_LOCKED_MESSAGE
-      ));
-      process.exit(1);
-    }
-    log.warn(`⚠️  You are targeting the ${chalk.bold(options.branch)} branch!`);
-    if (!(await confirmProduction(repo, options.targetVersion))) {
-      log.info('Aborted.');
-      process.exit(0);
-    }
   }
 
   // Execute the workflow
@@ -174,87 +183,9 @@ async function executeWorkflow(
   if (result.success) {
     console.log(createSuccessBox(
       'Workflow triggered successfully!',
-      `Repository: ${repo}\nVersion: ${options.targetVersion}\nBranch: ${options.branch}`
+      `Repository: ${repo}\nVersion: ${options.targetVersion}\nBranch: ${options.branch}` +
+        (result.runId ? `\nRun: ${runUrl(repo, result.runId)}` : '')
     ));
-
-    // Auto-approve logic
-    if (options.approve) {
-      log.newline();
-      log.info('Waiting for workflow to complete to merge PR...');
-
-      if (!result.runId) {
-        log.error('Could not identify the dispatched run. Not merging.');
-        process.exit(1);
-      }
-
-      const workflowSuccess = await waitForWorkflowCompletion(repo, result.runId);
-
-      if (!workflowSuccess) {
-        log.error('Workflow failed or could not be found. Cannot merge PR.');
-        process.exit(1);
-      }
-      
-      log.success('Workflow completed successfully!');
-      
-      // Construct expected PR title
-      const env = getEnvName(options.branch);
-      const prTitle = `chore: bump version to ${options.targetVersion} in ${env} environment`;
-      
-      const spinner = createSpinner('Looking for Pull Request...');
-      spinner.start();
-      
-      // Poll for PR
-      let prNumber: number | null = null;
-      let attempts = 0;
-      const pollInterval = 20000; // 20 seconds
-      const maxPollDuration = 15 * 60 * 1000; // 15 minutes
-      const maxAttempts = Math.ceil(maxPollDuration / pollInterval);
-      
-      while (!prNumber && attempts < maxAttempts) {
-        prNumber = await findPullRequest(repo, prTitle);
-        if (!prNumber) {
-          // Update spinner to show we are still waiting
-          const elapsed = Math.round((attempts * pollInterval) / 1000);
-          spinner.text = `Looking for Pull Request... (${elapsed}s elapsed)`;
-          
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-          attempts++;
-        }
-      }
-      
-      if (prNumber) {
-        spinner.text = `Merging PR #${prNumber}...`;
-        
-        // Retry logic for merge
-        let mergeSuccess = false;
-        let mergeAttempts = 0;
-        const maxMergeRetries = 3;
-        
-        while (!mergeSuccess && mergeAttempts < maxMergeRetries) {
-          try {
-            if (mergeAttempts > 0) {
-              spinner.text = `Merging PR #${prNumber}... (Attempt ${mergeAttempts + 1}/${maxMergeRetries})`;
-            }
-            await mergePullRequest(repo, prNumber);
-            mergeSuccess = true;
-            spinner.succeed(`PR #${prNumber} merged and branch deleted successfully!`);
-          } catch (error) {
-            mergeAttempts++;
-            if (mergeAttempts >= maxMergeRetries) {
-              spinner.fail(`Failed to merge PR #${prNumber} after ${maxMergeRetries} attempts`);
-              log.error(error instanceof Error ? error.message : String(error));
-            } else {
-              // Wait a bit before retrying
-              await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-          }
-        }
-      } else {
-        spinner.fail('Pull Request not found');
-        log.warn(`Could not find PR with title: "${prTitle}"`);
-        log.warn('It might take a moment to appear, or the workflow might have failed to create it.');
-      }
-    }
   } else {
     console.log(createErrorBox(
       'Failed to trigger workflow',
@@ -280,7 +211,6 @@ export function registerWorkflowCommand(program: Command): void {
     .option('-l, --list', 'List available workflows instead of running', false)
     .option('-n, --dry-run', 'Validate parameters without triggering workflow', false)
     .option('--verbose', 'Show detailed output', false)
-    .option('-a, --approve', 'Wait for the run, then merge the resulting bump PR', false)
     .option('-i, --inputs <pairs...>', 'Additional workflow inputs (key=value)')
     .addHelpText('after', `
 Examples:
@@ -296,8 +226,16 @@ Examples:
   # With additional inputs
   $ vast workflow Vastmenu-Backend --target-version 2.0.0 --branch main --inputs environment=prod debug=true
 
+This is the escape hatch: it dispatches a workflow and stops. It does not watch
+the run and it does not wait for ArgoCD, so it cannot tell you whether anything
+reached the cluster.
+
 Prefer \`vast release\` for the everyday staging flow — it promotes, derives the
-version from the deployed Helm tag, and deploys in one command.
+version from the tag Vast-deployments says is live, dispatches, watches the run
+and waits until ArgoCD reports the new tag Synced/Healthy.
+
+Dispatching on production, prod, main or master is BLOCKED: production has not moved to
+the new deploy pipeline yet.
 
 Available Repositories:
 ${repoNames().map(r => `  • ${r}`).join('\n')}

@@ -10,7 +10,7 @@ rather than from memory.
 
 ```bash
 vast status --all                     # what is live everywhere
-vast release VastPayPwa               # develop → staging, versioned, deployed, bump PR merged
+vast release VastPayPwa               # develop → staging, versioned, deployed, confirmed live
 vast release VastPayPwa VastMenuPwa   # both at once, side by side
 ```
 
@@ -84,7 +84,10 @@ Set up the Vast CLI and its release skill on my machine.
    If it finds nothing, ask me where I keep them and re-run with
    `vast init --root <path>`.
 
-5. Show me `vast status --all`.
+5. Run `vast argocd status`. If there is no staging token, tell me to run
+   `vast argocd login` myself — do not run it and do not ask me for my password.
+
+6. Show me `vast status --all`.
 
 Do not deploy, promote, or release anything. If a step fails, stop and tell me
 which one and the exact error.
@@ -130,6 +133,10 @@ and delete the checkout.
 - **[GitHub CLI](https://cli.github.com/) (`gh`), authenticated.** Check with
   `gh auth status`. Every command talks to GitHub through `gh`; nothing works without it.
 - Access to the Vast-menu organisation
+- **An ArgoCD staging account**, and one `vast argocd login` on this machine. Deploys wait
+  for ArgoCD to confirm the new tag is live. Without a token `vast release` and
+  `vast deploy` still run, but they cannot confirm the rollout and say so in the summary —
+  log in for live confirmation. Check with `vast argocd status`.
 
 ## Commands
 
@@ -142,10 +149,11 @@ worked examples.
 | `vast clone` | Clone the repos your team needs |
 | `vast upgrade` | Update to the latest release |
 | `vast status` | Deployed versions and branch drift |
-| `vast release` | Promote develop→staging, derive the version, deploy, merge the bump PR |
+| `vast release` | Promote develop→staging, derive the version, deploy, wait until it is live |
 | `vast promote` | Merge branches, or open a release/hotfix PR into production |
-| `vast deploy` | Ship a version already on the branch |
-| `vast workflow` | Trigger a raw GitHub Actions workflow |
+| `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
+| `vast argocd` | Log in to ArgoCD, check the stored token, log out |
+| `vast workflow` | Trigger a raw GitHub Actions workflow — never on a protected branch |
 | `vast production` | Show or change the production deploy lock |
 
 ### The everyday flow
@@ -153,8 +161,31 @@ worked examples.
 ```
 develop  ──▶  staging  ──▶  production
            vast release    vast promote --to production
-                           vast deploy  --to production
+                           (production deploy blocked until migrated)
 ```
+
+Staging is GitOps. There are no bump PRs any more. `vast release` promotes the branch,
+derives the version, and dispatches the repo's `build-deploy` workflow. That workflow
+builds the image and commits the new tag to `Vast-deployments`; ArgoCD notices the commit
+and syncs the cluster, usually within about three minutes.
+
+Because the workflow going green only means the tag was *committed*, the CLI does not stop
+there. It then watches the repo's ArgoCD application until it reports **Synced/Healthy**
+running an image carrying the new tag, and only then calls the release done:
+
+```
+  VastPayPwa  argocd vastpay-pwa  Synced/Healthy  3m12s  https://argocd-stg.vastmenu.com/applications/vastpay-pwa
+```
+
+Until the tag shows up the line reads `waiting for <tag>`, then tracks ArgoCD's own
+sync/health pair (`OutOfSync/Progressing` and so on). The ceiling is **10 minutes**; past
+that the repo is reported as timed out, with the ArgoCD URL to look at. A timeout means
+the rollout is still in ArgoCD's hands — it does not mean the build failed.
+
+Without an ArgoCD token the deploy still runs: the image is built and the tag is
+committed, the ArgoCD wait is skipped, and the summary reads `tag committed — rollout not
+confirmed (no ArgoCD token)` instead of claiming the version is live. Run `vast argocd
+login` to get live confirmation.
 
 Every promotion fetches first, then fast-forwards your local branches to match, reporting
 what it pulled:
@@ -166,10 +197,34 @@ pulled 24 new commit(s) into develop
 A branch carrying local commits is reported and left alone rather than rewritten — the
 promotion merges `origin/*` regardless, so your work is never at risk.
 
+### Reading `vast status`
+
+```bash
+vast status --all         # every repo, one screen
+vast status VastPayPwa    # one repo
+```
+
+**STAGING** is the tag in that repo's `Vast-deployments` values file — the image
+ArgoCD is actually running. **PRODUCTION** is not migrated yet, so what is running
+there is still recorded in the app repo's own `Helm/values-prod.yaml` on
+`origin/production`. That is what the column shows, marked with `*` and a footnote
+under the table. The seed files that already exist in `Vast-deployments` for
+production are copies taken at cutover and drift as soon as someone deploys by hand
+(one already had), so they are only used for a repo you have not cloned. When
+neither is readable the cell reads `not migrated`. `n/a` means the repo is not
+deployed to that environment at all, and `?` means the lookup itself failed. Once
+production migrates, the column reads `Vast-deployments` like staging does.
+
+**DRIFT** is how many commits are waiting on `develop` that `staging` does not
+have. Only DRIFT needs a local checkout — the tags are read over the API, so they
+are reported even for a repo you have never cloned.
+
 ### Versions are derived, not typed
 
-The next version comes from the tag currently deployed, read out of the repo's Helm
-values — so it reflects what everyone has deployed, not what you remember deploying.
+The next version comes from the tag currently deployed, read out of the repo's values file
+in `Vast-deployments` (`deployments/helm/staging/<app>/stage.yaml`) — the same file ArgoCD
+deploys from. So it reflects what is actually running, not what you remember deploying.
+Nothing is read from the app repo's own Helm values any more.
 
 ```bash
 vast release VastPayPwa                 # 1.5.5-rc15 → 1.5.5-rc16   continue the series
@@ -203,23 +258,23 @@ you name it.
 
 Each repo is promoted and dispatched in turn — seconds of local `git` and `gh` — and
 then every CI run is watched **at the same time**, so the whole thing takes about one
-build instead of one per repo. Whichever run finishes first gets its bump PR merged
-immediately. One repo refusing (a conflict, a dirty tree) never stops the others; the
+build instead of one per repo. Whichever build finishes first moves straight on to its
+own ArgoCD wait. One repo refusing (a conflict, a dirty tree) never stops the others; the
 summary lists every outcome and the command exits non-zero if any failed.
 
-With more than one repo the live `gh run watch` view is replaced by a status block. On a
-terminal each watched run owns one line, rewritten in place as it goes:
+Every release, one repo or eight, runs on the same status block. Each watched repo owns
+one line, rewritten in place as it goes:
 
 ```
   VastMenu-DashBoard  run 33633763604  in_progress  1m05s
   VastPayPwa          run 33633763712  queued       1m05s
 ```
 
-The elapsed time refreshes on every status check. When a run finishes its line becomes
-`succeeded  8m12s  looking for the bump PR...`, then `succeeded  8m12s  PR #123 merged`;
-a failed run's line becomes `failed  8m12s  <run URL>`. Lines longer than the terminal
-width are cut to fit — the full detail, including the URL, is in the summary below the
-block.
+The elapsed time refreshes on every status check. When a build finishes, that repo's line
+hands over to the ArgoCD wait (`argocd vastpay-pwa  waiting for 2.1.4-rc3`) and ends at
+`Synced/Healthy` with the app URL; a failed run's line becomes `failed  8m12s  <run URL>`.
+Lines longer than the terminal width are cut to fit — the full detail, including the URL,
+is in the summary below the block.
 
 When the output is piped there is no cursor to move, so the CLI appends one line per
 status change instead, plus a heartbeat every 30 seconds. That is what the `/release`
@@ -229,7 +284,7 @@ Status is checked every 5 seconds for up to five runs, then one second slower pe
 beyond that, so an eight-repo `--all` sweep checks every 8 seconds — a full sweep stays
 well inside GitHub's API allowance. A read that fails prints `status read failed,
 retrying` once per streak and polling carries on; only twelve failures in a row, about a
-minute, report that repo as failed. A single repo keeps the live view exactly as before.
+minute, report that repo as failed. The ArgoCD wait behaves the same way.
 
 Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
 name anywhere refuses the whole command before anything runs. `--bump`,
@@ -240,19 +295,27 @@ it is still accepted.
 
 ### Production
 
-Production deploys are **locked by default**:
+**Production deploys are blocked in this version.** Production has not moved to the GitOps
+pipeline yet, so `vast deploy --to production`, `vast workflow --branch production` and
+even `vast production enable` refuse and say so. Lifting the lock is not a way around it —
+the block sits in front of the lock.
+
+Preparing a release still works, because it ships nothing:
 
 ```bash
-vast promote VastPayPwa --to production              # cut release/X.Y.Z + PR — works while locked
+vast promote VastPayPwa --to production              # cut release/X.Y.Z + PR
 vast promote VastPayPwa --to production --as hotfix  # hotfix/X.Y.Z instead
-# review and merge that PR
-vast production enable                               # lift the deploy lock
-vast deploy VastPayPwa --to production               # build and ship
+# review and merge that PR — a human, as always
 ```
 
-Preparing a release ships nothing, so it is never gated — only the deploy is. Beyond the
-lock, this CLI never pushes to `production`, `prod`, `main` or `master` at all. Production
-is reached only by merging the reviewed release PR, which a human does.
+When DevOps migrates production, the block is lifted in a CLI release and the old two-step
+returns: `vast production enable` to lift the deploy lock, then
+`vast deploy VastPayPwa --to production`.
+
+Beyond all of that, this CLI never pushes to `production`, `prod`, `main` or `master` at
+all. Production is reached only by merging the reviewed release PR, which a human does.
+`vast workflow` refuses those four branch names outright — any casing, spaces trimmed —
+before it even dry-runs, so the raw-dispatch escape hatch is not one.
 
 ### Shipping only some of staging
 
@@ -293,11 +356,14 @@ before anything happens.
 
 Rules that keep this safe: every pick must already be on `staging` (production only ever
 receives staging-baked changes) and must not already be on `production`. The version
-advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's, and
-deploying afterwards is explicit:
+advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's — read
+from `Vast-deployments` when a production file is there and otherwise from the app repo's
+`Helm/values-prod.yaml` on `origin/production`, and `promote` prints which of the two it
+used, so a surprising version number can always be traced to its source. Deploying
+afterwards is explicit:
 
 ```bash
-vast deploy VastPayPwa --to production --target-version 2.2.3
+vast deploy VastPayPwa --to production --target-version 2.2.3   # blocked until production migrates
 ```
 
 `--pick` works with `--as release` and `--as hotfix` alike; it just defaults to hotfix.
@@ -346,17 +412,34 @@ in step with the CLI it drives.
 ## Repositories
 
 Twelve repos are configured. Nine are **releasable** — a repo is releasable when it has
-both a deploy workflow and staging Helm values, which is derived, not declared:
+both a `build-deploy` workflow and a staging values file in `Vast-deployments`, which is
+derived, not declared:
 
 | Repo | Team | Releasable | Release train |
 |---|---|---|---|
 | VastPayPwa, VastPayPwaV2, VastPay-DashBoard | frontend | ✅ | `--frontend` |
 | VastMenuPwa, VastMenuPwaV2, VastMenu-DashBoard | frontend | ✅ | `--frontend` |
 | vast-menu-payments | frontend | ✅ | none — release it by name |
-| Vast-Finance | frontend | ❌ no workflow or Helm values | — |
+| Vast-Finance | frontend | ❌ no workflow or deployments file | — |
 | VastPay-BackEnd, VastMenu-BackEnd | backend | ✅ | `--backend` |
 | vastpay-payment-odoo | backend | ❌ | — |
 | Terraform | infra | ❌ | — |
+
+Each releasable repo has its own folder under `deployments/helm/staging/` in
+`Vast-deployments`, and the folder name is also its ArgoCD application name. They do not
+match the repo names, so this is the map:
+
+| Repo | ArgoCD app / folder |
+|---|---|
+| VastPayPwa | `vastpay-pwa` |
+| VastPayPwaV2 | `vastpay-pwa-v2` |
+| VastPay-DashBoard | `vastpay-dasaboard` (spelling is theirs — do not "fix" it) |
+| VastMenuPwa | `pwa` |
+| VastMenuPwaV2 | `pwav2` |
+| VastMenu-DashBoard | `vastmenu-dashboard` |
+| vast-menu-payments | `vastmenu-payments` |
+| VastPay-BackEnd | `vastpay-backend` |
+| VastMenu-BackEnd | `vastmenu-backend` |
 
 Unreleasable repos can be cloned but never appear in `status --all`, and cannot be
 promoted or deployed.
@@ -373,9 +456,16 @@ Everything lives in `~/.vast-cli/`:
 | File | Purpose |
 |---|---|
 | `config.json` | Repo→path map and the roots discovery learned from |
+| `argocd/<env>.json` | Your ArgoCD session token for that environment, written mode `0600` |
 | `production-enabled` | The production lock. Its presence is the only thing permitting a production deploy |
 | `version` | The installed release tag |
 | `update-check.json` | Cached result of the daily release check |
+
+`argocd/staging.json` holds a **session token**, never your password — `vast argocd login`
+exchanges the password for a token and forgets the password. `vast argocd status` reports
+whether a token is stored and whether ArgoCD still accepts it; it never prints the token.
+`vast argocd logout` deletes the file. For CI or a throwaway shell, set
+`VAST_ARGOCD_TOKEN_STAGING` and it wins over the file, with nothing written to disk.
 
 Every `vast init` searches the default locations, your saved roots, and your current
 directory — so a repo cloned into a normal place is always picked up, with no flag.
@@ -402,7 +492,13 @@ Later runs keep that choice rather than re-picking, even when they find the othe
 | `promote` refuses: uncommitted changes | Commit or stash first. It will not merge over a dirty tree. |
 | `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
 | `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
-| `Production deploys are locked` | By design. `vast production enable`, then `vast deploy --to production`. Preparing a release PR is never blocked. |
+| `tag committed — rollout not confirmed (no ArgoCD token)` | The build ran and the tag was committed, but you have never logged in on this machine (or you logged out), so the CLI could not watch ArgoCD. The rollout is almost certainly happening — check the app in ArgoCD, or run `vast argocd login` so the next deploy is confirmed for you. |
+| `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
+| `timed out after 10m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 10 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
+| `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 10 minutes if the rebuild produces no new commit. |
+| Every `STAGING` and `PRODUCTION` cell reads `not migrated` or `?` | Your GitHub account cannot read `Vast-deployments`. A private repo you cannot see answers 404, which is indistinguishable from a missing file, so every lookup fails the same way. Ask DevOps for access. One repo showing `not migrated` on its own is the ordinary unmigrated case, not this. |
+| `dispatched, but its run could not be identified` | The build was triggered; the CLI could not match it to a run id, so it cannot watch it. Open the repo's Actions page and see whether it is running **before** re-dispatching — re-running blind starts a second build of the same version. |
+| Production deploy refuses: not migrated | Expected. Production has not moved to the GitOps pipeline, so deploys are blocked and `vast production enable` refuses too. `vast promote --to production` still cuts the release PR. |
 | `vast upgrade` installs the previous version | GitHub's releases API is cached for ~60s. Wait a minute after publishing. |
 | `status --all` is slow | It fetches every repo. `--no-fetch` reads local refs instantly, at the cost of possible staleness. |
 
@@ -442,8 +538,8 @@ lifecycle hook, so the tag is always self-consistent. The same hook rebuilds and
 ### Layout
 
 - `src/commands/` — one file per command, each exporting `register<Name>Command()`
-- `src/config/` — the repo list, the per-user config, the production lock
-- `src/utils/` — git, GitHub, Helm, version derivation, discovery, UI
+- `src/config/` — the repo list, the per-user config, the production lock, ArgoCD hosts and tokens
+- `src/utils/` — git, GitHub, the Vast-deployments reader, the ArgoCD client, version derivation, discovery, UI
 - `tests/` — one file per module, run with Node's built-in test runner
 
 New commands are registered in `src/cli.ts`; anything registered there appears in

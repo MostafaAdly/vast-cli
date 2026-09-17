@@ -5,8 +5,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
   REPOS,
+  DEPLOY_ENVS,
   getRepo,
   isReleasable,
+  deploymentsFile,
+  argoApp,
   reposForTeam,
   TEAMS,
   RELEASE_TEAMS,
@@ -36,23 +39,90 @@ test('frontend repos promote into staging from develop', () => {
   assert.equal(getRepo('VastMenuPwa')?.promoteFrom.staging, 'develop');
 });
 
-// Vast-Finance has no Helm directory and no CI workflow — verified against the
-// GitHub API. It must be unreleasable rather than silently attempted.
+// Vast-Finance has no deployments folder and no build-deploy workflow —
+// verified against the GitHub API. It must be unreleasable rather than
+// silently attempted.
 test('Vast-Finance is configured as unreleasable', () => {
-  const finance = getRepo('Vast-Finance');
-  assert.equal(finance?.workflow, null);
-  assert.equal(finance?.helm.staging, null);
-  assert.equal(finance?.helm.production, null);
+  const finance = getRepo('Vast-Finance')!;
+  assert.equal(finance.workflow.staging, null);
+  assert.equal(finance.workflow.production, null);
+  assert.equal(finance.deployments.staging, null);
+  assert.equal(finance.deployments.production, null);
 });
 
-// The remaining exceptions are the two repos added for `vast clone` that were
-// never meant to be releasable: no Helm values, no deploy workflow.
+// The remaining exceptions are the repos added for `vast clone` that were
+// never meant to be releasable: no deployments file, no deploy workflow.
 const KNOWN_UNRELEASABLE = ['Vast-Finance', 'vastpay-payment-odoo', 'Terraform'];
 
-test('every other repo has a workflow and staging Helm values', () => {
+test('every other repo has a build-deploy workflow and a staging deployments file', () => {
   for (const repo of REPOS.filter((r) => !KNOWN_UNRELEASABLE.includes(r.name))) {
-    assert.ok(repo.workflow, `${repo.name} is missing a workflow`);
-    assert.ok(repo.helm.staging, `${repo.name} is missing staging Helm values`);
+    assert.equal(repo.workflow.staging, 'build-deploy', `${repo.name} staging workflow`);
+    assert.equal(repo.workflow.production, 'build-deploy', `${repo.name} production workflow`);
+    assert.ok(repo.deployments.staging, `${repo.name} is missing a staging deployments file`);
+  }
+});
+
+test('unreleasable repos carry nulls in every deploy field', () => {
+  for (const name of KNOWN_UNRELEASABLE) {
+    const repo = getRepo(name)!;
+    for (const env of DEPLOY_ENVS) {
+      assert.equal(repo.workflow[env], null, `${name} ${env} workflow`);
+      assert.equal(repo.deployments[env], null, `${name} ${env} deployments`);
+      assert.equal(deploymentsFile(repo, env), null, `${name} ${env} file`);
+      assert.equal(argoApp(repo, env), null, `${name} ${env} argo app`);
+    }
+  }
+});
+
+test('DEPLOY_ENVS lists the two environments in promotion order', () => {
+  assert.deepEqual(DEPLOY_ENVS, ['staging', 'production']);
+});
+
+// The staging folder names are ArgoCD app names read off Vast-deployments on
+// 2026-09-17, not derived from the repo name — `vastpay-dasaboard` is
+// misspelled upstream and must stay misspelled here or the app is not found.
+test('every releasable repo points at its staging file in Vast-deployments', () => {
+  const folders: Record<string, string> = {
+    VastPayPwa: 'vastpay-pwa',
+    VastPayPwaV2: 'vastpay-pwa-v2',
+    'VastPay-DashBoard': 'vastpay-dasaboard',
+    VastMenuPwa: 'pwa',
+    VastMenuPwaV2: 'pwav2',
+    'VastMenu-DashBoard': 'vastmenu-dashboard',
+    'vast-menu-payments': 'vastmenu-payments',
+    'VastPay-BackEnd': 'vastpay-backend',
+    'VastMenu-BackEnd': 'vastmenu-backend',
+  };
+  assert.equal(Object.keys(folders).length, 9);
+  for (const [name, folder] of Object.entries(folders)) {
+    const repo = getRepo(name)!;
+    assert.equal(
+      deploymentsFile(repo, 'staging'),
+      `deployments/helm/staging/${folder}/stage.yaml`,
+      `${name} staging file`,
+    );
+    assert.equal(argoApp(repo, 'staging'), folder, `${name} staging argo app`);
+  }
+});
+
+test('the misspelled dashboard folder is preserved verbatim', () => {
+  assert.equal(argoApp(getRepo('VastPay-DashBoard')!, 'staging'), 'vastpay-dasaboard');
+});
+
+test('an unreleasable repo has no argo app', () => {
+  assert.equal(argoApp(getRepo('Terraform')!, 'staging'), null);
+});
+
+// Production folders in Vast-deployments are named after the repo, unlike
+// staging's hand-written app names.
+test('production files are keyed by the canonical repo name', () => {
+  for (const repo of REPOS.filter(isReleasable)) {
+    assert.equal(
+      deploymentsFile(repo, 'production'),
+      `deployments/helm/production/${repo.name}/prod.yaml`,
+      `${repo.name} production file`,
+    );
+    assert.equal(argoApp(repo, 'production'), repo.name, `${repo.name} production argo app`);
   }
 });
 
@@ -106,7 +176,7 @@ test('an unknown team expands to nothing', () => {
 
 // Releasable is derived, so cloneable-but-not-deployable repos can join the
 // list without ever reaching status, promote, or deploy.
-test('releasable means it has a workflow and staging Helm values', () => {
+test('releasable means it has a staging workflow and a staging deployments file', () => {
   assert.equal(isReleasable(getRepo('VastPayPwa')!), true);
   assert.equal(isReleasable(getRepo('Terraform')!), false);
   assert.equal(isReleasable(getRepo('vastpay-payment-odoo')!), false);
@@ -114,7 +184,11 @@ test('releasable means it has a workflow and staging Helm values', () => {
 });
 
 test('nine of the twelve repos are releasable', () => {
-  assert.equal(REPOS.filter(isReleasable).length, 9, 'Vast-Finance has no workflow or Helm');
+  assert.equal(
+    REPOS.filter(isReleasable).length,
+    9,
+    'Vast-Finance has no workflow and no deployments file',
+  );
 });
 
 // Copy before sorting: TEAMS is exported module state, and sorting it in place

@@ -8,24 +8,27 @@
  * version each one derives.
  *
  * Everything below is pure string building except `lockState()`, which reads
- * the production lock so the screen reflects the machine it is run on.
+ * the production gates so the screen reflects the machine it is run on.
  */
 import { colors } from './ui.js';
-import { isProductionEnabled } from '../config/production-lock.js';
+import { isProductionEnabled, productionPipelineReady } from '../config/production-lock.js';
 /** Target width. Keeps the screen intact in an 80-column terminal. */
 export const WIDTH = 76;
+/** Left margin of a command or example row. */
+const INDENT = 4;
 const SETUP = [
     { left: 'init', right: 'Find your Vast checkouts and remember where they are' },
     { left: 'clone', right: 'Clone the repos your team needs' },
+    { left: 'argocd', right: 'Log in to ArgoCD so deploys can be confirmed' },
     { left: 'upgrade', right: 'Update to the latest release' },
 ];
 const INSPECT = [
     { left: 'status', right: 'Deployed versions and branch drift, all repos' },
 ];
 const SHIP = [
-    { left: 'release', right: 'Promote develop→staging, derive version, deploy' },
+    { left: 'release', right: 'Promote develop→staging, derive version, deploy, wait for ArgoCD' },
     { left: 'promote', right: 'Merge branches, or open a release/hotfix PR' },
-    { left: 'deploy', right: 'Ship a version already on the branch' },
+    { left: 'deploy', right: 'Dispatch a version and wait for ArgoCD to roll it out' },
     { left: 'workflow', right: 'Trigger a raw GitHub Actions workflow' },
 ];
 const EXAMPLES = [
@@ -41,37 +44,79 @@ export function columnWidth(rows, gutter = 2) {
 export function heading(text) {
     return `  ${colors.primary.bold(text)}`;
 }
-/** A command row: violet name, plain description. */
+/**
+ * Break a description into lines that fit the right-hand column.
+ *
+ * One SHIP description is long enough to push past WIDTH on its own, and a
+ * description that wraps wherever the terminal happens to end is worse than one
+ * that wraps where we chose — so we wrap it here, on a word, under the column.
+ */
+function fitRight(text, available) {
+    const lines = [];
+    let line = '';
+    for (const word of text.split(' ')) {
+        if (line && line.length + 1 + word.length > available) {
+            lines.push(line);
+            line = word;
+        }
+        else {
+            line = line ? `${line} ${word}` : word;
+        }
+    }
+    if (line)
+        lines.push(line);
+    return lines;
+}
+/** A command row: violet name, plain description, wrapped under the column. */
 export function commandRow(row, width) {
-    return `    ${colors.highlight.bold(row.left.padEnd(width))}${row.right}`;
+    const available = Math.max(WIDTH - INDENT - width, 1);
+    const [first, ...rest] = fitRight(row.right, available);
+    const pad = ' '.repeat(INDENT + width);
+    return [
+        `${' '.repeat(INDENT)}${colors.highlight.bold(row.left.padEnd(width))}${first ?? ''}`,
+        ...rest.map((l) => `${pad}${l}`),
+    ].join('\n');
 }
 /** An example row: blue invocation, muted outcome. */
 export function exampleRow(row, width) {
-    return `    ${colors.info(row.left.padEnd(width))}${colors.muted(row.right)}`;
+    return `${' '.repeat(INDENT)}${colors.info(row.left.padEnd(width))}${colors.muted(row.right)}`;
 }
 /**
  * The pipeline, with the command that moves you along each hop.
  *
  * Branches escalate in colour left to right — blue, amber, red — because the
- * consequence of a mistake escalates the same way.
+ * consequence of a mistake escalates the same way. Production shows only the
+ * promote hop: the deploy behind it is blocked until production is migrated,
+ * and offering a command that always refuses teaches the wrong flow.
  */
 export function flowDiagram() {
     const arrow = colors.muted('──▶');
     return [
         `    ${colors.info('develop')}  ${arrow}  ${colors.warning('staging')}  ${arrow}  ${colors.error('production')}`,
         `               ${colors.info('vast release')}    ${colors.info('vast promote --to production')}`,
-        `                               ${colors.info('vast deploy  --to production')}`,
+        `                               ${colors.muted('(production deploy blocked until migrated)')}`,
     ].join('\n');
 }
 /**
- * Live production-lock state.
+ * Live production state.
  *
- * Locked is rendered green: the lock is the protection, so the safe state gets
- * the reassuring colour and the unlocked state gets the one that earns
- * attention. This is deliberately the inverse of the "lock icon = red" instinct.
+ * Two gates, and the order matters: the pipeline block is a statement about the
+ * world and the file lock is only a permission, so while production has not
+ * been migrated the screen says BLOCKED whichever way the lock stands — showing
+ * ENABLED there would promise a deploy that always refuses.
+ *
+ * Once that block lifts, locked is rendered green: the lock is the protection,
+ * so the safe state gets the reassuring colour and the unlocked state gets the
+ * one that earns attention. This is deliberately the inverse of the "lock icon
+ * = red" instinct.
  */
-export function lockState() {
-    return isProductionEnabled()
+export function lockState(state) {
+    const ready = state?.ready ?? productionPipelineReady();
+    if (!ready) {
+        return `${colors.error('● BLOCKED')} ${colors.muted('— production not migrated (lock ignored)')}`;
+    }
+    const enabled = state?.enabled ?? isProductionEnabled();
+    return enabled
         ? `${colors.warning('● ENABLED')} ${colors.muted('— production deploys allowed')}`
         : `${colors.success('● LOCKED')} ${colors.muted('— production deploys refused')}`;
 }

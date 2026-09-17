@@ -25,7 +25,7 @@ import {
   mergeAndPush,
   syncLocalBranch,
 } from '../utils/git.js';
-import { readDeployedTag } from '../utils/helm.js';
+import { deployedTag, productionTag } from '../utils/deployments.js';
 import { cutReleaseBranch, cutPickedBranch, RELEASE_KINDS, type ReleaseKind } from '../utils/release-branch.js';
 import { resolvePicks } from '../utils/picks.js';
 import { nextPatch, stripRc } from '../utils/version.js';
@@ -59,8 +59,14 @@ function syncBranches(repo: RepoConfig, dir: string, to: 'staging' | 'production
   }
 }
 
-/** @returns true when the promotion completed (or would have, under dryRun). */
-export function promote(
+/**
+ * @returns true when the promotion completed (or would have, under dryRun).
+ *
+ * Async because a production promotion derives its version from the live tag,
+ * read over the API from Vast-deployments — or, while production is not
+ * migrated, from the app repo's own Helm on `origin/production`.
+ */
+export async function promote(
   repo: RepoConfig,
   dir: string,
   to: 'staging' | 'production',
@@ -69,7 +75,7 @@ export function promote(
   targetVersion?: string,
   bodyMode: BodyMode = 'changelog',
   pickRefs: string[] = [],
-): boolean {
+): Promise<boolean> {
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
   // a PR ships nothing; the lock guards the deploy that follows the merge.
   if (!existsSync(join(dir, '.git'))) {
@@ -92,10 +98,12 @@ export function promote(
   syncBranches(repo, dir, to);
 
   if (to === 'production') {
-    const helm = repo.helm.staging;
-    if (!helm) {
+    if (!repo.deployments.staging) {
       console.log(
-        createErrorBox(`${repo.name}: no staging Helm values`, 'Cannot derive a release version.'),
+        createErrorBox(
+          `${repo.name}: no staging deployments file`,
+          'Cannot derive a release version.',
+        ),
       );
       return false;
     }
@@ -119,20 +127,27 @@ export function promote(
       for (const w of warnings) log.warn(w);
 
       let version: string;
+      // Production is not migrated, so the tag may come from the app repo's own
+      // Helm; the line below says which, because the two can disagree.
+      let versionNote = '';
       if (targetVersion) {
         version = targetVersion;
       } else {
-        const prodHelm = repo.helm.production;
-        if (!prodHelm) {
+        if (!repo.deployments.production) {
           console.log(
-            createErrorBox(`${repo.name}: no production Helm values`, 'Pass --target-version explicitly.'),
+            createErrorBox(
+              `${repo.name}: no production deployments file`,
+              'Pass --target-version explicitly.',
+            ),
           );
           return false;
         }
         try {
           // A selective promotion advances production's OWN tag — staging's
           // version would claim content production did not receive.
-          version = nextPatch(readDeployedTag(dir, 'origin/production', prodHelm));
+          const { tag, source } = await productionTag(repo, dir);
+          version = nextPatch(tag);
+          if (source === 'app-repo') versionNote = ' (from app-repo Helm, production not migrated)';
         } catch (error) {
           console.log(
             createErrorBox(
@@ -152,10 +167,12 @@ export function promote(
       ]
         .filter(Boolean)
         .join(' + ');
-      log.info(`${repo.name}: ${what} → production, ${kind} ${version}`);
+      log.info(`${repo.name}: ${what} → production, ${kind} ${version}${versionNote}`);
       const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
       if (url !== null) {
-        log.muted(`  after the PR is merged:  vast deploy ${repo.name} --to production --target-version ${version}`);
+        // Deliberately not a `vast deploy` hint any more: production has not
+        // moved to the new pipeline, so that command would only refuse.
+        log.muted(`  after the PR is merged, deploy ${version} to production by hand`);
         if (merges.length > 0) {
           log.warn(
             `port the fix back: merge ${merges.map((m) => m.name).join(', ')} into develop/staging too, or the bug stays there`,
@@ -175,7 +192,7 @@ export function promote(
       version = targetVersion;
     } else {
       try {
-        version = stripRc(readDeployedTag(dir, 'origin/staging', helm));
+        version = stripRc(await deployedTag(repo, 'staging'));
       } catch (error) {
         console.log(
           createErrorBox(
@@ -296,7 +313,7 @@ async function executePromote(
     process.exit(1);
   }
 
-  const ok = promote(
+  const ok = await promote(
     repo,
     dir,
     options.to,
@@ -348,9 +365,17 @@ PR description (production only):
 Descriptions never contain tool instructions or any note about how they were
 produced — the whole team reads them.
 
-Preparing a production release is NOT gated on the production lock — cutting a
-branch and opening a PR ships nothing. The PR is opened for review and is never
-merged by this tool; the deploy that follows is what the lock guards.
+Preparing a production release is NOT gated on anything — cutting a branch and
+opening a PR ships nothing. The PR is opened for review and is never merged by
+this tool.
+
+The production DEPLOY that follows is currently blocked: production has not
+moved to the new Vast-deployments + ArgoCD pipeline, so \`vast deploy --to
+production\` refuses and the deploy is done by hand. Versions here are derived
+from Vast-deployments (release = staging's tag without its -rc suffix; hotfix =
+production's own tag plus a patch). Production is not migrated, so its tag is
+usually read from the checkout's Helm/values-prod.yaml on origin/production
+instead — the derived version says so when it is.
 `,
     )
     .action(executePromote);

@@ -6,12 +6,13 @@ description: Run a Vast release through the vast CLI and take over where judgmen
 # /release — the judgment half of the release chain
 
 `vast` handles everything deterministic: promoting branches, deriving versions,
-dispatching workflows, merging bump PRs. You take over exactly where determinism
-runs out — conflicts, failures, and describing what shipped.
+dispatching workflows, and waiting for ArgoCD to confirm the new tag is live. You
+take over exactly where determinism runs out — conflicts, failures, and
+describing what shipped.
 
 **Never re-implement what `vast` does.** Always call it. Its safety rails — never
-pushes to production, never merges a release PR, production deploys locked by
-default — are the reason this is safe, and reimplementing them by hand loses them.
+pushes to production, never merges a release PR, production deploys blocked — are
+the reason this is safe, and reimplementing them by hand loses them.
 
 This skill lives beside the CLI it drives. The helper it uses is at
 `<skill-dir>/notes.sh`, where `<skill-dir>` is the directory containing this file.
@@ -42,6 +43,7 @@ confusing failure modes into one clear sentence.
 ```bash
 vast --version    || echo "vast is not installed"
 gh auth status    || echo "gh is not authenticated"
+vast argocd status
 vast upgrade --check
 ```
 
@@ -49,6 +51,18 @@ vast upgrade --check
   say so; do not attempt a release.
 - **`gh` not authenticated** → `gh auth login`. Every `vast` command talks to
   GitHub through `gh`, so nothing will work. Stop.
+- **No ArgoCD token for staging.** This is **not** a stop condition. A deploy
+  waits for ArgoCD to confirm the new tag is live, and without a token it simply
+  skips that wait: the build runs, the tag is committed, and the summary says
+  `tag committed — rollout not confirmed (no ArgoCD token)`. **Proceed with the
+  release**, then relay plainly that the rollout was not confirmed and suggest
+  the user run `vast argocd login` so the next deploy is confirmed for them.
+  Never run it for them, never ask them for their ArgoCD username or password,
+  and never handle credentials of any kind — it prompts for a hidden password and
+  is theirs to type. If they log in mid-session, re-run `vast argocd status` to
+  confirm before continuing. A token that exists but is reported invalid is
+  different: that one *does* stop the deploy in front of the build (see §4,
+  `argocd unauthorized`), and they log in again.
 - **A newer release exists.** `vast upgrade --check` says
   `Latest is X; you have Y`. Run `vast upgrade` now, before starting, and say
   that you did. The instructions in this skill describe the current CLI, so
@@ -64,6 +78,18 @@ vast upgrade --check
   failing obscurely. Tell the user to run `vast clone --team <their team>`, or
   `vast init` if they have it checked out somewhere `vast` has not been shown
   yet. Do not clone it for them without asking — you do not know where they want it.
+
+**Reading `vast status`.** `vast status <repo>` (or `--all`) is read-only and is the
+right way to answer "what is live?". STAGING is the tag in `Vast-deployments`, the image
+ArgoCD is running. PRODUCTION is not migrated yet, so the value comes from the app repo's
+`Helm/values-prod.yaml` on `origin/production` and is marked with `*` plus a footnote;
+the seed files in `Vast-deployments` are stale copies and are only used for a repo that
+is not cloned. Relay that footnote when you quote a production version: it is the
+pre-migration source, not GitOps. `not migrated`
+means neither could be read, `n/a` that the repo is not deployed there, `?` that the
+lookup failed. If **every** repo's columns read `not migrated` or `?`, the user's GitHub
+account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
+rather than treating it as nine separate failures.
 
 ---
 
@@ -92,8 +118,19 @@ commits is reported and left alone.
 vast release <repo>
 ```
 
-This watches CI and merges the bump PR, so it can take several minutes. When it
-finishes, go to §3 (QC notes).
+Staging is GitOps, so this has two halves and both matter. The `build-deploy`
+workflow builds the image and commits the new tag to `Vast-deployments`; ArgoCD
+then syncs the cluster, usually within about three minutes. `vast` waits for
+that second half and reports the repo's ArgoCD line as it goes — `waiting for
+<tag>`, then ArgoCD's own sync/health pair.
+
+**The release is done only when that line reads `Synced/Healthy`.** A green
+workflow means the tag was committed, not that anything is running yet. Do not
+report a release as shipped, and do not go to QC notes, until you have seen
+`Synced/Healthy` with the new version in the summary. The wait has a 10-minute
+ceiling; a timeout is §4, not a success.
+
+When it does finish clean, go to §3 (QC notes).
 
 **Case B — the merge conflicts.** `vast` refuses and names the files without
 touching the working tree. Go to §2.
@@ -121,7 +158,8 @@ naming it explicitly. Repo names cannot be mixed with a sweep flag, and a repo t
 has not cloned is skipped by a sweep rather than failing it.
 
 `vast` promotes and dispatches each in turn, then watches every CI run at the
-same time. Because this skill's output is piped, `vast` prints one line per repo
+same time, each repo moving on to its own ArgoCD wait as its build finishes.
+Because this skill's output is piped, `vast` prints one line per repo
 whenever its run changes status, with a heartbeat every 30 seconds; a human at a
 terminal instead sees each repo's line update in place. One repo refusing never
 stops the others: report each repo's outcome from the summary separately, and
@@ -223,8 +261,8 @@ Report:
 1. **Which step failed**, quoting the real error line — not a paraphrase.
 2. **Flake or real.** Flake evidence: timeouts, ECR/network/registry errors,
    runner allocation failures, or the same commit having succeeded before. Real
-   evidence: compile/type/test errors, missing env vars, a Dockerfile or Helm
-   change in this release.
+   evidence: compile/type/test errors, missing env vars, or a Dockerfile or
+   chart change in this release.
 3. **A recommendation, with the reason.** Retry only when the evidence says
    flake. Otherwise name the file to fix.
 
@@ -232,9 +270,66 @@ If it is a flake, the retry is a re-dispatch of the **same version** —
 `vast deploy <repo> --target-version <same>` — not a new rc. Burning an rc number
 on a flake is what produced the gaps in the version history.
 
+### Two failure modes specific to the GitOps pipeline
+
+**`failed committing the tag — image may already be built`.** The workflow built
+the image and pushed it, then failed writing the tag into `Vast-deployments`.
+Nothing is deployed, but the version is not spoiled either. Re-run the **same
+version** — `vast deploy <repo> --target-version <same>`. Do not bump. If it
+fails the same way twice, the problem is in `Vast-deployments` or the shared
+action's permissions, not in this repo; say so instead of retrying a third time.
+
+A retry of a version that is **already live** is watched differently, and you
+should expect it: `vast` snapshots the application before dispatching, and if the
+tag was already running it waits for the app's sync revision to *change* instead
+of accepting the rollout that is already there. That is deliberate — otherwise a
+retry would report the old rollout as a fresh success. The cost is that if the
+rebuild commits nothing new to `Vast-deployments`, there is no new sync to wait
+for and the wait runs to its 10-minute ceiling; the summary says that is what
+happened. Read the summary before deciding a retry failed.
+
+**`timed out after 10m00s`.** The build succeeded and the tag was committed;
+ArgoCD had not reported `Synced/Healthy` within ten minutes. The version is fine
+and a new rc would change nothing — **do not burn one.** The summary line carries
+the ArgoCD application URL; relay it and tell the user to look at the app there,
+where the real cause lives (image pull failures, a crash-looping pod, a stuck
+sync, or simply a slow rollout that will finish on its own). Re-running the
+deploy at the same version is harmless but usually pointless — the tag is already
+committed and ArgoCD is already trying. On a retry of an already-live version,
+this same timeout may simply mean nothing new was committed, as above — check
+which of the two the summary reports before calling it a failure.
+
+**`tag committed — rollout not confirmed (no ArgoCD token)`.** Not a failure.
+The build ran and the tag was committed; there was no stored token, so the CLI
+skipped the ArgoCD wait rather than refusing the deploy. Report the repo as
+released-but-unconfirmed, say that the rollout almost certainly happened and can
+be checked in ArgoCD, and suggest the user run `vast argocd login` so the next
+deploy is confirmed for them. Do not re-run the deploy to "make it green".
+
+**`argocd unauthorized`.** The stored token expired or was revoked. Nothing was
+built: the token is used to read the application *before* the dispatch, so the
+deploy stops in front of the build. (A *missing* token is different — it does not
+stop anything, see above.) Tell the user to run `vast argocd login`
+themselves — never handle their credentials — then run the deploy again.
+
+**`dispatched, but its run could not be identified`.** The build was triggered but
+`vast` could not match it to a run id and so cannot watch it. Do not re-dispatch.
+Check the repo's Actions page first (`gh run list --repo Vast-menu/<Repo>
+--workflow build-deploy --limit 5`) and report what is actually running; a blind
+re-run starts a second build of the same version.
+
 ---
 
 ## 5. Production
+
+**Production deploys are blocked by the CLI right now.** Production has not moved
+to the GitOps pipeline yet, so `vast deploy --to production` refuses, and so does
+`vast production enable` — lifting the lock is not a way around it. If the user
+asks you to deploy to production, relay that and stop; do not look for another
+route.
+
+`vast promote --to production` still works and is unaffected: it cuts the branch
+and opens the PR in the app repo, and ships nothing.
 
 Production is two commands with a human review gate between them, and
 `/release <repo> --to production` covers only the first:
@@ -258,7 +353,10 @@ it, and afterwards relay the reminder to port the fix back to develop/staging); 
 landed on staging → resolved to its landing merge commit; floating off develop/staging →
 refused, and the fix is to land it on staging first. Every pick must already be on staging; `vast` refuses
 otherwise, and refuses picks already on production. The version advances production's
-own tag (`2.2.2 → 2.2.3`), and the deploy after the PR merges must name it:
+own tag (`2.2.2 → 2.2.3`), read from `Vast-deployments` when a production file exists
+there and otherwise from the app repo's `Helm/values-prod.yaml` on `origin/production` —
+`vast` prints which source it used, so relay that line along with the version. The deploy
+after the PR merges must name it:
 
 ```bash
 vast deploy <repo> --to production --target-version <the version promote printed>
@@ -268,14 +366,14 @@ vast deploy <repo> --to production --target-version <the version promote printed
 pick conflicts, `vast` aborts everything and names the failing commit; treat that as §2
 conflict resolution, except the fix belongs on staging, not on the hotfix branch.
 
-Preparing the PR is never blocked by the production lock — it ships nothing.
-Report the PR URL and **stop**. Do not merge it, do not offer to merge it, and do
-not run the deploy. Tell the user the deploy is
-`vast deploy <repo> --to production` after the PR is reviewed and merged, and that
-it needs `vast production enable` first.
+Preparing the PR is never blocked — it ships nothing. Report the PR URL and
+**stop**. Do not merge it, do not offer to merge it, and do not run the deploy.
+Tell the user the deploy is `vast deploy <repo> --to production` once production
+has been migrated and the PR is reviewed and merged, and that it is refused until
+then.
 
 If the user asks you to deploy to production, run `vast production status` and
-relay what it says rather than lifting the lock yourself.
+relay what it says rather than trying to work around it yourself.
 
 ---
 
@@ -284,7 +382,10 @@ relay what it says rather than lifting the lock yourself.
 - **Never** `git push` to `production`, `staging`, `main`, or `master` directly.
   Use `vast`, which refuses these structurally.
 - **Never** merge a release or hotfix PR into production.
-- **Never** lift the production lock. Tell the user the command; let them run it.
+- **Never** lift the production lock, and never look for a way around the
+  production block. Tell the user what it says; let them decide.
+- **Never** ask for, type, or store ArgoCD credentials. If a token is missing or
+  invalid, tell the user to run `vast argocd login` themselves.
 - **Never** apply a conflict resolution without explicit approval in this
   conversation.
 - **Never** re-dispatch a failed deploy without saying why you believe it is a

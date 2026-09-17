@@ -83,12 +83,59 @@ repo copy, and users re-download to update. Its helper's tests live in
 `tests/notes.test.ts`. The skill must never reference private paths
 (`vast-routines`, personal tokens); it once did and was unusable by anyone else.
 
+## The deploy pipeline (staging is GitOps)
+
+Nothing reads Helm values out of the app repos any more. The deployed tag lives
+in `Vast-deployments`:
+
+- Staging: `deployments/helm/staging/<app>/stage.yaml`, read at `main` through
+  `gh api .../contents/<path>`. Production (not migrated yet):
+  `deployments/helm/production/<RepoName>/prod.yaml`.
+- The tag is `deployment.containers[0].image.tag` — the first `tag:` line in the
+  file. `extractTag` in `src/utils/helm.ts` still parses it; the reader is
+  `src/utils/deployments.ts`.
+- **One pre-migration exception, and it is temporary.** `readTagAtRef` and
+  `PRE_MIGRATION_PRODUCTION_HELM` in `src/utils/helm.ts`, and the `productionTag`
+  fallback in `src/utils/deployments.ts`, read production's tag out of the app
+  repo's `Helm/values-prod.yaml` on `origin/production` when Vast-deployments has
+  no production file yet. They exist only because production is unmigrated:
+  delete all three when `PRODUCTION_PIPELINE_READY` flips. Once Vast-deployments
+  is authoritative, reading a local checkout instead is a quiet lie.
+- The folder basename is also the ArgoCD application name, and it does **not**
+  match the repo name: `VastPayPwa → vastpay-pwa`, `VastMenuPwa → pwa`,
+  `VastMenuPwaV2 → pwav2`, `VastPay-DashBoard → vastpay-dasaboard` (their typo,
+  upstream — never "fix" it).
+- Each repo dispatches its own `build-deploy` workflow, one `version` input, on
+  the env branch. It builds the image and commits the tag to `Vast-deployments`;
+  ArgoCD syncs from there, usually within ~3 minutes. There are no bump PRs.
+- A deploy is not done when the workflow goes green — that only means the tag was
+  committed. It is done when ArgoCD reports `Synced/Healthy` on an image carrying
+  the tag. Ceiling 10 minutes. Without a stored token the deploy is **not**
+  refused: it dispatches, skips the ArgoCD wait, and reports `tag committed —
+  rollout not confirmed`. An *expired* token still stops it in front of the build,
+  because the pre-dispatch read fails.
+- `vast argocd login` stores a session token in `~/.vast-cli/argocd/<env>.json`,
+  mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
+  keep this under `VAST_CLI_HOME` like every other config path.
+
+## Gotchas
+
+- VastPayPwa's seed tag in `Vast-deployments` is `5.0.1`, left by a DevOps test
+  deploy, while its real series was `1.5.6-rc7`. Version derivation will happily
+  continue from `5.0.1`. That is a human decision, not something to paper over in
+  code — ask Mostafa before releasing that repo.
+
 ## Safety invariants — do not weaken
 
 - The CLI never pushes to `production`, `prod`, `main`, or `master`
   (`NEVER_PUSH` in `src/utils/git.ts`), independent of any other setting.
+- Production deploys are hard-blocked by `PRODUCTION_PIPELINE_READY` in
+  `src/config/production-lock.ts` until DevOps migrates production; do not flip
+  it without verifying the production workflow inputs and the production folder
+  names with DevOps. `vast production enable` refuses while it is false.
 - Production deploys are locked by default (`src/config/production-lock.ts`).
-  Preparing a release/hotfix PR is deliberately never gated by the lock.
+  Preparing a release/hotfix PR is deliberately never gated by the lock, nor by
+  the pipeline block.
 - `promote` refuses on dirty working trees and real conflicts. The single
   auto-resolved conflict is `package.json`'s version line, which CI rewrites
   per-branch on every deploy; anything else refuses.
