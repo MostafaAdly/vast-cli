@@ -36,5 +36,5 @@ export interface ProductionTagSource {
  *
  * The fallback goes away with `PRE_MIGRATION_PRODUCTION_HELM`.
  */
-export declare function productionTag(repo: RepoConfig, dir: string | null, fetchFile?: FetchFile, readAtRef?: typeof readTagAtRef): Promise<ProductionTagSource>;
+export declare function productionTag(repo: RepoConfig, dir: string | null, fetchFile?: FetchFile, readAtRef?: typeof readTagAtRef, ready?: boolean): Promise<ProductionTagSource>;
 //# sourceMappingURL=deployments.d.ts.map

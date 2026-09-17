@@ -264,7 +264,9 @@ Columns:
                          Vast-deployments values file for that environment
                          "<tag>*" means production is not migrated and the tag
                          was read from the app repo's Helm/values-prod.yaml on
-                         origin/production, which is what is running there today
+                         origin/production, which is what is running there today;
+                         the seed in Vast-deployments only answers for a repo
+                         that is not cloned here
                          "n/a" means the repo is not deployed to that env
                          "not migrated" means neither place has the tag
                          "?"   means the file could not be read

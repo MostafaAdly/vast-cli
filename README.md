@@ -199,13 +199,15 @@ vast status VastPayPwa    # one repo
 ```
 
 **STAGING** is the tag in that repo's `Vast-deployments` values file — the image
-ArgoCD is actually running. **PRODUCTION** is read the same way when a production
-file exists there. For most repos it does not yet, so until production migrates
-that column falls back to the tag in the app repo's own `Helm/values-prod.yaml`
-on `origin/production`, marks it with `*`, and prints a footnote under the table
-saying the value came from the app repo rather than from `Vast-deployments`. When
+ArgoCD is actually running. **PRODUCTION** is not migrated yet, so what is running
+there is still recorded in the app repo's own `Helm/values-prod.yaml` on
+`origin/production`. That is what the column shows, marked with `*` and a footnote
+under the table. The seed files that already exist in `Vast-deployments` for
+production are copies taken at cutover and drift as soon as someone deploys by hand
+(one already had), so they are only used for a repo you have not cloned. When
 neither is readable the cell reads `not migrated`. `n/a` means the repo is not
-deployed to that environment at all, and `?` means the lookup itself failed.
+deployed to that environment at all, and `?` means the lookup itself failed. Once
+production migrates, the column reads `Vast-deployments` like staging does.
 
 **DRIFT** is how many commits are waiting on `develop` that `staging` does not
 have. Only DRIFT needs a local checkout — the tags are read over the API, so they

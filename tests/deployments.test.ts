@@ -83,7 +83,7 @@ test('productionTag prefers Vast-deployments when the file is there', async () =
   const readAtRef = (): string => {
     throw new Error('should not be called');
   };
-  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef, true), {
     tag: '2.2.1',
     source: 'vast-deployments',
   });
@@ -98,7 +98,7 @@ test('productionTag falls back to the app repo Helm when the file is missing', a
     seen.push([dir, ref, helmPath]);
     return '2.2.1';
   };
-  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef, true), {
     tag: '2.2.1',
     source: 'app-repo',
   });
@@ -108,7 +108,7 @@ test('productionTag falls back to the app repo Helm when the file is missing', a
 test('productionTag falls back when the seeded file has no tag line', async () => {
   const fetchFile: FetchFile = async () => 'deployment:\n  replicas: 1\n';
   const readAtRef = (): string => '2.2.1';
-  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef, true), {
     tag: '2.2.1',
     source: 'app-repo',
   });
@@ -121,7 +121,7 @@ test('productionTag names both places when neither has the tag', async () => {
   const readAtRef = (): string => {
     throw new Error('Could not read Helm/values-prod.yaml at origin/production. Is the ref fetched?');
   };
-  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef), (error: Error) => {
+  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef, true), (error: Error) => {
     assert.match(error.message, /^no .* in Vast-deployments/);
     assert.match(error.message, new RegExp(PRE_MIGRATION_PRODUCTION_HELM.replace('/', '\\/')));
     return true;
@@ -135,7 +135,7 @@ test('productionTag names both places when the repo is not cloned', async () => 
   const readAtRef = (): string => {
     throw new Error('should not be called');
   };
-  await assert.rejects(() => productionTag(prodRepo(), null, fetchFile, readAtRef), (error: Error) => {
+  await assert.rejects(() => productionTag(prodRepo(), null, fetchFile, readAtRef, true), (error: Error) => {
     assert.match(error.message, /^no .* in Vast-deployments/);
     assert.match(error.message, /Helm\/values-prod\.yaml/);
     return true;
@@ -149,7 +149,42 @@ test('productionTag does not fall back on a network or auth failure', async () =
   const readAtRef = (): string => {
     throw new Error('should not be called');
   };
-  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef, true), {
     message: `Could not read ${PROD_PATH} from Vast-deployments: gh: connection reset`,
+  });
+});
+
+// Pre-migration, the seed in Vast-deployments is a copy taken at cutover and
+// drifts the moment someone deploys production by hand; the app repo's Helm on
+// origin/production is what is actually running. Verified 2026-09-17:
+// vast-menu-payments seed said 1.0.3, the app repo said 1.1.2.
+test('while production is unmigrated the app repo Helm wins over a Vast-deployments seed', async () => {
+  const fetchFile = async (): Promise<string> => 'image:\n  tag: "1.0.3"\n';
+  const readAtRef = (): string => '1.1.2';
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef, false), {
+    tag: '1.1.2',
+    source: 'app-repo',
+  });
+});
+
+test('while unmigrated, an uncloned repo still reads the Vast-deployments seed', async () => {
+  const fetchFile = async (): Promise<string> => 'image:\n  tag: "1.0.3"\n';
+  const readAtRef = (): string => {
+    throw new Error('should not be called without a checkout');
+  };
+  assert.deepEqual(await productionTag(prodRepo(), null, fetchFile, readAtRef, false), {
+    tag: '1.0.3',
+    source: 'vast-deployments',
+  });
+});
+
+test('while unmigrated, a failed app repo read still falls through to Vast-deployments', async () => {
+  const fetchFile = async (): Promise<string> => 'image:\n  tag: "1.0.3"\n';
+  const readAtRef = (): string => {
+    throw new Error('fatal: invalid object name origin/production');
+  };
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef, false), {
+    tag: '1.0.3',
+    source: 'vast-deployments',
   });
 });

@@ -11,6 +11,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { deploymentsFile } from '../config/repos.js';
 import { extractTag, readTagAtRef, PRE_MIGRATION_PRODUCTION_HELM } from './helm.js';
+import { productionPipelineReady } from '../config/production-lock.js';
 import { ORG } from './remote.js';
 const execFileAsync = promisify(execFile);
 export const DEPLOYMENTS_REPO = 'Vast-deployments';
@@ -62,7 +63,24 @@ const MISSING_IN_DEPLOYMENTS = new RegExp(`^no .* in ${DEPLOYMENTS_REPO}$`);
  *
  * The fallback goes away with `PRE_MIGRATION_PRODUCTION_HELM`.
  */
-export async function productionTag(repo, dir, fetchFile = fetchDeploymentsFile, readAtRef = readTagAtRef) {
+export async function productionTag(repo, dir, fetchFile = fetchDeploymentsFile, readAtRef = readTagAtRef, ready = productionPipelineReady()) {
+    // Until production migrates, the file in Vast-deployments is a seed copied at
+    // cutover and drifts the moment someone deploys production by hand; the app
+    // repo's Helm on origin/production is what is actually running. Verified on
+    // 2026-09-17: vast-menu-payments' seed said 1.0.3, the app repo said 1.1.2.
+    // So pre-migration the app repo is asked first, and the seed only answers
+    // for a repo that is not cloned here.
+    if (!ready && dir) {
+        try {
+            return {
+                tag: readAtRef(dir, 'origin/production', PRE_MIGRATION_PRODUCTION_HELM),
+                source: 'app-repo',
+            };
+        }
+        catch {
+            // Not fetched, or no Helm file on this branch — try the seed below.
+        }
+    }
     try {
         return { tag: await deployedTag(repo, 'production', fetchFile), source: 'vast-deployments' };
     }
