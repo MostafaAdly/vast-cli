@@ -319,11 +319,11 @@ test('a good read resets the error streak', async () => {
   assert.equal(result.ok, true);
 });
 
-test('the shipped timing is a 10 minute ceiling on a 5s poll', () => {
+test('the shipped timing is a 15 minute ceiling on a 5s poll', () => {
   assert.deepEqual(DEFAULT_ROLLOUT_TIMING, {
     pollMs: 5000,
     heartbeatMs: 30000,
-    timeoutMs: 600000,
+    timeoutMs: 900000,
     maxConsecutiveErrors: 12,
   });
 });

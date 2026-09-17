@@ -97,7 +97,7 @@ export async function getApplication(host, token, app, fetchFn = fetch) {
 export const DEFAULT_ROLLOUT_TIMING = {
     pollMs: 5000,
     heartbeatMs: 30000,
-    timeoutMs: 600000,
+    timeoutMs: 900000,
     maxConsecutiveErrors: 12,
 };
 /** The tag has to be live AND settled — a Synced/Healthy old image is not a rollout. */
@@ -138,7 +138,7 @@ export async function waitForRollout(label, appName, tag, deps, timing = DEFAULT
         catch (error) {
             // A bad token will never come good by waiting, and every other repo in
             // the release is about to hit the same wall. Stop now and say what fixes
-            // it rather than burning ten minutes per repo.
+            // it rather than burning fifteen minutes per repo.
             if (error instanceof ArgoUnauthorizedError) {
                 return {
                     ok: false,
