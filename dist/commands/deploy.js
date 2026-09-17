@@ -16,14 +16,15 @@
  */
 import inquirer from 'inquirer';
 import { argoApp, getRepo, reposForRelease, } from '../config/repos.js';
-import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE, PRODUCTION_NOT_READY_MESSAGE, productionPipelineReady, } from '../config/production-lock.js';
-import { argocdHost, readArgocdToken } from '../config/argocd.js';
-import { DEFAULT_ROLLOUT_TIMING, getApplication, waitForRollout, } from '../utils/argocd.js';
+import { productionRefusal } from '../config/production-lock.js';
+import { argocdAppUrl, argocdHost, readArgocdToken } from '../config/argocd.js';
+import { ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
 import { failedStepName, getRunStatus, runUrl, runWorkflow } from '../utils/github.js';
+import { ORG } from '../utils/remote.js';
 import { DEFAULT_TIMING, formatElapsed, pollRun } from '../utils/run-poll.js';
 import { createStatusBoard } from '../utils/status-board.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
@@ -172,6 +173,7 @@ export const DEFAULT_DEPLOY_DEPS = {
     getApplication,
     readArgocdToken,
     argocdHost,
+    argocdAppUrl,
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
@@ -214,9 +216,44 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
         say(`  ${label}  ${why}`, 'error');
         return outcome('failed', why);
     }
+    const host = deps.argocdHost(env);
+    const appUrl = deps.argocdAppUrl(env, app);
+    // One read before anything is built, for two reasons. It is the cheapest
+    // possible token check — an expired token costs nothing here and costs an
+    // orphaned image and tag if it is only discovered after the build. And it
+    // tells us whether this exact tag is ALREADY live: `rolloutDone` is a
+    // snapshot, so without this the waiter would return ok on its first read and
+    // report a release that never happened. Re-deploying a live version is the
+    // documented retry for a run that failed committing the tag, so this is the
+    // common case rather than a corner one.
+    let before;
+    try {
+        before = await deps.getApplication(host, token, app);
+    }
+    catch (error) {
+        if (error instanceof ArgoUnauthorizedError) {
+            const why = 'argocd unauthorized — run `vast argocd login`';
+            say(`  ${label}  ${why}`, 'error');
+            return outcome('failed', why);
+        }
+        // Any other read failure only costs us the snapshot. Refusing to deploy
+        // because ArgoCD blipped would be the worse trade.
+    }
+    const alreadyLive = before !== undefined && rolloutDone(before, version);
     const dispatched = await deps.runWorkflow({ repository: repo.name, version, branch: env, workflowName: workflow }, { quiet: true });
-    if (!dispatched.success || !dispatched.runId) {
-        const why = dispatched.error ?? 'could not identify the dispatched run';
+    if (!dispatched.success) {
+        const why = dispatched.error ?? 'the deploy workflow could not be dispatched';
+        say(`  ${label}  ${why}`, 'error');
+        return outcome('failed', why);
+    }
+    if (!dispatched.runId) {
+        // The dispatch DID land; only finding the run timed out. Saying "could not
+        // identify the dispatched run" read as "nothing happened", and the honest
+        // hazard is the opposite: a build is running and will commit a tag, so a
+        // blind re-run would race it.
+        const why = `dispatched, but its run could not be identified — check ` +
+            `https://github.com/${ORG}/${repo.name}/actions and re-run ` +
+            `\`vast deploy ${repo.name} --target-version ${version}\` only if nothing is running`;
         say(`  ${label}  ${why}`, 'error');
         return outcome('failed', why);
     }
@@ -247,17 +284,22 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
         say(`  ${label}  run ${runId}  ${word}  ${ranFor}  ${url}`, 'error');
         return outcome('failed', detail);
     }
-    const host = deps.argocdHost(env);
+    // When the tag was already live the waiter cannot use the tag alone, so it is
+    // given a predicate that also demands ArgoCD moved to a new revision. Said
+    // out loud, because otherwise the wait looks like a hang on a green app.
+    const wasAt = before?.revision;
+    if (alreadyLive) {
+        say(`  ${label}  argocd ${app}  ${version} already live — waiting for a new sync  0s`, 'muted');
+    }
     const rollout = await deps.waitForRollout(label, app, version, {
         getApp: () => deps.getApplication(host, token, app),
         sleep,
         now: Date.now,
         print: (line) => say(line, 'muted'),
-    }, deps.rolloutTiming ?? DEFAULT_ROLLOUT_TIMING);
+    }, deps.rolloutTiming ?? DEFAULT_ROLLOUT_TIMING, alreadyLive
+        ? (current) => rolloutDone(current, version) && current.revision !== wasAt
+        : (current) => rolloutDone(current, version));
     const rolledFor = formatElapsed(rollout.elapsedMs);
-    // Built from the host the client actually talked to, so the link can never
-    // point at a different ArgoCD from the one that was polled.
-    const appUrl = `${host}/applications/${app}`;
     if (!rollout.ok) {
         const why = rollout.reason ?? 'rollout did not complete';
         say(`  ${label}  argocd ${app}  ${why}  ${rolledFor}  ${appUrl}`, 'error');
@@ -357,17 +399,12 @@ async function executeDeploy(repoNames, options) {
         log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
         process.exit(1);
     }
-    // The pipeline block comes first: it is a statement about the world, not a
-    // permission, so lifting the lock must not get past it.
-    if (options.to === 'production') {
-        if (!productionPipelineReady()) {
-            console.log(createErrorBox('Production deploys are blocked', PRODUCTION_NOT_READY_MESSAGE));
-            process.exit(1);
-        }
-        if (!isProductionEnabled()) {
-            console.log(createErrorBox('Production deploys are locked', PRODUCTION_LOCKED_MESSAGE));
-            process.exit(1);
-        }
+    // One shared gate: the pipeline block before the lock, ordered inside
+    // `productionRefusal` so no caller can get it the wrong way round.
+    const refusal = productionRefusal(options.to);
+    if (refusal) {
+        console.log(createErrorBox('Production deploys are blocked', refusal));
+        process.exit(1);
     }
     const { repos: targets, unknown } = deployTargets(repoNames, options);
     if (unknown.length > 0) {

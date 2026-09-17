@@ -115,6 +115,7 @@ export interface DeployDeps {
     getApplication: typeof getApplication;
     readArgocdToken: (env: DeployEnv) => string | null;
     argocdHost: (env: DeployEnv) => string;
+    argocdAppUrl: (env: DeployEnv, app: string) => string;
     /** Overridden only by tests that exercise the real waiter. */
     rolloutTiming?: RolloutTiming;
 }

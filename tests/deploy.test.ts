@@ -11,7 +11,7 @@ import {
   type Sweep,
 } from '../src/commands/deploy.js';
 import { getRepo } from '../src/config/repos.js';
-import type { ArgoApp, RolloutResult } from '../src/utils/argocd.js';
+import { ArgoUnauthorizedError, rolloutDone, type ArgoApp, type RolloutResult } from '../src/utils/argocd.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
@@ -137,13 +137,23 @@ const HEALTHY: ArgoApp = {
   revision: 'abc123',
 };
 
+/** What the app is running before the deploy: an older tag, so nothing is already live. */
+const STALE: ArgoApp = {
+  syncStatus: 'Synced',
+  healthStatus: 'Healthy',
+  images: ['registry/vastpay-pwa:1.5.6-rc9'],
+  revision: 'old000',
+};
+
 interface Calls {
   dispatched: string[];
   rollouts: string[];
+  /** The done-predicate each rollout wait was given, so a test can exercise it. */
+  isDone: Array<((app: ArgoApp) => boolean) | undefined>;
 }
 
 function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls } {
-  const calls: Calls = { dispatched: [], rollouts: [] };
+  const calls: Calls = { dispatched: [], rollouts: [], isDone: [] };
   const base: DeployDeps = {
     runWorkflow: async (params) => {
       calls.dispatched.push(`${params.repository}@${params.version}->${params.branch}`);
@@ -151,13 +161,15 @@ function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls 
     },
     getRunStatus: async () => ({ status: 'completed', conclusion: 'success' }),
     failedStepName: async () => null,
-    waitForRollout: async (_label, app, tag): Promise<RolloutResult> => {
+    waitForRollout: async (_label, app, tag, _deps, _timing, isDone): Promise<RolloutResult> => {
       calls.rollouts.push(`${app}:${tag}`);
+      calls.isDone.push(isDone);
       return { ok: true, elapsedMs: 42000, app: HEALTHY };
     },
-    getApplication: async () => HEALTHY,
+    getApplication: async () => STALE,
     readArgocdToken: () => 'a-token',
     argocdHost: () => 'https://argocd-stg.example.com',
+    argocdAppUrl: (_env, app) => `https://argocd-stg.example.com/applications/${app}`,
     ...over,
   };
   return { deps: base, calls };
@@ -276,4 +288,108 @@ test('a dispatch that cannot be identified fails without waiting on a run', asyn
   assert.equal(outcome.status, 'failed');
   assert.equal(outcome.detail, 'gh exploded');
   assert.deepEqual(d.calls.rollouts, []);
+});
+
+// False green: `rolloutDone` is a snapshot, so re-deploying a version the app is
+// already running satisfied the waiter on its first read and reported "released"
+// without any rollout at all. The docs tell people to retry a failed tag commit
+// with the same version, so this was the common case, not a corner one.
+test('a version that is already live waits for a new sync instead of reporting success', async () => {
+  const { slot, lines } = recordingSlot();
+  const liveNow: ArgoApp = {
+    syncStatus: 'Synced',
+    healthStatus: 'Healthy',
+    images: ['registry/vastpay-pwa:1.5.7-rc1'],
+    revision: 'rev-before',
+  };
+  const d = deps({ getApplication: async () => liveNow });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+
+  assert.equal(outcome.status, 'released');
+  const isDone = d.calls.isDone[0];
+  assert.ok(isDone, 'the waiter must be told what done means when the tag is already live');
+  assert.equal(isDone(liveNow), false, 'the unchanged snapshot must not satisfy the wait');
+  assert.equal(
+    isDone({ ...liveNow, revision: 'rev-after' }),
+    true,
+    'a new revision, Synced and Healthy on the tag, is the rollout',
+  );
+  assert.equal(
+    lines[1],
+    '  VastPayPwa  argocd vastpay-pwa  1.5.7-rc1 already live — waiting for a new sync  0s',
+  );
+});
+
+test('a version that is not live yet waits on the ordinary definition of done', async () => {
+  const { slot, lines } = recordingSlot();
+  const d = deps();
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  const isDone = d.calls.isDone[0];
+  if (isDone) {
+    assert.equal(isDone(HEALTHY), true, 'the default predicate is plain rolloutDone');
+    assert.equal(isDone(STALE), false);
+  }
+  assert.ok(
+    !lines.some((l) => /already live/.test(l)),
+    'nothing was live, so nothing may claim it was',
+  );
+});
+
+// Reading the app before dispatching is also the cheapest possible token check:
+// an expired token found here costs nothing, found after the build it has
+// already pushed an image and committed a tag nobody is watching.
+test('an expired ArgoCD token found before dispatch fails without building', async () => {
+  const { slot } = recordingSlot();
+  const d = deps({
+    getApplication: async () => {
+      throw new ArgoUnauthorizedError('argocd rejected the token: token expired');
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.detail, /argocd unauthorized/);
+  assert.match(outcome.detail, /vast argocd login/);
+  assert.deepEqual(d.calls.dispatched, [], 'nothing may be built against a dead token');
+  assert.deepEqual(d.calls.rollouts, []);
+});
+
+// Any other read failure is only a missing snapshot. Refusing to deploy because
+// ArgoCD blipped would be worse than losing the already-live check.
+test('an ordinary pre-read failure does not block the deploy', async () => {
+  const { slot } = recordingSlot();
+  const d = deps({
+    getApplication: async () => {
+      throw new Error('ECONNRESET');
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(d.calls.dispatched, ['VastPayPwa@1.5.7-rc1->staging']);
+});
+
+// `runWorkflow` returns success with no runId when it dispatched fine but could
+// not find the run in time. Reporting "could not identify the dispatched run"
+// hid the fact that a build IS running and will commit a tag.
+test('a dispatched run that cannot be identified says the build is running anyway', async () => {
+  const { slot } = recordingSlot();
+  const d = deps({ runWorkflow: async () => ({ success: true, message: 'dispatched' }) });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.detail, /dispatched, but its run could not be identified/);
+  assert.match(outcome.detail, /https:\/\/github\.com\/Vast-menu\/VastPayPwa\/actions/);
+  assert.match(outcome.detail, /vast deploy VastPayPwa --target-version 1\.5\.7-rc1/);
+  assert.match(outcome.detail, /only if nothing is running/);
+  assert.deepEqual(d.calls.rollouts, []);
+});
+
+// The ArgoCD link is built once, from config, so the board line and the summary
+// can never point at two different servers.
+test('the released detail and the board line share one ArgoCD app URL', async () => {
+  const { slot, lines } = recordingSlot();
+  const d = deps({
+    argocdAppUrl: (_env, app) => `https://argocd.test/applications/${app}`,
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+  assert.match(outcome.detail, /https:\/\/argocd\.test\/applications\/vastpay-pwa/);
+  assert.match(lines[lines.length - 1], /https:\/\/argocd\.test\/applications\/vastpay-pwa/);
 });

@@ -152,7 +152,7 @@ worked examples.
 | `vast promote` | Merge branches, or open a release/hotfix PR into production |
 | `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
 | `vast argocd` | Log in to ArgoCD, check the stored token, log out |
-| `vast workflow` | Trigger a raw GitHub Actions workflow |
+| `vast workflow` | Trigger a raw GitHub Actions workflow — never on a protected branch |
 | `vast production` | Show or change the production deploy lock |
 
 ### The everyday flow
@@ -160,7 +160,7 @@ worked examples.
 ```
 develop  ──▶  staging  ──▶  production
            vast release    vast promote --to production
-                           vast deploy  --to production
+                           (production deploy blocked until migrated)
 ```
 
 Staging is GitOps. There are no bump PRs any more. `vast release` promotes the branch,
@@ -190,6 +190,26 @@ pulled 24 new commit(s) into develop
 
 A branch carrying local commits is reported and left alone rather than rewritten — the
 promotion merges `origin/*` regardless, so your work is never at risk.
+
+### Reading `vast status`
+
+```bash
+vast status --all         # every repo, one screen
+vast status VastPayPwa    # one repo
+```
+
+**STAGING** is the tag in that repo's `Vast-deployments` values file — the image
+ArgoCD is actually running. **PRODUCTION** is read the same way when a production
+file exists there. For most repos it does not yet, so until production migrates
+that column falls back to the tag in the app repo's own `Helm/values-prod.yaml`
+on `origin/production`, marks it with `*`, and prints a footnote under the table
+saying the value came from the app repo rather than from `Vast-deployments`. When
+neither is readable the cell reads `not migrated`. `n/a` means the repo is not
+deployed to that environment at all, and `?` means the lookup itself failed.
+
+**DRIFT** is how many commits are waiting on `develop` that `staging` does not
+have. Only DRIFT needs a local checkout — the tags are read over the API, so they
+are reported even for a repo you have never cloned.
 
 ### Versions are derived, not typed
 
@@ -286,6 +306,8 @@ returns: `vast production enable` to lift the deploy lock, then
 
 Beyond all of that, this CLI never pushes to `production`, `prod`, `main` or `master` at
 all. Production is reached only by merging the reviewed release PR, which a human does.
+`vast workflow` refuses those four branch names outright — any casing, spaces trimmed —
+before it even dry-runs, so the raw-dispatch escape hatch is not one.
 
 ### Shipping only some of staging
 
@@ -326,8 +348,11 @@ before anything happens.
 
 Rules that keep this safe: every pick must already be on `staging` (production only ever
 receives staging-baked changes) and must not already be on `production`. The version
-advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's, and
-deploying afterwards is explicit:
+advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's — read
+from `Vast-deployments` when a production file is there and otherwise from the app repo's
+`Helm/values-prod.yaml` on `origin/production`, and `promote` prints which of the two it
+used, so a surprising version number can always be traced to its source. Deploying
+afterwards is explicit:
 
 ```bash
 vast deploy VastPayPwa --to production --target-version 2.2.3   # blocked until production migrates
@@ -460,9 +485,11 @@ Later runs keep that choice rather than re-picking, even when they find the othe
 | `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
 | `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
 | `no ArgoCD token for staging` | You have never logged in on this machine, or you logged out. Run `vast argocd login`. Nothing was dispatched — the check runs before the build so you never start one you cannot confirm. |
-| `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. The build already ran; re-run the deploy with the same `--target-version`. |
-| `timed out after 10m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 10 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. |
-| `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. |
+| `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
+| `timed out after 10m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 10 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
+| `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 10 minutes if the rebuild produces no new commit. |
+| Every `STAGING` and `PRODUCTION` cell reads `not migrated` or `?` | Your GitHub account cannot read `Vast-deployments`. A private repo you cannot see answers 404, which is indistinguishable from a missing file, so every lookup fails the same way. Ask DevOps for access. One repo showing `not migrated` on its own is the ordinary unmigrated case, not this. |
+| `dispatched, but its run could not be identified` | The build was triggered; the CLI could not match it to a run id, so it cannot watch it. Open the repo's Actions page and see whether it is running **before** re-dispatching — re-running blind starts a second build of the same version. |
 | Production deploy refuses: not migrated | Expected. Production has not moved to the GitOps pipeline, so deploys are blocked and `vast production enable` refuses too. `vast promote --to production` still cuts the release PR. |
 | `vast upgrade` installs the previous version | GitHub's releases API is cached for ~60s. Wait a minute after publishing. |
 | `status --all` is slow | It fetches every repo. `--no-fetch` reads local refs instantly, at the cost of possible staleness. |

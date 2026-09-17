@@ -77,7 +77,15 @@ export declare function rolloutDone(app: ArgoApp, tag: string): boolean;
  * Shaped like `pollRun`: one plain line per state change plus a heartbeat, so a
  * multi-repo release can print several rollouts onto one board without any of
  * them repainting the terminal.
+ *
+ * `isDone` is the definition of "rolled out", and it is a parameter because
+ * `rolloutDone` alone is a snapshot: an app already running `tag` satisfies it
+ * on the very first read, so re-deploying a live version would return ok having
+ * waited for nothing. A caller that knows the tag was already live passes a
+ * predicate that also demands a new revision. The printed state text is
+ * deliberately NOT derived from it — while a custom predicate says "not yet"
+ * the app still genuinely has the tag, and `waiting for <tag>` would be a lie.
  */
-export declare function waitForRollout(label: string, appName: string, tag: string, deps: RolloutDeps, timing?: RolloutTiming): Promise<RolloutResult>;
+export declare function waitForRollout(label: string, appName: string, tag: string, deps: RolloutDeps, timing?: RolloutTiming, isDone?: (app: ArgoApp) => boolean): Promise<RolloutResult>;
 export {};
 //# sourceMappingURL=argocd.d.ts.map

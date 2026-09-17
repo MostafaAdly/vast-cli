@@ -9,9 +9,9 @@
 import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { DEPLOY_ENVS, REPOS, getRepo, isReleasable, type DeployEnv, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type DeployEnv, type RepoConfig } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
-import { deployedTag } from '../utils/deployments.js';
+import { deployedTag, productionTag, type ProductionTagSource } from '../utils/deployments.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 
@@ -19,6 +19,8 @@ interface Row {
   name: string;
   staging: string;
   production: string;
+  /** Production's tag came from the app repo's Helm, not Vast-deployments. */
+  productionFromAppRepo: boolean;
   drift: string;
 }
 
@@ -63,38 +65,73 @@ async function refreshAll(targets: RepoConfig[], dirs: Map<string, string | null
 /**
  * The deployed tag per env, for every repo at once.
  *
- * Each read is one `gh api` call against Vast-deployments — the app checkouts
- * no longer carry the answer — so they run concurrently: serially this is one
- * round trip per repo per env and the command stops feeling instant. A repo
- * that is not deployed to an env reads "n/a"; a read that fails reads "?",
- * because a broken lookup is not the same claim as "nothing is deployed".
+ * Staging is one `gh api` call against Vast-deployments; production may fall
+ * back to the app repo's Helm while it is unmigrated. Both run concurrently:
+ * serially this is one round trip per repo per env and the command stops
+ * feeling instant. A repo that is not deployed to an env reads "n/a"; a read
+ * that fails reads "?", because a broken lookup is not the same claim as
+ * "nothing is deployed".
  */
 export type TagReader = (repo: RepoConfig, env: DeployEnv) => Promise<string>;
 
-/** The reader's own wording for "that file is not in the repo" (see deployments.ts). */
-const MISSING_FILE = /^no .* in Vast-deployments$/;
+/** Production's reader is separate: it may answer from the app repo (see deployments.ts). */
+export type ProductionTagReader = (
+  repo: RepoConfig,
+  dir: string | null,
+) => Promise<ProductionTagSource>;
 
+/** One repo's two tag cells, plus where production's came from. */
+export interface RepoTags {
+  staging: string;
+  production: string;
+  productionFromAppRepo: boolean;
+}
+
+/** The readers' own wording for "that file is not in Vast-deployments" (see deployments.ts). */
+const MISSING_FILE = /^no .* in Vast-deployments/;
+
+/**
+ * @param dirs each target's resolved checkout path, shared with refreshAll —
+ * production's reader needs it for the pre-migration Helm fallback, and
+ * resolving a path is expensive enough that it happens once per repo.
+ */
 export async function readTags(
   targets: RepoConfig[],
-  read: TagReader = deployedTag,
-): Promise<Map<string, Record<DeployEnv, string>>> {
+  dirs: Map<string, string | null> = new Map(),
+  readStaging: TagReader = deployedTag,
+  readProduction: ProductionTagReader = productionTag,
+): Promise<Map<string, RepoTags>> {
   const entries = await Promise.all(
     targets.map(async (repo) => {
-      const tags = { staging: 'n/a', production: 'n/a' } as Record<DeployEnv, string>;
-      await Promise.all(
-        DEPLOY_ENVS.map(async (env) => {
-          if (!repo.deployments[env]) return;
+      const tags: RepoTags = { staging: 'n/a', production: 'n/a', productionFromAppRepo: false };
+      // A folder that is not there yet is the normal state while production is
+      // unmigrated — a question mark would read as a failure and send someone
+      // chasing a network problem.
+      const cell = (error: unknown): string => {
+        const message = error instanceof Error ? error.message : String(error);
+        return MISSING_FILE.test(message) ? 'not migrated' : '?';
+      };
+
+      await Promise.all([
+        (async () => {
+          if (!repo.deployments.staging) return;
           try {
-            tags[env] = await read(repo, env);
+            tags.staging = await readStaging(repo, 'staging');
           } catch (error) {
-            // A folder that is not there yet is the normal state while
-            // production is unmigrated — a question mark would read as a
-            // failure and send someone chasing a network problem.
-            const message = error instanceof Error ? error.message : String(error);
-            tags[env] = MISSING_FILE.test(message) ? 'not migrated' : '?';
+            tags.staging = cell(error);
           }
-        }),
-      );
+        })(),
+        (async () => {
+          if (!repo.deployments.production) return;
+          try {
+            const { tag, source } = await readProduction(repo, dirs.get(repo.name) ?? null);
+            tags.production = tag;
+            tags.productionFromAppRepo = source === 'app-repo';
+          } catch (error) {
+            tags.production = cell(error);
+          }
+        })(),
+      ]);
       return [repo.name, tags] as const;
     }),
   );
@@ -105,12 +142,18 @@ function inspect(
   repo: RepoConfig,
   dir: string | null,
   fetchFailed: boolean,
-  tags: Record<DeployEnv, string>,
+  tags: RepoTags,
 ): Row {
   // The tags come from Vast-deployments, so they are known even for a repo that
   // is not cloned; only the drift column needs a checkout.
   if (!dir || !existsSync(join(dir, '.git'))) {
-    return { name: repo.name, staging: tags.staging, production: tags.production, drift: 'not cloned' };
+    return {
+      name: repo.name,
+      staging: tags.staging,
+      production: tags.production,
+      productionFromAppRepo: tags.productionFromAppRepo,
+      drift: 'not cloned',
+    };
   }
 
   let drift: string;
@@ -128,7 +171,13 @@ function inspect(
     }
   }
 
-  return { name: repo.name, staging: tags.staging, production: tags.production, drift };
+  return {
+    name: repo.name,
+    staging: tags.staging,
+    production: tags.production,
+    productionFromAppRepo: tags.productionFromAppRepo,
+    drift,
+  };
 }
 
 async function executeStatus(
@@ -164,26 +213,31 @@ async function executeStatus(
 
   console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
 
-  const tags = await readTags(targets);
+  const tags = await readTags(targets, dirs);
   const rows = targets.map((r) =>
     inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name), tags.get(r.name)!),
   );
 
   // Widths come from the data, not constants — real tags run long
   // ("1.1.3-rc4-health") and a fixed width silently breaks the columns.
+  // The asterisk is part of the cell, so it has to be part of the width too.
+  const prodCell = (r: Row): string => (r.productionFromAppRepo ? `${r.production}*` : r.production);
   const col = (header: string, pick: (r: Row) => string): number =>
     Math.max(header.length, ...rows.map((r) => pick(r).length));
   const wName = col('REPO', (r) => r.name);
   const wStage = col('STAGING', (r) => r.staging);
-  const wProd = col('PRODUCTION', (r) => r.production);
+  const wProd = col('PRODUCTION', prodCell);
 
   console.log(
     `  ${'REPO'.padEnd(wName)}  ${'STAGING'.padEnd(wStage)}  ${'PRODUCTION'.padEnd(wProd)}  DRIFT`,
   );
   for (const r of rows) {
     console.log(
-      `  ${r.name.padEnd(wName)}  ${r.staging.padEnd(wStage)}  ${r.production.padEnd(wProd)}  ${r.drift}`,
+      `  ${r.name.padEnd(wName)}  ${r.staging.padEnd(wStage)}  ${prodCell(r).padEnd(wProd)}  ${r.drift}`,
     );
+  }
+  if (rows.some((r) => r.productionFromAppRepo)) {
+    console.log("  * production tag read from the app repo's Helm — production is not migrated yet");
   }
   log.newline();
 }
@@ -206,17 +260,21 @@ Examples:
 Reads only — it fetches and reports, and changes nothing.
 
 Columns:
-  STAGING / PRODUCTION   the image tag ArgoCD is running, read from the
+  STAGING / PRODUCTION   the tag ArgoCD deploys from, read from the
                          Vast-deployments values file for that environment
+                         "<tag>*" means production is not migrated and the tag
+                         was read from the app repo's Helm/values-prod.yaml on
+                         origin/production, which is what is running there today
                          "n/a" means the repo is not deployed to that env
-                         "not migrated" means the file is not in Vast-deployments yet
+                         "not migrated" means neither place has the tag
                          "?"   means the file could not be read
   DRIFT                  commits waiting on develop that staging lacks
                          "no develop" means the repo has no promotion source
                          "not cloned" means the drift cannot be computed here
 
-The tags come from Vast-deployments over the API, so they are reported even for
-a repo you have not cloned. Only DRIFT needs a local checkout.
+Staging's tag comes from Vast-deployments over the API, so it is reported even
+for a repo you have not cloned. An unmigrated production tag comes from that
+repo's checkout, so it needs one — as does DRIFT.
 `,
     )
     .action(executeStatus);

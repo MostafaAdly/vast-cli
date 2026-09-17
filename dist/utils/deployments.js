@@ -10,7 +10,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { deploymentsFile } from '../config/repos.js';
-import { extractTag } from './helm.js';
+import { extractTag, readTagAtRef, PRE_MIGRATION_PRODUCTION_HELM } from './helm.js';
 import { ORG } from './remote.js';
 const execFileAsync = promisify(execFile);
 export const DEPLOYMENTS_REPO = 'Vast-deployments';
@@ -45,8 +45,49 @@ export async function deployedTag(repo, env, fetchFile = fetchDeploymentsFile) {
         throw new Error(`${repo.name} has no ${env} deployments file`);
     return extractTag(await fetchFile(path));
 }
-/** Browser link to a values file, for printing next to a deployed tag. */
-export function deploymentsFileUrl(path) {
-    return `https://github.com/${ORG}/${DEPLOYMENTS_REPO}/blob/main/${path}`;
+/** The reader's own wording for "that file is not in Vast-deployments". */
+const MISSING_IN_DEPLOYMENTS = new RegExp(`^no .* in ${DEPLOYMENTS_REPO}$`);
+/**
+ * Production's deployed tag, from wherever it is actually recorded today.
+ *
+ * Production is not migrated: seven of nine repos have no file in
+ * Vast-deployments at all, and the two that do are seeds — one carries no
+ * `tag:` line. What is running is still each app repo's `Helm/values-prod.yaml`
+ * on `origin/production`, so a missing or placeholder file falls back there
+ * rather than failing a hotfix that used to work.
+ *
+ * Only those two states fall back. A network or auth failure propagates
+ * unchanged: guessing from a possibly-stale checkout because GitHub was down
+ * would be a quieter, worse lie.
+ *
+ * The fallback goes away with `PRE_MIGRATION_PRODUCTION_HELM`.
+ */
+export async function productionTag(repo, dir, fetchFile = fetchDeploymentsFile, readAtRef = readTagAtRef) {
+    try {
+        return { tag: await deployedTag(repo, 'production', fetchFile), source: 'vast-deployments' };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const unmigrated = MISSING_IN_DEPLOYMENTS.test(message) || message.includes('No `tag:` found');
+        if (!unmigrated)
+            throw error;
+        if (dir) {
+            try {
+                return {
+                    tag: readAtRef(dir, 'origin/production', PRE_MIGRATION_PRODUCTION_HELM),
+                    source: 'app-repo',
+                };
+            }
+            catch {
+                // Fall through to the error naming both places — reporting only the
+                // git failure would hide that Vast-deployments was tried first.
+            }
+        }
+        const path = deploymentsFile(repo, 'production') ?? `a production file for ${repo.name}`;
+        const where = dir
+            ? `${PRE_MIGRATION_PRODUCTION_HELM} at origin/production in ${dir}`
+            : `${PRE_MIGRATION_PRODUCTION_HELM} at origin/production (${repo.name} is not cloned)`;
+        throw new Error(`no ${path} in ${DEPLOYMENTS_REPO}, and no ${where}`);
+    }
 }
 //# sourceMappingURL=deployments.js.map

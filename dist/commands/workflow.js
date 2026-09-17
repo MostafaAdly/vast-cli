@@ -9,13 +9,24 @@
 import chalk from 'chalk';
 import { runWorkflow, listWorkflows, checkGhCli, runUrl, } from '../utils/github.js';
 import { getRepo, repoNames } from '../config/repos.js';
-import { isProductionEnabled, PRODUCTION_LOCKED_MESSAGE, PRODUCTION_NOT_READY_MESSAGE, productionPipelineReady, } from '../config/production-lock.js';
+import { productionRefusal } from '../config/production-lock.js';
+import { NEVER_PUSH } from '../utils/git.js';
 import { confirmProduction } from './deploy.js';
 import { createHeader, createSuccessBox, createErrorBox, createInfoBox, log, formatKeyValue, formatList, } from '../utils/ui.js';
 /** Command metadata */
 export const COMMAND_NAME = 'workflow';
 export const COMMAND_DESCRIPTION = 'Run GitHub Actions workflows for Vast-menu repositories';
 export const COMMAND_ALIASES = ['wf', 'run'];
+/**
+ * Is this branch one the CLI must never dispatch on?
+ *
+ * The list is NEVER_PUSH itself rather than a second copy of it: the two drifted
+ * once already (`master` was pushable through `workflow` but not through git),
+ * and an untrimmed `-b ' production'` slipped past the old membership test.
+ */
+export function isProtectedBranch(branch) {
+    return NEVER_PUSH.includes(branch.trim().toLowerCase());
+}
 /**
  * Execute the workflow command
  * @param repo - Repository name
@@ -66,6 +77,22 @@ async function executeWorkflow(repo, options) {
             }
         }
     }
+    // Production is blocked outright, and locked on top of that. The gate sits
+    // ABOVE the dry run: `--dry-run` on a protected branch must refuse the same
+    // way `deploy --to production --dry-run` does, rather than print a plan for
+    // something this CLI will never do.
+    if (isProtectedBranch(options.branch)) {
+        const refusal = productionRefusal('production');
+        if (refusal) {
+            console.log(createErrorBox(`Refusing to dispatch on ${options.branch}`, refusal));
+            process.exit(1);
+        }
+        log.warn(`⚠️  You are targeting the ${chalk.bold(options.branch)} branch!`);
+        if (!(await confirmProduction(repo, options.targetVersion))) {
+            log.info('Aborted.');
+            process.exit(0);
+        }
+    }
     // Dry run mode
     if (options.dryRun) {
         console.log(createInfoBox('Dry Run Mode - Parameters', [
@@ -77,25 +104,6 @@ async function executeWorkflow(repo, options) {
         ]));
         log.muted('\nNo workflow was triggered (dry-run mode)');
         return;
-    }
-    // Production is blocked outright, and locked on top of that.
-    const protectedBranches = ['production', 'prod', 'main'];
-    if (protectedBranches.includes(options.branch.toLowerCase())) {
-        // The block is a statement about the world, not a permission, so it is
-        // checked first: lifting the lock must not get past it.
-        if (!productionPipelineReady()) {
-            console.log(createErrorBox(`Refusing to dispatch on ${options.branch}`, PRODUCTION_NOT_READY_MESSAGE));
-            process.exit(1);
-        }
-        if (!isProductionEnabled()) {
-            console.log(createErrorBox(`Refusing to dispatch on ${options.branch}`, PRODUCTION_LOCKED_MESSAGE));
-            process.exit(1);
-        }
-        log.warn(`⚠️  You are targeting the ${chalk.bold(options.branch)} branch!`);
-        if (!(await confirmProduction(repo, options.targetVersion))) {
-            log.info('Aborted.');
-            process.exit(0);
-        }
     }
     // Execute the workflow
     const result = await runWorkflow({
@@ -153,7 +161,7 @@ Prefer \`vast release\` for the everyday staging flow — it promotes, derives t
 version from the tag Vast-deployments says is live, dispatches, watches the run
 and waits until ArgoCD reports the new tag Synced/Healthy.
 
-Dispatching on production, prod or main is BLOCKED: production has not moved to
+Dispatching on production, prod, main or master is BLOCKED: production has not moved to
 the new deploy pipeline yet.
 
 Available Repositories:

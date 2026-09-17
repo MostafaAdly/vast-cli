@@ -327,3 +327,42 @@ test('the shipped timing is a 10 minute ceiling on a 5s poll', () => {
     maxConsecutiveErrors: 12,
   });
 });
+
+// A snapshot predicate cannot tell "it rolled out" from "it was already there".
+// `deployOne` re-deploying a live version needs to wait for a NEW sync, so the
+// waiter has to take the definition of done from its caller.
+test('the waiter honours a custom done predicate', async () => {
+  const live = { images: ['registry/pwa:1.2.3'], syncStatus: 'Synced', healthStatus: 'Healthy' };
+  const h = harness([
+    app({ ...live, revision: 'old' }),
+    app({ ...live, revision: 'old' }),
+    app({ ...live, revision: 'new' }),
+  ]);
+  const result = await waitForRollout(
+    'pwa',
+    'pwa',
+    '1.2.3',
+    h.deps,
+    FAST,
+    (a) => rolloutDone(a, '1.2.3') && a.revision !== 'old',
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.app?.revision, 'new');
+  assert.equal(result.elapsedMs, 2000, 'the already-done snapshots must not satisfy the wait');
+});
+
+// While the custom predicate says "not yet" the line still describes the app —
+// the tag IS present, so "waiting for <tag>" would be a lie.
+test('a custom predicate does not change the state text', async () => {
+  const h = harness([
+    app({ images: ['registry/pwa:1.2.3'], syncStatus: 'Synced', healthStatus: 'Healthy', revision: 'old' }),
+    app({ images: ['registry/pwa:1.2.3'], syncStatus: 'OutOfSync', healthStatus: 'Progressing', revision: 'new' }),
+    app({ images: ['registry/pwa:1.2.3'], syncStatus: 'Synced', healthStatus: 'Healthy', revision: 'new' }),
+  ]);
+  const result = await waitForRollout('pwa', 'pwa', '1.2.3', h.deps, FAST, (a) => a.revision === 'new' && rolloutDone(a, '1.2.3'));
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.lines, [
+    '  pwa  argocd pwa  Synced/Healthy  0s',
+    '  pwa  argocd pwa  OutOfSync/Progressing  1s',
+  ]);
+});

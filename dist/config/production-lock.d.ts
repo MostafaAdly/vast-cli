@@ -9,6 +9,7 @@
  * auditable act that does not require editing and rebuilding source — and so
  * that it can be dropped again in one command.
  */
+import type { DeployEnv } from './repos.js';
 /**
  * VAST_CLI_HOME exists so the test suite can exercise enable/disable against a
  * throwaway directory. Without it a crashed test could leave the real lock
@@ -40,4 +41,16 @@ export declare const PRODUCTION_PIPELINE_READY = false;
 export declare function productionPipelineReady(): boolean;
 /** Human-readable refusal for every blocked production deploy path. */
 export declare const PRODUCTION_NOT_READY_MESSAGE: string;
+/**
+ * The one gate every production path shares.
+ *
+ * Returns the refusal to print, or null when the path may proceed. Order is
+ * load-bearing: the pipeline block is a statement about the world, the file
+ * lock is only a permission, so no lifted lock can get past the block. Both
+ * states are injectable so the ordering is testable without process.exit.
+ */
+export declare function productionRefusal(env: DeployEnv, state?: {
+    ready?: boolean;
+    enabled?: boolean;
+}): string | null;
 //# sourceMappingURL=production-lock.d.ts.map

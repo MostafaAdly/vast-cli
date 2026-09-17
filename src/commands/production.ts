@@ -15,7 +15,7 @@ import {
   enabledSince,
   lockFile,
   productionPipelineReady,
-  PRODUCTION_NOT_READY_MESSAGE,
+  productionRefusal,
 } from '../config/production-lock.js';
 import {
   createHeader,
@@ -55,9 +55,12 @@ function showStatus(): void {
 
 async function enable(options: { yes: boolean }): Promise<void> {
   // Lifting the lock would be a lie while the pipeline is blocked: every
-  // production deploy path refuses before it ever reads the lock file.
-  if (!productionPipelineReady()) {
-    console.log(createErrorBox('Production deploys are blocked', PRODUCTION_NOT_READY_MESSAGE));
+  // production deploy path refuses before it ever reads the lock file. Passing
+  // `enabled: true` asks the shared gate only the question that matters here —
+  // is the pipeline ready? — so a non-null answer is the block talking.
+  const blocked = productionRefusal('production', { enabled: true });
+  if (blocked) {
+    console.log(createErrorBox('Production deploys are blocked', blocked));
     process.exitCode = 1;
     return;
   }

@@ -1,14 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  DEPLOYMENTS_REPO,
-  deployedTag,
-  deploymentsFileUrl,
-} from '../src/utils/deployments.js';
+import { DEPLOYMENTS_REPO, deployedTag, productionTag } from '../src/utils/deployments.js';
 import type { FetchFile } from '../src/utils/deployments.js';
 import type { RepoConfig } from '../src/config/repos.js';
-import { ORG } from '../src/utils/remote.js';
+import { PRE_MIGRATION_PRODUCTION_HELM } from '../src/utils/helm.js';
 
 const STAGE_YAML = `deployment:
   replicas: 1
@@ -63,13 +59,97 @@ test('deployedTag propagates the fetcher rejection message', async () => {
   });
 });
 
-test('deploymentsFileUrl points at the file on main', () => {
-  assert.equal(
-    deploymentsFileUrl('deployments/helm/staging/pwa/stage.yaml'),
-    `https://github.com/${ORG}/${DEPLOYMENTS_REPO}/blob/main/deployments/helm/staging/pwa/stage.yaml`,
-  );
-});
-
 test('DEPLOYMENTS_REPO is the deployments repo name', () => {
   assert.equal(DEPLOYMENTS_REPO, 'Vast-deployments');
+});
+
+// --- productionTag: Vast-deployments first, the app repo's Helm as fallback ---
+//
+// Production is not migrated: seven of nine repos have no file in
+// Vast-deployments at all, and the two seeds may carry no `tag:` line yet.
+
+const PROD_PATH = 'deployments/helm/production/VastPay-DashBoard/prod.yaml';
+
+const prodRepo = (): RepoConfig => repo({ deployments: { staging: 'deployments/helm/staging/vastpay-dasaboard/stage.yaml', production: PROD_PATH } });
+
+const PROD_YAML = `deployment:
+  containers:
+    - image:
+        tag: "2.2.1"
+`;
+
+test('productionTag prefers Vast-deployments when the file is there', async () => {
+  const fetchFile: FetchFile = async () => PROD_YAML;
+  const readAtRef = (): string => {
+    throw new Error('should not be called');
+  };
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+    tag: '2.2.1',
+    source: 'vast-deployments',
+  });
+});
+
+test('productionTag falls back to the app repo Helm when the file is missing', async () => {
+  const fetchFile: FetchFile = async () => {
+    throw new Error(`no ${PROD_PATH} in Vast-deployments`);
+  };
+  const seen: string[][] = [];
+  const readAtRef = (dir: string, ref: string, helmPath: string): string => {
+    seen.push([dir, ref, helmPath]);
+    return '2.2.1';
+  };
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+    tag: '2.2.1',
+    source: 'app-repo',
+  });
+  assert.deepEqual(seen, [['/repo', 'origin/production', PRE_MIGRATION_PRODUCTION_HELM]]);
+});
+
+test('productionTag falls back when the seeded file has no tag line', async () => {
+  const fetchFile: FetchFile = async () => 'deployment:\n  replicas: 1\n';
+  const readAtRef = (): string => '2.2.1';
+  assert.deepEqual(await productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+    tag: '2.2.1',
+    source: 'app-repo',
+  });
+});
+
+test('productionTag names both places when neither has the tag', async () => {
+  const fetchFile: FetchFile = async () => {
+    throw new Error(`no ${PROD_PATH} in Vast-deployments`);
+  };
+  const readAtRef = (): string => {
+    throw new Error('Could not read Helm/values-prod.yaml at origin/production. Is the ref fetched?');
+  };
+  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef), (error: Error) => {
+    assert.match(error.message, /^no .* in Vast-deployments/);
+    assert.match(error.message, new RegExp(PRE_MIGRATION_PRODUCTION_HELM.replace('/', '\\/')));
+    return true;
+  });
+});
+
+test('productionTag names both places when the repo is not cloned', async () => {
+  const fetchFile: FetchFile = async () => {
+    throw new Error(`no ${PROD_PATH} in Vast-deployments`);
+  };
+  const readAtRef = (): string => {
+    throw new Error('should not be called');
+  };
+  await assert.rejects(() => productionTag(prodRepo(), null, fetchFile, readAtRef), (error: Error) => {
+    assert.match(error.message, /^no .* in Vast-deployments/);
+    assert.match(error.message, /Helm\/values-prod\.yaml/);
+    return true;
+  });
+});
+
+test('productionTag does not fall back on a network or auth failure', async () => {
+  const fetchFile: FetchFile = async () => {
+    throw new Error(`Could not read ${PROD_PATH} from Vast-deployments: gh: connection reset`);
+  };
+  const readAtRef = (): string => {
+    throw new Error('should not be called');
+  };
+  await assert.rejects(() => productionTag(prodRepo(), '/repo', fetchFile, readAtRef), {
+    message: `Could not read ${PROD_PATH} from Vast-deployments: gh: connection reset`,
+  });
 });

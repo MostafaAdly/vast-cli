@@ -75,6 +75,17 @@ vast upgrade --check
   `vast init` if they have it checked out somewhere `vast` has not been shown
   yet. Do not clone it for them without asking — you do not know where they want it.
 
+**Reading `vast status`.** `vast status <repo>` (or `--all`) is read-only and is the
+right way to answer "what is live?". STAGING is the tag in `Vast-deployments`, the image
+ArgoCD is running. PRODUCTION is the same file when it exists there — for most repos it
+does not yet, so the value falls back to the app repo's `Helm/values-prod.yaml` on
+`origin/production` and is marked with `*` plus a footnote. Relay that footnote when you
+quote a production version: it is the pre-migration source, not GitOps. `not migrated`
+means neither could be read, `n/a` that the repo is not deployed there, `?` that the
+lookup failed. If **every** repo's columns read `not migrated` or `?`, the user's GitHub
+account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
+rather than treating it as nine separate failures.
+
 ---
 
 ## 1. Staging release — the default path
@@ -263,6 +274,15 @@ version** — `vast deploy <repo> --target-version <same>`. Do not bump. If it
 fails the same way twice, the problem is in `Vast-deployments` or the shared
 action's permissions, not in this repo; say so instead of retrying a third time.
 
+A retry of a version that is **already live** is watched differently, and you
+should expect it: `vast` snapshots the application before dispatching, and if the
+tag was already running it waits for the app's sync revision to *change* instead
+of accepting the rollout that is already there. That is deliberate — otherwise a
+retry would report the old rollout as a fresh success. The cost is that if the
+rebuild commits nothing new to `Vast-deployments`, there is no new sync to wait
+for and the wait runs to its 10-minute ceiling; the summary says that is what
+happened. Read the summary before deciding a retry failed.
+
 **`timed out after 10m00s`.** The build succeeded and the tag was committed;
 ArgoCD had not reported `Synced/Healthy` within ten minutes. The version is fine
 and a new rc would change nothing — **do not burn one.** The summary line carries
@@ -270,7 +290,20 @@ the ArgoCD application URL; relay it and tell the user to look at the app there,
 where the real cause lives (image pull failures, a crash-looping pod, a stuck
 sync, or simply a slow rollout that will finish on its own). Re-running the
 deploy at the same version is harmless but usually pointless — the tag is already
-committed and ArgoCD is already trying.
+committed and ArgoCD is already trying. On a retry of an already-live version,
+this same timeout may simply mean nothing new was committed, as above — check
+which of the two the summary reports before calling it a failure.
+
+**`argocd unauthorized`.** The stored token expired or was revoked. Nothing was
+built: the token is used to read the application *before* the dispatch, so the
+deploy stops in front of the build. Tell the user to run `vast argocd login`
+themselves — never handle their credentials — then run the deploy again.
+
+**`dispatched, but its run could not be identified`.** The build was triggered but
+`vast` could not match it to a run id and so cannot watch it. Do not re-dispatch.
+Check the repo's Actions page first (`gh run list --repo Vast-menu/<Repo>
+--workflow build-deploy --limit 5`) and report what is actually running; a blind
+re-run starts a second build of the same version.
 
 ---
 
@@ -307,7 +340,10 @@ it, and afterwards relay the reminder to port the fix back to develop/staging); 
 landed on staging → resolved to its landing merge commit; floating off develop/staging →
 refused, and the fix is to land it on staging first. Every pick must already be on staging; `vast` refuses
 otherwise, and refuses picks already on production. The version advances production's
-own tag (`2.2.2 → 2.2.3`), and the deploy after the PR merges must name it:
+own tag (`2.2.2 → 2.2.3`), read from `Vast-deployments` when a production file exists
+there and otherwise from the app repo's `Helm/values-prod.yaml` on `origin/production` —
+`vast` prints which source it used, so relay that line along with the version. The deploy
+after the PR merges must name it:
 
 ```bash
 vast deploy <repo> --to production --target-version <the version promote printed>

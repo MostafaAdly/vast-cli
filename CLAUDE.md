@@ -94,6 +94,13 @@ in `Vast-deployments`:
 - The tag is `deployment.containers[0].image.tag` — the first `tag:` line in the
   file. `extractTag` in `src/utils/helm.ts` still parses it; the reader is
   `src/utils/deployments.ts`.
+- **One pre-migration exception, and it is temporary.** `readTagAtRef` and
+  `PRE_MIGRATION_PRODUCTION_HELM` in `src/utils/helm.ts`, and the `productionTag`
+  fallback in `src/utils/deployments.ts`, read production's tag out of the app
+  repo's `Helm/values-prod.yaml` on `origin/production` when Vast-deployments has
+  no production file yet. They exist only because production is unmigrated:
+  delete all three when `PRODUCTION_PIPELINE_READY` flips. Once Vast-deployments
+  is authoritative, reading a local checkout instead is a quiet lie.
 - The folder basename is also the ArgoCD application name, and it does **not**
   match the repo name: `VastPayPwa → vastpay-pwa`, `VastMenuPwa → pwa`,
   `VastMenuPwaV2 → pwav2`, `VastPay-DashBoard → vastpay-dasaboard` (their typo,

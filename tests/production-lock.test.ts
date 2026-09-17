@@ -18,6 +18,8 @@ const {
   productionPipelineReady,
   PRODUCTION_PIPELINE_READY,
   PRODUCTION_NOT_READY_MESSAGE,
+  PRODUCTION_LOCKED_MESSAGE,
+  productionRefusal,
 } = await import('../src/config/production-lock.js');
 
 test('the lock file lives under VAST_CLI_HOME when set', () => {
@@ -67,6 +69,38 @@ test('the production pipeline is not ready, independently of the file lock', () 
 test('the refusal says what still works and what has to be verified first', () => {
   assert.match(PRODUCTION_NOT_READY_MESSAGE, /promote .*--to production/);
   assert.match(PRODUCTION_NOT_READY_MESSAGE, /pipeline/i);
+});
+
+// One pure gate, so every production path refuses for the same reason in the
+// same order and the reason is testable without spawning a process.
+test('productionRefusal never refuses staging', () => {
+  assert.equal(productionRefusal('staging'), null);
+  assert.equal(productionRefusal('staging', { ready: false, enabled: false }), null);
+});
+
+test('productionRefusal checks the pipeline BEFORE the lock', () => {
+  // Lifting the lock must not get past the pipeline block.
+  assert.equal(productionRefusal('production', { ready: false, enabled: true }), PRODUCTION_NOT_READY_MESSAGE);
+});
+
+test('productionRefusal falls through to the lock once the pipeline is ready', () => {
+  assert.equal(productionRefusal('production', { ready: true, enabled: false }), PRODUCTION_LOCKED_MESSAGE);
+});
+
+test('productionRefusal allows production when ready and unlocked', () => {
+  assert.equal(productionRefusal('production', { ready: true, enabled: true }), null);
+});
+
+test('productionRefusal defaults to the real pipeline and lock state', () => {
+  disableProduction();
+  assert.equal(productionRefusal('production'), PRODUCTION_NOT_READY_MESSAGE);
+  assert.equal(productionRefusal('production', { ready: true }), PRODUCTION_LOCKED_MESSAGE);
+  enableProduction('2026-09-17T10:00:00Z');
+  try {
+    assert.equal(productionRefusal('production', { ready: true }), null);
+  } finally {
+    disableProduction();
+  }
 });
 
 process.on('exit', () => rmSync(SANDBOX, { recursive: true, force: true }));

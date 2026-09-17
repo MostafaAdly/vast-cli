@@ -95,4 +95,23 @@ export const PRODUCTION_NOT_READY_MESSAGE = [
     'inputs and folder names with DevOps, then flipping',
     'PRODUCTION_PIPELINE_READY in src/config/production-lock.ts.',
 ].join('\n');
+/**
+ * The one gate every production path shares.
+ *
+ * Returns the refusal to print, or null when the path may proceed. Order is
+ * load-bearing: the pipeline block is a statement about the world, the file
+ * lock is only a permission, so no lifted lock can get past the block. Both
+ * states are injectable so the ordering is testable without process.exit.
+ */
+export function productionRefusal(env, state) {
+    if (env !== 'production')
+        return null;
+    const ready = state?.ready ?? productionPipelineReady();
+    if (!ready)
+        return PRODUCTION_NOT_READY_MESSAGE;
+    const enabled = state?.enabled ?? isProductionEnabled();
+    if (!enabled)
+        return PRODUCTION_LOCKED_MESSAGE;
+    return null;
+}
 //# sourceMappingURL=production-lock.js.map
