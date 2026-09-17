@@ -79,7 +79,7 @@ missing file throws `no <path> in Vast-deployments`. `status`, `release`, `deplo
 - `waitForRollout(label, app, tag, deps, timing)`: polls `getApplication` until an image ends with
   `:<tag>` AND health `Healthy` AND sync `Synced`. Prints on change and on heartbeat in pollRun's
   shape: `  <label>  argocd <app>  <sync>/<health>  <elapsed>`; the tag-not-yet-seen state prints
-  as `waiting for <tag>`. Ceiling 10 minutes → `{ ok: false, reason: 'timed out' }`.
+  as `waiting for <tag>`. Ceiling 15 minutes → `{ ok: false, reason: 'timed out' }`.
   Unauthorized → `{ ok: false, reason: 'argocd unauthorized — run `vast argocd login`' }`. Other
   read errors count like pollRun (12 consecutive → give up). Fully injectable; tested with a fake
   `getApplication` and a local `http` server for the real client.

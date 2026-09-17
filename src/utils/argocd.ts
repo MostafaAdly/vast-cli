@@ -151,7 +151,7 @@ export interface RolloutTiming {
 export const DEFAULT_ROLLOUT_TIMING: RolloutTiming = {
   pollMs: 5000,
   heartbeatMs: 30000,
-  timeoutMs: 600000,
+  timeoutMs: 900000,
   maxConsecutiveErrors: 12,
 };
 
@@ -211,7 +211,7 @@ export async function waitForRollout(
     } catch (error) {
       // A bad token will never come good by waiting, and every other repo in
       // the release is about to hit the same wall. Stop now and say what fixes
-      // it rather than burning ten minutes per repo.
+      // it rather than burning fifteen minutes per repo.
       if (error instanceof ArgoUnauthorizedError) {
         return {
           ok: false,

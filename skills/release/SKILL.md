@@ -127,7 +127,7 @@ that second half and reports the repo's ArgoCD line as it goes — `waiting for
 **The release is done only when that line reads `Synced/Healthy`.** A green
 workflow means the tag was committed, not that anything is running yet. Do not
 report a release as shipped, and do not go to QC notes, until you have seen
-`Synced/Healthy` with the new version in the summary. The wait has a 10-minute
+`Synced/Healthy` with the new version in the summary. The wait has a 15-minute
 ceiling; a timeout is §4, not a success.
 
 When it does finish clean, go to §3 (QC notes).
@@ -285,11 +285,11 @@ tag was already running it waits for the app's sync revision to *change* instead
 of accepting the rollout that is already there. That is deliberate — otherwise a
 retry would report the old rollout as a fresh success. The cost is that if the
 rebuild commits nothing new to `Vast-deployments`, there is no new sync to wait
-for and the wait runs to its 10-minute ceiling; the summary says that is what
+for and the wait runs to its 15-minute ceiling; the summary says that is what
 happened. Read the summary before deciding a retry failed.
 
-**`timed out after 10m00s`.** The build succeeded and the tag was committed;
-ArgoCD had not reported `Synced/Healthy` within ten minutes. The version is fine
+**`timed out after 15m00s`.** The build succeeded and the tag was committed;
+ArgoCD had not reported `Synced/Healthy` within fifteen minutes. The version is fine
 and a new rc would change nothing — **do not burn one.** The summary line carries
 the ArgoCD application URL; relay it and tell the user to look at the app there,
 where the real cause lives (image pull failures, a crash-looping pod, a stuck

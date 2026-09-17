@@ -110,7 +110,7 @@ in `Vast-deployments`:
   ArgoCD syncs from there, usually within ~3 minutes. There are no bump PRs.
 - A deploy is not done when the workflow goes green — that only means the tag was
   committed. It is done when ArgoCD reports `Synced/Healthy` on an image carrying
-  the tag. Ceiling 10 minutes. Without a stored token the deploy is **not**
+  the tag. Ceiling 15 minutes (a VastPayPwa rollout took 10m20s on 2026-09-17). Without a stored token the deploy is **not**
   refused: it dispatches, skips the ArgoCD wait, and reports `tag committed —
   rollout not confirmed`. An *expired* token still stops it in front of the build,
   because the pre-dispatch read fails.
