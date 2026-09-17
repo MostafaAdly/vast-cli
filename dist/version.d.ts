@@ -4,5 +4,5 @@
  * Written by scripts/sync-version.mjs from package.json, which runs before
  * build and bundle. Change the version with `npm version <level>`.
  */
-export declare const VERSION = "1.8.0";
+export declare const VERSION = "2.0.0";
 //# sourceMappingURL=version.d.ts.map
