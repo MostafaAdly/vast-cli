@@ -68,6 +68,7 @@ export declare function isChannelId(value: string): boolean;
 export declare function channelInfo(token: string, id: string, fetchFn?: FetchFn): Promise<{
     id: string;
     name: string;
+    isDm: boolean;
 } | null>;
 export declare function findChannelId(token: string, name: string, fetchFn?: FetchFn): Promise<string | null>;
 export {};

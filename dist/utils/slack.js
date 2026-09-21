@@ -119,7 +119,9 @@ export async function channelInfo(token, id, fetchFn = fetch) {
         const body = await call(`${API}/conversations.info?${new URLSearchParams({ channel: id }).toString()}`, { headers: authHeader(token) }, fetchFn);
         if (!body.channel?.id)
             return null;
-        return { id: body.channel.id, name: body.channel.name ?? id };
+        // A direct message has no name of its own; say what it is instead.
+        const isDm = body.channel.is_im === true;
+        return { id: body.channel.id, name: isDm ? 'direct message' : (body.channel.name ?? id), isDm };
     }
     catch (error) {
         if (error instanceof SlackError && error.message === 'channel_not_found')

@@ -154,7 +154,8 @@ in `Vast-deployments`:
   Keep it under `VAST_CLI_HOME` in tests like every other config path. Never ask
   for or log the token.
 - Scopes the Slack app needs: `chat:write`, `users:read`, `users:read.email`,
-  `channels:read`, `groups:read`, `channels:join`. The bot must be in the channel;
+  `channels:read`, `groups:read`, `channels:join`, plus `im:read`/`im:write` only for a
+  direct-message target (a `D…` id). The bot must be in the channel;
   setup joins public ones itself and cannot join a private one.
 - The ClickUp workspace id is a constant — tickets link to
   `https://app.clickup.com/t/90121402342/<id>`. Do not inline it a second time.
