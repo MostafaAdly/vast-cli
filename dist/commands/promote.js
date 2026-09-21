@@ -18,10 +18,15 @@ import { getRepo } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
 import { isClean, fetch as gitFetch, aheadBehind, trialMerge, mergeAndPush, syncLocalBranch, } from '../utils/git.js';
 import { deployedTag, productionTag } from '../utils/deployments.js';
-import { cutReleaseBranch, cutPickedBranch, RELEASE_KINDS } from '../utils/release-branch.js';
+import { cutReleaseBranch, cutPickedBranch, releaseBranchName, RELEASE_KINDS, } from '../utils/release-branch.js';
 import { resolvePicks } from '../utils/picks.js';
 import { nextPatch, stripRc } from '../utils/version.js';
 import { ORG } from '../utils/remote.js';
+import { commitSubjects } from '../utils/changelog.js';
+import { prNumbersInRange, prNumbersOfPicks, shippedPrs, resolveMentions } from '../utils/shipped.js';
+import { readSlackToken, readSlackChannel, slackUserOverride } from '../config/slack.js';
+import { lookupUserByEmail, postMessage } from '../utils/slack.js';
+import { buildReleaseMessage } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 /**
  * Fast-forward the local branches this promotion reads, and say what came in.
@@ -46,6 +51,71 @@ function syncBranches(repo, dir, to) {
         }
     }
 }
+const defaultAnnounceDeps = {
+    readSlackToken,
+    readSlackChannel,
+    slackUserOverride,
+    lookupUserByEmail: (token, email) => lookupUserByEmail(token, email),
+    postMessage: (token, channel, text) => postMessage(token, channel, text),
+    shippedPrs: (repo, numbers) => shippedPrs(repo, numbers),
+    buildReleaseMessage,
+};
+/**
+ * Tell the team a release PR is open.
+ *
+ * Runs only AFTER the PR exists, and never fails the promotion: by this point
+ * the branch is pushed and the PR is open, so a missing token or an unreachable
+ * Slack costs the announcement and nothing else. Every path that cannot post
+ * prints the message instead, so the operator can paste it by hand.
+ */
+export async function announceRelease(repo, dir, kind, version, url, opts, deps = defaultAnnounceDeps) {
+    const branch = releaseBranchName(kind, version);
+    const picks = opts.picks ?? [];
+    // On a dry run the branch was never cut, so the closest honest stand-in for
+    // what it would carry is staging itself.
+    const head = opts.dryRun ? 'origin/staging' : branch;
+    const numbers = picks.length > 0 ? prNumbersOfPicks(picks) : prNumbersInRange(dir, 'origin/production', head);
+    const prs = await deps.shippedPrs(repo.name, numbers);
+    // Commit subjects back the message up when a PR could not be read — or when
+    // the work landed without going through a PR at all.
+    const fallbackSubjects = commitSubjects(dir, 'origin/production', head);
+    const mentions = await resolveMentions(prs, {
+        token: deps.readSlackToken(),
+        lookup: deps.lookupUserByEmail,
+        override: deps.slackUserOverride,
+    });
+    const text = deps.buildReleaseMessage({
+        displayName: repo.displayName,
+        branch,
+        // No PR exists on a dry run; the repo's PR list is the nearest real link.
+        prUrl: url ?? `https://github.com/${ORG}/${repo.name}/pulls`,
+        prs,
+        fallbackSubjects,
+        mentions,
+    });
+    if (opts.dryRun) {
+        console.log(createHeader('Slack message (dry run)', `${repo.displayName} | ${branch}`));
+        console.log(text);
+        return;
+    }
+    const token = deps.readSlackToken();
+    const channel = deps.readSlackChannel();
+    if (!token || !channel) {
+        console.log(text);
+        log.warn('Slack not configured — run vast slack setup');
+        return;
+    }
+    try {
+        await deps.postMessage(token, channel, text);
+        log.success(`announced in ${channel}`);
+    }
+    catch (error) {
+        // Deliberately not a failure: the release PR is already open, and the
+        // operator now has the exact text to post by hand.
+        log.error(`could not announce in Slack: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(text);
+    }
+}
 /**
  * @returns true when the promotion completed (or would have, under dryRun).
  *
@@ -53,7 +123,7 @@ function syncBranches(repo, dir, to) {
  * read over the API from Vast-deployments — or, while production is not
  * migrated, from the app repo's own Helm on `origin/production`.
  */
-export async function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, bodyMode = 'changelog', pickRefs = []) {
+export async function promote(repo, dir, to, dryRun, kind = 'release', targetVersion, bodyMode = 'changelog', pickRefs = [], slack = false) {
     // Deliberately NOT gated on the production lock. Cutting a branch and opening
     // a PR ships nothing; the lock guards the deploy that follows the merge.
     if (!existsSync(join(dir, '.git'))) {
@@ -123,6 +193,10 @@ export async function promote(repo, dir, to, dryRun, kind = 'release', targetVer
                 .join(' + ');
             log.info(`${repo.name}: ${what} → production, ${kind} ${version}${versionNote}`);
             const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
+            // A dry run never returns a URL, but it still has a message to show.
+            if (slack && (url !== null || dryRun)) {
+                await announceRelease(repo, dir, kind, version, url, { dryRun, picks });
+            }
             if (url !== null) {
                 // Deliberately not a `vast deploy` hint any more: production has not
                 // moved to the new pipeline, so that command would only refuse.
@@ -154,7 +228,11 @@ export async function promote(repo, dir, to, dryRun, kind = 'release', targetVer
             }
         }
         log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-        return cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode) !== null || dryRun;
+        const url = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
+        if (slack && (url !== null || dryRun)) {
+            await announceRelease(repo, dir, kind, version, url, { dryRun });
+        }
+        return url !== null || dryRun;
     }
     const from = repo.promoteFrom.staging;
     if (!from) {
@@ -202,6 +280,12 @@ async function executePromote(repoName, options) {
         log.error('--pick is production-only. Staging always promotes all of develop.');
         process.exit(1);
     }
+    // There is nothing to announce about a staging promotion: it opens no PR,
+    // and staging moves many times a day.
+    if (options.slack && options.to !== 'production') {
+        log.error('--slack is production-only. A staging promotion opens no release PR to announce.');
+        process.exit(1);
+    }
     // A selective promotion is definitionally a hotfix, so --pick flips the
     // default; --as still overrides either way.
     const kind = options.as ?? (options.pick?.length ? 'hotfix' : 'release');
@@ -219,7 +303,7 @@ async function executePromote(repoName, options) {
         console.log(createErrorBox(`${repo.name} is not cloned`, 'Run `vast init`, or clone it with `vast clone`.'));
         process.exit(1);
     }
-    const ok = await promote(repo, dir, options.to, options.dryRun, kind, options.targetVersion, bodyMode, options.pick ?? []);
+    const ok = await promote(repo, dir, options.to, options.dryRun, kind, options.targetVersion, bodyMode, options.pick ?? [], options.slack ?? false);
     if (!ok)
         process.exit(1);
 }
@@ -234,6 +318,7 @@ export function registerPromoteCommand(program) {
         .option('-v, --target-version <version>', 'Override the derived release version')
         .option('--no-changelog', 'Open the PR with a bare description, no change summary')
         .option('-s, --summarize', 'Describe the diff with a small local model instead of commits')
+        .option('--slack', 'Announce the release PR in Slack')
         .addOption(new Option('--llm').hideHelp())
         .option('--dir <path>', 'Override the local checkout path')
         .option('-n, --dry-run', 'Report what would happen without merging', false)
@@ -244,6 +329,23 @@ Examples:
   $ vast promote VastPayPwa --to production             cut release/X.Y.Z + PR
   $ vast promote VastPayPwa --to production --as hotfix cut hotfix/X.Y.Z + PR
   $ vast promote VastPayPwa --to production --no-changelog   bare PR description
+  $ vast promote VastPayPwa --to production --slack     cut the PR, announce it
+  $ vast promote VastPayPwa --to production --slack -n  print the message only
+
+Slack announcement (--slack, production only):
+  Runs after the release PR is open and names what shipped: each PR, its
+  author, and any ClickUp ticket the branch carried. Authors are @-mentioned
+  when their commit email matches a Slack account; anyone it cannot match is
+  named in plain text instead.
+
+  It never fails the promotion. With no token or channel configured, and if
+  Slack refuses the post, the message is printed for you to paste by hand and
+  the promotion still succeeds — the PR is already open by then.
+
+  With --dry-run nothing is sent: the message is printed as it would read,
+  built from origin/production..origin/staging, since no branch exists yet.
+
+  Configure it with \`vast slack setup\`.
 
 PR description (production only):
   default          bullets from the commit subjects being promoted, grouped

@@ -399,6 +399,29 @@ vast deploy <repo> --to production --target-version <the version promote printed
 pick conflicts, `vast` aborts everything and names the failing commit; treat that as §2
 conflict resolution, except the fix belongs on staging, not on the hotfix branch.
 
+**Announcing it in Slack.** When the user asks for the release to be announced — "tell
+the team", "post it in Slack", "announce this" — add `--slack` to the same promote
+command. Do not post anything yourself:
+
+```bash
+vast promote <repo> --to production --slack
+```
+
+It posts one message to the team's configured channel after the PR opens, naming the
+repo and branch, the PRs being shipped, their authors and any ClickUp tickets. Relay the
+message `vast` printed, exactly as it printed it, so the user can see what the channel
+saw. `--dry-run --slack` prints the message without sending it — use that when the user
+wants to check the wording first.
+
+If Slack is not configured, `vast` says `Slack not configured — run vast slack setup`.
+Tell the user to run it themselves. **Never run `vast slack setup` for them, and never
+ask for, type, or store a Slack bot token** — the same rule as ArgoCD credentials.
+
+A Slack failure is never a release failure. The PR is already open and `vast` exits 0,
+printing both the message and the error. Say plainly that the release PR is open and
+only the announcement did not go out, relay the message so they can paste it by hand,
+and do not re-run the promote to "fix" it — that would cut the branch again.
+
 Preparing the PR is never blocked — it ships nothing. Report the PR URL and
 **stop**. Do not merge it, do not offer to merge it, and do not run the deploy.
 Tell the user the deploy is `vast deploy <repo> --to production` once production

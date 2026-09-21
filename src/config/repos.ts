@@ -32,6 +32,14 @@ export interface RepoConfig {
   /** Canonical GitHub repo name. */
   name: string;
   /**
+   * The name a human reads — used in the Slack release announcement, where the
+   * audience is the whole team rather than anyone who works in the repo.
+   * Declared, not derived: "VastPay-DashBoard" de-camel-cased is not what
+   * anybody calls it, and the release message is the one place the GitHub
+   * spelling would look wrong.
+   */
+  displayName: string;
+  /**
    * GitHub Actions workflow that builds the image and commits the tag into
    * Vast-deployments, per env. null means the repo cannot be deployed there.
    */
@@ -82,11 +90,13 @@ const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' } as cons
 /** Frontend repo: develop -> staging -> production. */
 const fe = (
   name: string,
+  displayName: string,
   stagingFolder: string,
   teams: string[] = ['frontend'],
   releaseTeam: ReleaseTeam | null = 'frontend',
 ): RepoConfig => ({
   name,
+  displayName,
   workflow: { ...BUILD_DEPLOY },
   deployments: deployments(name, stagingFolder),
   promoteFrom: { ...FRONTEND_PROMOTION },
@@ -95,15 +105,15 @@ const fe = (
 });
 
 export const REPOS: RepoConfig[] = [
-  fe('VastPayPwaV2', 'vastpay-pwa-v2'),
-  fe('VastPay-DashBoard', 'vastpay-dasaboard'),
-  fe('VastMenuPwa', 'pwa'),
-  fe('VastMenuPwaV2', 'pwav2'),
-  fe('VastPayPwa', 'vastpay-pwa'),
-  fe('VastMenu-DashBoard', 'vastmenu-dashboard'),
+  fe('VastPayPwaV2', 'Vastpay Pwa V2', 'vastpay-pwa-v2'),
+  fe('VastPay-DashBoard', 'Vastpay Dashboard', 'vastpay-dasaboard'),
+  fe('VastMenuPwa', 'Vastmenu Pwa', 'pwa'),
+  fe('VastMenuPwaV2', 'Vastmenu Pwa V2', 'pwav2'),
+  fe('VastPayPwa', 'Vastpay Pwa', 'vastpay-pwa'),
+  fe('VastMenu-DashBoard', 'Vastmenu Dashboard', 'vastmenu-dashboard'),
   // Cloned with the frontend but deliberately out of the frontend release
   // train — it ships on its own cadence and is released by name only.
-  fe('vast-menu-payments', 'vastmenu-payments', ['frontend'], null),
+  fe('vast-menu-payments', 'Vastmenu Payments', 'vastmenu-payments', ['frontend'], null),
 
   // Vast-Finance has no deployments folder and no build-deploy workflow — only
   // review bots (Claude PR Review, Copilot, CodeQL). Verified via the GitHub
@@ -111,6 +121,7 @@ export const REPOS: RepoConfig[] = [
   // release path skips it with a reason rather than pretending it can ship.
   {
     name: 'Vast-Finance',
+    displayName: 'Vast Finance',
     workflow: { ...NO_DEPLOY },
     deployments: { ...NO_DEPLOY },
     promoteFrom: { ...FRONTEND_PROMOTION },
@@ -122,6 +133,7 @@ export const REPOS: RepoConfig[] = [
   // target `staging` directly.
   {
     name: 'VastPay-BackEnd',
+    displayName: 'Vastpay Backend',
     workflow: { ...BUILD_DEPLOY },
     deployments: deployments('VastPay-BackEnd', 'vastpay-backend'),
     promoteFrom: { staging: null, production: 'staging' },
@@ -130,6 +142,7 @@ export const REPOS: RepoConfig[] = [
   },
   {
     name: 'VastMenu-BackEnd',
+    displayName: 'Vastmenu Backend',
     workflow: { ...BUILD_DEPLOY },
     deployments: deployments('VastMenu-BackEnd', 'vastmenu-backend'),
     promoteFrom: { staging: null, production: 'staging' },
@@ -141,6 +154,7 @@ export const REPOS: RepoConfig[] = [
   // isReleasable() keeps them out of status, promote, and deploy.
   {
     name: 'vastpay-payment-odoo',
+    displayName: 'Vastpay Payment Odoo',
     workflow: { ...NO_DEPLOY },
     deployments: { ...NO_DEPLOY },
     promoteFrom: { staging: null, production: null },
@@ -149,6 +163,7 @@ export const REPOS: RepoConfig[] = [
   },
   {
     name: 'Terraform',
+    displayName: 'Terraform',
     workflow: { ...NO_DEPLOY },
     deployments: { ...NO_DEPLOY },
     promoteFrom: { staging: null, production: null },

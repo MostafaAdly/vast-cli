@@ -244,3 +244,40 @@ test('every repo in a release train is releasable', () => {
 test('RELEASE_TEAMS lists the sweep flags', () => {
   assert.deepEqual(RELEASE_TEAMS, ['frontend', 'backend']);
 });
+
+// The Slack announcement addresses a human audience, so it uses a human name
+// rather than the GitHub spelling. The names are declared, not derived: the
+// dashboards' canonical spellings ("VastPay-DashBoard") would produce
+// something nobody calls them.
+test('every repo carries a non-empty human display name', () => {
+  for (const r of REPOS) {
+    assert.equal(typeof r.displayName, 'string', `${r.name} is missing displayName`);
+    assert.ok(r.displayName.trim().length > 0, `${r.name} has an empty displayName`);
+  }
+});
+
+test('the dashboard display names are the human ones, not the repo spellings', () => {
+  assert.equal(getRepo('VastPay-DashBoard')?.displayName, 'Vastpay Dashboard');
+  assert.equal(getRepo('VastMenu-DashBoard')?.displayName, 'Vastmenu Dashboard');
+});
+
+test('every display name is the one the team uses in Slack', () => {
+  const expected: Record<string, string> = {
+    VastPayPwa: 'Vastpay Pwa',
+    VastPayPwaV2: 'Vastpay Pwa V2',
+    'VastPay-DashBoard': 'Vastpay Dashboard',
+    VastMenuPwa: 'Vastmenu Pwa',
+    VastMenuPwaV2: 'Vastmenu Pwa V2',
+    'VastMenu-DashBoard': 'Vastmenu Dashboard',
+    'vast-menu-payments': 'Vastmenu Payments',
+    'Vast-Finance': 'Vast Finance',
+    'VastPay-BackEnd': 'Vastpay Backend',
+    'VastMenu-BackEnd': 'Vastmenu Backend',
+    'vastpay-payment-odoo': 'Vastpay Payment Odoo',
+    Terraform: 'Terraform',
+  };
+  assert.equal(Object.keys(expected).length, REPOS.length);
+  for (const [name, displayName] of Object.entries(expected)) {
+    assert.equal(getRepo(name)?.displayName, displayName, `${name} display name`);
+  }
+});
