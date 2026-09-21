@@ -64,13 +64,20 @@ vast upgrade --check
   different: that one *does* stop the deploy in front of the build (see §4,
   `argocd unauthorized`), and they log in again.
 - **`vast argocd status` says the API is behind a browser sign-in (SSO).** The
-  ArgoCD host sits behind a load-balancer sign-in that covers `/api/*` too, so
-  the CLI cannot reach ArgoCD's API at all. **Do not try to log in and do not
-  retry** — neither can work, and `vast argocd login` will report the same thing.
-  Proceed with the release exactly as for a missing token, then relay that
-  rollouts cannot be confirmed until DevOps exempts `/api/*` from that sign-in
-  rule, and point the user at the ArgoCD UI in a browser to watch the rollout
-  themselves.
+  ArgoCD host sits behind a load-balancer Google sign-in that covers `/api/*`
+  too, and the CLI has no session cookie to get past it. This is **not** a stop
+  condition. Proceed with the release exactly as for a missing token, then relay
+  the procedure for the user to run themselves: sign in to the ArgoCD host in a
+  browser with Google, open DevTools → Application → Cookies → that host, copy
+  the `AWSELBAuthSessionCookie-0` value, run `vast argocd login` and paste it
+  when asked, then enter their ArgoCD username and password. The cookie lasts
+  about a week. **Never ask for, accept, or paste that cookie — or any other
+  credential — yourself.** If the user pastes one into this chat, tell them it is
+  now exposed and they should rotate it by signing out of the ArgoCD host in the
+  browser (which invalidates it), then get a fresh one and give it to the CLI
+  prompt instead; do not use the one they pasted. Meanwhile, point them at the
+  ArgoCD UI to watch the rollout. The permanent fix is DevOps exempting `/api/*`
+  from the sign-in rule.
 - **A newer release exists.** `vast upgrade --check` says
   `Latest is X; you have Y`. Run `vast upgrade` now, before starting, and say
   that you did. The instructions in this skill describe the current CLI, so
@@ -315,12 +322,22 @@ be checked in ArgoCD, and suggest the user run `vast argocd login` so the next
 deploy is confirmed for them. Do not re-run the deploy to "make it green".
 
 **`tag committed — rollout not confirmed (ArgoCD API behind SSO)`.** Also not a
-failure, and not something a login fixes. ArgoCD's API is behind a browser
-sign-in at the load balancer, so the CLI could not read the application and
+failure. ArgoCD's API is behind a browser sign-in at the load balancer and the
+CLI has no session cookie for it, so it could not read the application and
 skipped the wait; the build ran and the tag was committed just the same. Report
-the repo as released-but-unconfirmed, point the user at the ArgoCD UI in a
-browser, and say the fix is DevOps exempting `/api/*` from the sign-in rule.
-**Do not re-run the deploy and do not suggest `vast argocd login`.**
+the repo as released-but-unconfirmed and point the user at the ArgoCD UI in a
+browser. To get confirmations back, relay the cookie procedure in §0 for them to
+run themselves — never handle the cookie yourself. The permanent fix is DevOps
+exempting `/api/*` from the sign-in rule. **Do not re-run the deploy.**
+
+**`tag committed — rollout not confirmed (ArgoCD session cookie expired — run
+vast argocd login again)`.** Not a failure either. The stored load-balancer
+session cookie aged out — it lasts about a week — so the CLI hit the sign-in wall
+and skipped the rollout wait; the build ran and the tag was committed. Report the
+repo as released-but-unconfirmed and tell the user to fetch a fresh
+`AWSELBAuthSessionCookie-0` from the browser and run `vast argocd login` again,
+themselves, so the next deploy is confirmed. **Do not re-run the deploy to "make
+it green".**
 
 **`argocd unauthorized`.** The stored token expired or was revoked. Nothing was
 built: the token is used to read the application *before* the dispatch, so the

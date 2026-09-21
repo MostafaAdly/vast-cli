@@ -521,3 +521,44 @@ test('an SSO wall during the wait stops at once instead of retrying twelve times
   assert.equal(result.elapsedMs, 0, 'nothing may be retried');
   assert.deepEqual(h.lines, [], 'and nothing may be printed as a retry');
 });
+
+// --- the ALB session cookie rides on every request when the user supplied one ---
+test('every ArgoCD call carries the cookie header when a cookie is given', async () => {
+  const { login, userinfo, getApplication, refreshApplication } = await import('../src/utils/argocd.js');
+  const seen: Array<string | null> = [];
+  const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+    seen.push((init?.headers as Record<string, string>)?.cookie ?? null);
+    const body = String(url).includes('/session/userinfo')
+      ? '{"loggedIn":true,"username":"admin"}'
+      : String(url).includes('/session')
+        ? '{"token":"t"}'
+        : '{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}';
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const cookie = 'AWSELBAuthSessionCookie-0=part0';
+  await login('https://argo.example', 'admin', 'pw', fetchFn, cookie);
+  await userinfo('https://argo.example', 't', fetchFn, cookie);
+  await getApplication('https://argo.example', 't', 'app', fetchFn, cookie);
+  await refreshApplication('https://argo.example', 't', 'app', fetchFn, cookie);
+  assert.deepEqual(seen, [cookie, cookie, cookie, cookie]);
+});
+
+test('no cookie header is sent when none is given', async () => {
+  const { getApplication } = await import('../src/utils/argocd.js');
+  let cookieHeader: string | undefined = 'unset';
+  const fetchFn = (async (_url: string | URL | Request, init?: RequestInit) => {
+    cookieHeader = (init?.headers as Record<string, string>)?.cookie;
+    return new Response('{"status":{}}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  await getApplication('https://argo.example', 't', 'app', fetchFn, null);
+  assert.equal(cookieHeader, undefined);
+});
+
+test('the wall message tells the user how to get past it and who fixes it for good', async () => {
+  const { getApplication, ArgoSsoWallError } = await import('../src/utils/argocd.js');
+  const fetchFn = (async () => new Response('', { status: 302, headers: { location: 'https://accounts.google.com/x' } })) as typeof fetch;
+  await assert.rejects(
+    () => getApplication('https://argo.example', 't', 'app', fetchFn),
+    (e: Error) => e instanceof ArgoSsoWallError && /vast argocd login/.test(e.message) && /exempt \/api\/\*/.test(e.message),
+  );
+});

@@ -133,11 +133,14 @@ and delete the checkout.
 - **[GitHub CLI](https://cli.github.com/) (`gh`), authenticated.** Check with
   `gh auth status`. Every command talks to GitHub through `gh`; nothing works without it.
 - Access to the Vast-menu organisation
-- **An ArgoCD staging account**, one `vast argocd login` on this machine, and an ArgoCD
-  API the CLI can actually reach. Deploys wait for ArgoCD to confirm the new tag is live.
-  Without a token — or when the ArgoCD host sits behind a browser sign-in that also covers
-  its API — `vast release` and `vast deploy` still run, but they cannot confirm the
-  rollout and say so in the summary. Check with `vast argocd status`.
+- **An ArgoCD staging account** and one `vast argocd login` on this machine. Deploys wait
+  for ArgoCD to confirm the new tag is live. The staging ArgoCD host sits behind a
+  load-balancer Google sign-in, so `vast argocd login` also asks you to paste the
+  `AWSELBAuthSessionCookie-0` cookie from a browser that has already signed in — see
+  [When ArgoCD sits behind a browser sign-in](#when-argocd-sits-behind-a-browser-sign-in).
+  Without a token or without that cookie, `vast release` and `vast deploy` still run, but
+  they cannot confirm the rollout and say so in the summary. Check with
+  `vast argocd status`.
 
 ## Commands
 
@@ -187,9 +190,12 @@ Confirmation needs the ArgoCD API to be reachable by the CLI — a stored token 
 is not enough. When it is not, the deploy still runs: the image is built and the tag is
 committed, the ArgoCD wait is skipped, and the summary says so instead of claiming the
 version is live. Without a token that reads `tag committed — rollout not confirmed (no
-ArgoCD token)`, and `vast argocd login` fixes it. When the ArgoCD host is behind a browser
-sign-in that also covers `/api/*` it reads `tag committed — rollout not confirmed (ArgoCD
-API behind SSO)`, and logging in cannot fix it — see Troubleshooting.
+ArgoCD token)`, and `vast argocd login` fixes it. The staging ArgoCD host also sits behind
+a load-balancer Google sign-in, so `vast argocd login` asks for the browser session cookie
+alongside your ArgoCD password; when that cookie expires the summary reads `tag committed
+— rollout not confirmed (ArgoCD session cookie expired — run vast argocd login again)` and
+you log in once more — see
+[When ArgoCD sits behind a browser sign-in](#when-argocd-sits-behind-a-browser-sign-in).
 
 Every promotion fetches first, then fast-forwards your local branches to match, reporting
 what it pulled:
@@ -460,16 +466,19 @@ Everything lives in `~/.vast-cli/`:
 | File | Purpose |
 |---|---|
 | `config.json` | Repo→path map and the roots discovery learned from |
-| `argocd/<env>.json` | Your ArgoCD session token for that environment, written mode `0600` |
+| `argocd/<env>.json` | Your ArgoCD session token for that environment, plus the load-balancer session cookie that gets the CLI past the browser sign-in, written mode `0600` |
 | `production-enabled` | The production lock. Its presence is the only thing permitting a production deploy |
 | `version` | The installed release tag |
 | `update-check.json` | Cached result of the daily release check |
 
 `argocd/staging.json` holds a **session token**, never your password — `vast argocd login`
-exchanges the password for a token and forgets the password. `vast argocd status` reports
-whether a token is stored and whether ArgoCD still accepts it; it never prints the token.
-`vast argocd logout` deletes the file. For CI or a throwaway shell, set
-`VAST_ARGOCD_TOKEN_STAGING` and it wins over the file, with nothing written to disk.
+exchanges the password for a token and forgets the password. Alongside it sits the
+load-balancer session cookie you pasted, which the CLI sends on every ArgoCD request.
+`vast argocd status` reports whether a token is stored and whether ArgoCD still accepts it,
+and whether a cookie is stored — `Cookie: present (saved <date>)` or `Cookie: none`. It
+never prints either value. `vast argocd logout` deletes the file, clearing both. For CI or
+a throwaway shell, set `VAST_ARGOCD_TOKEN_STAGING` and `VAST_ARGOCD_ALB_COOKIE_STAGING`
+and they win over the file, with nothing written to disk.
 
 Every `vast init` searches the default locations, your saved roots, and your current
 directory — so a repo cloned into a normal place is always picked up, with no flag.
@@ -481,6 +490,26 @@ you have reorganised and old locations no longer matter.
 
 If a repo has more than one checkout, `init` asks which to use and remembers the answer.
 Later runs keep that choice rather than re-picking, even when they find the other copy.
+
+### When ArgoCD sits behind a browser sign-in
+
+`argocd-stg.vastmenu.com` is behind an AWS load balancer that demands a Google sign-in on
+every path, `/api/*` and `/login` included. A browser that has signed in once holds a
+cookie that gets past it; the CLI cannot obtain that cookie itself, so you hand it over
+once and it reuses it:
+
+1. Open `https://argocd-stg.vastmenu.com` in your browser and sign in with Google.
+2. Open DevTools → Application → Cookies → the ArgoCD host.
+3. Copy the value of `AWSELBAuthSessionCookie-0`.
+4. Run `vast argocd login`. It notices the sign-in wall and asks for the cookie first —
+   paste it (the input is hidden, and a whole `Cookie:` header line works too; only the
+   `AWSELBAuthSessionCookie*` pairs are kept). Then enter your ArgoCD username and password
+   as usual.
+
+The cookie is stored next to your token in `~/.vast-cli/argocd/staging.json`, mode `0600`,
+and lasts about a week. When it expires, deploys stop confirming rollouts and the CLI asks
+you for a fresh one — repeat the four steps. The permanent fix is DevOps': exempt `/api/*`
+from the sign-in rule, and the cookie step disappears.
 
 ---
 
@@ -497,7 +526,8 @@ Later runs keep that choice rather than re-picking, even when they find the othe
 | `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
 | `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
 | `tag committed — rollout not confirmed (no ArgoCD token)` | The build ran and the tag was committed, but you have never logged in on this machine (or you logged out), so the CLI could not watch ArgoCD. The rollout is almost certainly happening — check the app in ArgoCD, or run `vast argocd login` so the next deploy is confirmed for you. |
-| `ArgoCD's API is behind a browser sign-in (SSO)` / `tag committed — rollout not confirmed (ArgoCD API behind SSO)` | The ArgoCD host sits behind a load-balancer Google sign-in that covers every path, including `/api/*`, so the CLI cannot reach ArgoCD's API at all: `vast argocd login` cannot log in and a stored token cannot be used. **Deploys still work** — the build runs and the tag is committed; only the rollout confirmation is skipped. Watch the rollout in the ArgoCD UI in a browser. The fix is DevOps': exempt `/api/*` from the sign-in rule (ArgoCD's own login still protects the API), or give the CLI another API route. Logging in again will not help, and neither will re-running the deploy. |
+| `ArgoCD's API is behind a browser sign-in (SSO)` / `tag committed — rollout not confirmed (ArgoCD API behind SSO)` | The ArgoCD host sits behind a load-balancer Google sign-in that covers every path, including `/api/*`, and the CLI has no session cookie to get past it. Sign in to `https://argocd-stg.vastmenu.com` in your browser, copy the `AWSELBAuthSessionCookie-0` value from DevTools → Application → Cookies, and run `vast argocd login` — it asks for the cookie, then for your ArgoCD username and password. Full steps: [When ArgoCD sits behind a browser sign-in](#when-argocd-sits-behind-a-browser-sign-in). **Deploys still work** meanwhile — the build runs and the tag is committed; only the rollout confirmation is skipped, and you can watch it in the ArgoCD UI. The permanent fix is DevOps': exempt `/api/*` from the sign-in rule (ArgoCD's own login still protects the API), and the cookie step goes away. |
+| `tag committed — rollout not confirmed (ArgoCD session cookie expired — run vast argocd login again)` | Your load-balancer session cookie has aged out — it lasts about a week — so the CLI hit the sign-in wall again and skipped the rollout wait. Nothing failed: the build ran and the tag was committed. Grab a fresh cookie from the browser and run `vast argocd login` again, and the next deploy is confirmed for you. Do not re-run the deploy to "make it green". |
 | `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
 | `timed out after 15m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 15 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
 | `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 15 minutes if the rebuild produces no new commit. |

@@ -122,13 +122,21 @@ in `Vast-deployments`:
   rollout not confirmed`. An *expired* token still stops it in front of the build,
   because the pre-dispatch read fails.
 - **Since 2026-09-21 the staging ArgoCD host sits behind an ALB Google sign-in
-  (`authenticate-oidc`, vastgroupsa.com) that also covers `/api/*`**, so the CLI
-  cannot reach ArgoCD's API at all — login and stored tokens are both useless.
-  The CLI detects it (`ArgoSsoWallError`) and degrades exactly like the no-token
-  case: dispatch, tag committed, wait skipped, `tag committed — rollout not
-  confirmed (ArgoCD API behind SSO)`. Do not "fix" this by scraping cookies or
-  embedding a browser flow. The fix is DevOps exempting `/api/*` from the
-  sign-in rule (ArgoCD's own login still protects it).
+  (`authenticate-oidc`, vastgroupsa.com) that also covers `/api/*`**, so without a
+  way past the wall the CLI cannot reach ArgoCD's API at all. The CLI detects it
+  (`ArgoSsoWallError`) and degrades exactly like the no-token case: dispatch, tag
+  committed, wait skipped, `tag committed — rollout not confirmed (ArgoCD API
+  behind SSO)`.
+- **The way past the wall is a cookie the user pastes, and nothing more.**
+  `vast argocd login` asks for the ALB session cookie the user copies out of a
+  signed-in browser; only `AWSELBAuthSessionCookie*` pairs are kept from what they
+  paste, it is stored 0600 beside the token, sent on every ArgoCD request, and
+  overridable with `VAST_ARGOCD_ALB_COOKIE_<ENV>`. It never goes through argv and
+  is never logged. **Never read a browser's cookie jar and never automate the
+  Google flow.** The cookie lasts about a week; when it expires the CLI hits the
+  wall again and says `ArgoCD session cookie expired — run vast argocd login
+  again`. The permanent fix is still DevOps exempting `/api/*` from the sign-in
+  rule (ArgoCD's own login still protects it).
 - `vast argocd login` stores a session token in `~/.vast-cli/argocd/<env>.json`,
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.
