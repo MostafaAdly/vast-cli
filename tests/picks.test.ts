@@ -164,12 +164,21 @@ test('a link to the wrong repo is refused before any git work', () => {
   }
 });
 
+// A bare number is a PR number by design (README: "a SHA needs a letter"), so
+// a short SHA in a test must be cut where it still carries a letter. An 8-char
+// prefix is all digits about once in forty fixtures, and that run used to
+// reach out to gh for "PR 59039832" and fail — the suite's one flake.
+function shortShaWithLetter(sha: string): string {
+  const letter = sha.search(/[a-f]/);
+  return sha.slice(0, Math.max(8, letter + 1));
+}
+
 test('duplicate refs collapse to one pick', () => {
   const f = fixture();
   try {
     const { picks, errors } = resolvePicks(f.dir, 'Vast-menu', 'X', [
       f.shas.onStaging,
-      f.shas.onStaging.slice(0, 8),
+      shortShaWithLetter(f.shas.onStaging),
     ]);
     assert.deepEqual(errors, []);
     assert.equal(picks.length, 1);
