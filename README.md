@@ -431,7 +431,8 @@ vast slack logout   # forget both
 name like `#releases` or an id like `C0123ABCDEF`, both are stored, and posts go to the id
 so a rename never breaks it), and for a public channel tries to join it itself. For a private channel you invite the bot yourself.
 The Slack app needs the scopes `chat:write`, `users:read`, `users:read.email`,
-`channels:read`, `groups:read` and `channels:join`, and the bot has to be a member of the
+`channels:read`, `groups:read` and `channels:join` (plus `im:read` and `im:write` if the
+target is a direct message with the bot, a `D…` id), and the bot has to be a member of the
 channel it posts to.
 
 For CI or a throwaway shell, `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` override the

@@ -208,7 +208,7 @@ test('channelInfo resolves an id to its name through conversations.info', async 
       headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
-  assert.deepEqual(await channelInfo('tok', 'C0123ABCDEF', fetchFn), { id: 'C0123ABCDEF', name: 'releases' });
+  assert.deepEqual(await channelInfo('tok', 'C0123ABCDEF', fetchFn), { id: 'C0123ABCDEF', name: 'releases', isDm: false });
   assert.match(urls[0], /conversations\.info\?channel=C0123ABCDEF$/);
 });
 
@@ -218,4 +218,30 @@ test('channelInfo answers null for an unknown id and raises for anything else', 
   assert.equal(await channelInfo('tok', 'C0123ABCDEF', notFound), null);
   const scope = (async () => new Response(JSON.stringify({ ok: false, error: 'missing_scope' }), { status: 200 })) as typeof fetch;
   await assert.rejects(() => channelInfo('tok', 'C0123ABCDEF', scope), SlackError);
+});
+
+// A D… id is a direct message. It has no name, and the bot cannot "join" it;
+// setup has to know which kind it got.
+test('channelInfo marks a direct message and gives it a readable name', async () => {
+  const { channelInfo } = await import('../src/utils/slack.js');
+  const fetchFn = (async () =>
+    new Response(JSON.stringify({ ok: true, channel: { id: 'D09M387S812', is_im: true, user: 'U1' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+  assert.deepEqual(await channelInfo('tok', 'D09M387S812', fetchFn), {
+    id: 'D09M387S812',
+    name: 'direct message',
+    isDm: true,
+  });
+});
+
+test('channelInfo reports a channel as not a direct message', async () => {
+  const { channelInfo } = await import('../src/utils/slack.js');
+  const fetchFn = (async () =>
+    new Response(JSON.stringify({ ok: true, channel: { id: 'C0123ABCDEF', name: 'releases' } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+  assert.deepEqual(await channelInfo('tok', 'C0123ABCDEF', fetchFn), { id: 'C0123ABCDEF', name: 'releases', isDm: false });
 });

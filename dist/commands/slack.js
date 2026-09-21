@@ -56,12 +56,15 @@ async function setup() {
     const typed = channel.trim();
     let name = typed.replace(/^#/, '');
     let channelId;
+    let isDm = false;
     try {
         if (isChannelId(typed)) {
             const info = await channelInfo(token.trim(), typed);
             channelId = info?.id ?? null;
-            if (info)
+            if (info) {
                 name = info.name;
+                isDm = info.isDm;
+            }
         }
         else {
             channelId = await findChannelId(token.trim(), name);
@@ -70,7 +73,9 @@ async function setup() {
     catch (error) {
         // Almost always a missing scope; say which one rather than the raw code.
         log.error(error instanceof SlackError
-            ? `Could not list channels (${error.message}). The app needs channels:read and groups:read.`
+            ? typed.startsWith('D')
+                ? `Could not read that direct message (${error.message}). A DM target needs the im:read and im:write scopes; add them to the app, reinstall it, and run setup again with the new token.`
+                : `Could not list channels (${error.message}). The app needs channels:read and groups:read.`
             : error instanceof Error
                 ? error.message
                 : String(error));
@@ -80,9 +85,11 @@ async function setup() {
     }
     if (!channelId) {
         log.error(isChannelId(typed)
-            ? `No channel with id ${typed} in ${who.team}.`
+            ? `No conversation with id ${typed} that ${who.user} can see in ${who.team}.`
             : `No channel named #${name} in ${who.team}.`);
-        log.muted('Check the spelling; a private channel is only visible once the bot has been invited to it.');
+        log.muted(typed.startsWith('D')
+            ? 'A D… id is a direct message. The bot can only use a DM it is part of (your own DM with it), and reading one needs the im:read scope, posting into it im:write. Add both, reinstall the app, and run setup again with the new token.'
+            : 'Check the spelling; a private channel is only visible once the bot has been invited to it.');
         process.exitCode = 1;
         return;
     }
@@ -90,14 +97,17 @@ async function setup() {
     // the bot is already in answers with an error too. Neither is a problem
     // worth stopping setup over — posting is what proves it, and `promote`
     // reports not_in_channel plainly if it comes to that.
-    try {
-        await joinChannel(token.trim(), channelId);
+    if (!isDm) {
+        try {
+            await joinChannel(token.trim(), channelId);
+        }
+        catch {
+            // Ignored on purpose; see above.
+        }
     }
-    catch {
-        // Ignored on purpose; see above.
-    }
-    saveSlackConfig({ token: token.trim(), channel: `#${name}`, channelId, team: who.team });
-    console.log(createSuccessBox(`Slack is set up for ${who.team}`, `Releases announce into #${name} (${channelId}).\n` +
+    const shown = isDm ? `${name} (${channelId})` : `#${name}`;
+    saveSlackConfig({ token: token.trim(), channel: shown, channelId, team: who.team });
+    console.log(createSuccessBox(`Slack is set up for ${who.team}`, `Releases announce into ${isDm ? shown : `#${name} (${channelId})`}.\n` +
         `Stored in ${slackFile()} (owner-only); the token is never printed.\n` +
         'Announce a release with `vast promote <repo> --to production --slack`.'));
 }
@@ -174,6 +184,7 @@ The Slack app needs these bot scopes:
   channels:read     find a public channel by name
   groups:read       find a private channel by name
   channels:join     add itself to a public channel
+  im:read, im:write only when the target is a direct message (a D… id)
 
 The bot must be IN the channel. Setup joins public channels for you; for a
 private one, invite the app in Slack first (/invite @your-app).
