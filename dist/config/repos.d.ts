@@ -29,6 +29,14 @@ export interface RepoConfig {
     /** Canonical GitHub repo name. */
     name: string;
     /**
+     * The name a human reads — used in the Slack release announcement, where the
+     * audience is the whole team rather than anyone who works in the repo.
+     * Declared, not derived: "VastPay-DashBoard" de-camel-cased is not what
+     * anybody calls it, and the release message is the one place the GitHub
+     * spelling would look wrong.
+     */
+    displayName: string;
+    /**
      * GitHub Actions workflow that builds the image and commits the tag into
      * Vast-deployments, per env. null means the repo cannot be deployed there.
      */

@@ -36,8 +36,9 @@ const deployments = (name, stagingFolder) => ({
 });
 const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' };
 /** Frontend repo: develop -> staging -> production. */
-const fe = (name, stagingFolder, teams = ['frontend'], releaseTeam = 'frontend') => ({
+const fe = (name, displayName, stagingFolder, teams = ['frontend'], releaseTeam = 'frontend') => ({
     name,
+    displayName,
     workflow: { ...BUILD_DEPLOY },
     deployments: deployments(name, stagingFolder),
     promoteFrom: { ...FRONTEND_PROMOTION },
@@ -45,21 +46,22 @@ const fe = (name, stagingFolder, teams = ['frontend'], releaseTeam = 'frontend')
     releaseTeam,
 });
 export const REPOS = [
-    fe('VastPayPwaV2', 'vastpay-pwa-v2'),
-    fe('VastPay-DashBoard', 'vastpay-dasaboard'),
-    fe('VastMenuPwa', 'pwa'),
-    fe('VastMenuPwaV2', 'pwav2'),
-    fe('VastPayPwa', 'vastpay-pwa'),
-    fe('VastMenu-DashBoard', 'vastmenu-dashboard'),
+    fe('VastPayPwaV2', 'Vastpay Pwa V2', 'vastpay-pwa-v2'),
+    fe('VastPay-DashBoard', 'Vastpay Dashboard', 'vastpay-dasaboard'),
+    fe('VastMenuPwa', 'Vastmenu Pwa', 'pwa'),
+    fe('VastMenuPwaV2', 'Vastmenu Pwa V2', 'pwav2'),
+    fe('VastPayPwa', 'Vastpay Pwa', 'vastpay-pwa'),
+    fe('VastMenu-DashBoard', 'Vastmenu Dashboard', 'vastmenu-dashboard'),
     // Cloned with the frontend but deliberately out of the frontend release
     // train — it ships on its own cadence and is released by name only.
-    fe('vast-menu-payments', 'vastmenu-payments', ['frontend'], null),
+    fe('vast-menu-payments', 'Vastmenu Payments', 'vastmenu-payments', ['frontend'], null),
     // Vast-Finance has no deployments folder and no build-deploy workflow — only
     // review bots (Claude PR Review, Copilot, CodeQL). Verified via the GitHub
     // API. It is listed so `status` and `--all` acknowledge it, but every
     // release path skips it with a reason rather than pretending it can ship.
     {
         name: 'Vast-Finance',
+        displayName: 'Vast Finance',
         workflow: { ...NO_DEPLOY },
         deployments: { ...NO_DEPLOY },
         promoteFrom: { ...FRONTEND_PROMOTION },
@@ -70,6 +72,7 @@ export const REPOS = [
     // target `staging` directly.
     {
         name: 'VastPay-BackEnd',
+        displayName: 'Vastpay Backend',
         workflow: { ...BUILD_DEPLOY },
         deployments: deployments('VastPay-BackEnd', 'vastpay-backend'),
         promoteFrom: { staging: null, production: 'staging' },
@@ -78,6 +81,7 @@ export const REPOS = [
     },
     {
         name: 'VastMenu-BackEnd',
+        displayName: 'Vastmenu Backend',
         workflow: { ...BUILD_DEPLOY },
         deployments: deployments('VastMenu-BackEnd', 'vastmenu-backend'),
         promoteFrom: { staging: null, production: 'staging' },
@@ -88,6 +92,7 @@ export const REPOS = [
     // isReleasable() keeps them out of status, promote, and deploy.
     {
         name: 'vastpay-payment-odoo',
+        displayName: 'Vastpay Payment Odoo',
         workflow: { ...NO_DEPLOY },
         deployments: { ...NO_DEPLOY },
         promoteFrom: { staging: null, production: null },
@@ -96,6 +101,7 @@ export const REPOS = [
     },
     {
         name: 'Terraform',
+        displayName: 'Terraform',
         workflow: { ...NO_DEPLOY },
         deployments: { ...NO_DEPLOY },
         promoteFrom: { staging: null, production: null },

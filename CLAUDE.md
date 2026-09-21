@@ -141,6 +141,30 @@ in `Vast-deployments`:
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.
 
+## Slack announcements
+
+- `vast promote --to production --slack` posts one message after the release PR
+  opens. Staging never posts, and without `--slack` nothing is posted.
+- The bot token and channel live in `~/.vast-cli/slack.json`, mode 0600, written
+  by `vast slack setup`; `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` override it.
+  Keep it under `VAST_CLI_HOME` in tests like every other config path. Never ask
+  for or log the token.
+- Scopes the Slack app needs: `chat:write`, `users:read`, `users:read.email`,
+  `channels:read`, `groups:read`, `channels:join`. The bot must be in the channel;
+  setup joins public ones itself and cannot join a private one.
+- The ClickUp workspace id is a constant — tickets link to
+  `https://app.clickup.com/t/90121402342/<id>`. Do not inline it a second time.
+- **The message shape is a contract with the team's channel**, not a formatting
+  detail: `• <PR link|Display Name - branch> - description (@author) (TICKET)`.
+  Its builder is pure — PRs, commits and author lookups in, string out, no network
+  — and tested. Change the shape only with Mostafa, and change it in the tests
+  first.
+- A Slack failure never fails the promote: the PR is already open, so the message
+  and the error are printed and the exit code stays 0.
+- Repo display names come from the config (`displayName`) — Vastmenu Dashboard,
+  Vastmenu Pwa V2, Vastpay Pwa — not from the repo name, and not from the ArgoCD
+  app name either. That is a third naming axis; do not derive one from another.
+
 ## Gotchas
 
 - VastPayPwa's seed tag in `Vast-deployments` is `5.0.1`, left by a DevOps test

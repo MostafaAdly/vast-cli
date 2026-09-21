@@ -154,9 +154,10 @@ worked examples.
 | `vast upgrade` | Update to the latest release |
 | `vast status` | Deployed versions and branch drift |
 | `vast release` | Promote develop→staging, derive the version, deploy, wait until it is live |
-| `vast promote` | Merge branches, or open a release/hotfix PR into production |
+| `vast promote` | Merge branches, or open a release/hotfix PR into production — `--slack` announces it |
 | `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
 | `vast argocd` | Log in to ArgoCD, check the stored token, log out |
+| `vast slack` | Set up the Slack bot token and channel, check them, log out |
 | `vast workflow` | Trigger a raw GitHub Actions workflow — never on a protected branch |
 | `vast production` | Show or change the production deploy lock |
 
@@ -386,6 +387,55 @@ into Features / Fixes / Improvements / Maintenance. `--summarize` instead has a 
 local model read the diff (slower, not reproducible); `--no-changelog` gives a bare
 one-liner.
 
+### Announcing a release in Slack
+
+Once the release PR is open, someone still has to tell the team. `--slack` does that
+for you — one message, to one channel, in the shape the team already reads:
+
+```bash
+vast promote VastMenu-DashBoard --to production --slack
+vast promote VastPayPwa --to production --as hotfix --slack
+vast promote VastPayPwa --to production --pick 812 --slack
+```
+
+```
+• Vastmenu Dashboard - release/2.1.25 - Per-card-type commission fixed addon (@Mohamed Ammar Al-Sati) (VA-12755)
+```
+
+The bullet's link text is the repo's display name plus the branch that was cut, linked
+to the release PR. The description is the titles of the PRs being shipped — bump PRs are
+left out, and with `--pick` it is exactly the PRs you picked; where a change arrived
+without a PR the commit subject is used instead. Authors are mentioned as real Slack
+users, matched from their commit email, and fall back to a plain `@Name` when no Slack
+account matches. Every `VA-####` or `CU-…` ticket found in a PR title, a branch name or a
+commit subject is linked to ClickUp.
+
+The announcement is opt-in and never load-bearing:
+
+- Without `--slack`, nothing is posted. Staging never posts at all — this is a production
+  announcement only.
+- `--dry-run --slack` prints the message it would send and sends nothing. Use it to check
+  the wording before it reaches the channel.
+- If Slack fails, the promote still succeeds. The PR is already open, so the CLI prints
+  the message and the Slack error and exits 0. Post it by hand and carry on.
+
+Set it up once:
+
+```bash
+vast slack setup    # asks for the bot token (hidden), verifies it, then asks for the channel
+vast slack status   # which workspace and channel are stored, and whether the token still works
+vast slack logout   # forget both
+```
+
+`setup` verifies the token before storing anything, checks the channel exists, and for a
+public channel tries to join it itself. For a private channel you invite the bot yourself.
+The Slack app needs the scopes `chat:write`, `users:read`, `users:read.email`,
+`channels:read`, `groups:read` and `channels:join`, and the bot has to be a member of the
+channel it posts to.
+
+For CI or a throwaway shell, `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` override the
+stored file, with nothing written to disk.
+
 ## Claude Code skill
 
 The CLI does everything deterministic. The `/release` skill takes over where determinism
@@ -467,6 +517,7 @@ Everything lives in `~/.vast-cli/`:
 |---|---|
 | `config.json` | Repo→path map and the roots discovery learned from |
 | `argocd/<env>.json` | Your ArgoCD session token for that environment, plus the load-balancer session cookie that gets the CLI past the browser sign-in, written mode `0600` |
+| `slack.json` | Your Slack bot token, the channel releases are announced in, and the workspace it belongs to, written mode `0600` |
 | `production-enabled` | The production lock. Its presence is the only thing permitting a production deploy |
 | `version` | The installed release tag |
 | `update-check.json` | Cached result of the daily release check |
@@ -479,6 +530,14 @@ and whether a cookie is stored — `Cookie: present (saved <date>)` or `Cookie: 
 never prints either value. `vast argocd logout` deletes the file, clearing both. For CI or
 a throwaway shell, set `VAST_ARGOCD_TOKEN_STAGING` and `VAST_ARGOCD_ALB_COOKIE_STAGING`
 and they win over the file, with nothing written to disk.
+
+`slack.json` is written by `vast slack setup` and holds the bot token, the channel name
+and the workspace it was verified against. `vast slack status` reports the workspace and
+channel and whether Slack still accepts the token; it never prints the token.
+`vast slack logout` deletes the file. `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` win over
+it. It can also carry an optional `users` map — GitHub login → Slack member id — for
+authors whose commit email is not the email on their Slack account; add someone there and
+they get a real mention instead of a plain `@Name`.
 
 Every `vast init` searches the default locations, your saved roots, and your current
 directory — so a repo cloned into a normal place is always picked up, with no flag.
@@ -534,6 +593,10 @@ from the sign-in rule, and the cookie step disappears.
 | Every `STAGING` and `PRODUCTION` cell reads `not migrated` or `?` | Your GitHub account cannot read `Vast-deployments`. A private repo you cannot see answers 404, which is indistinguishable from a missing file, so every lookup fails the same way. Ask DevOps for access. One repo showing `not migrated` on its own is the ordinary unmigrated case, not this. |
 | `dispatched, but its run could not be identified` | The build was triggered; the CLI could not match it to a run id, so it cannot watch it. Open the repo's Actions page and see whether it is running **before** re-dispatching — re-running blind starts a second build of the same version. |
 | Production deploy refuses: not migrated | Expected. Production has not moved to the GitOps pipeline, so deploys are blocked and `vast production enable` refuses too. `vast promote --to production` still cuts the release PR. |
+| `Slack not configured — run vast slack setup` | You passed `--slack` with no token stored. The PR is unaffected. Run `vast slack setup` once, or set `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` for this shell. |
+| Slack says `not_in_channel` | The bot is not a member of the channel. Invite it — `/invite @<your bot>` in the channel — and post the message again. `vast slack setup` joins public channels itself, but it cannot join a private one for you. |
+| Slack says `invalid_auth` | The bot token was revoked or rotated. Get a fresh one from the Slack app and run `vast slack setup` again. The promote itself succeeded; only the announcement did not go out. |
+| An author shows as plain `@Name` instead of a mention | Their commit email is not the email on their Slack account, so there was nothing to match. Add their GitHub login → Slack member id to the `users` map in `~/.vast-cli/slack.json` and they are mentioned properly next time. |
 | `vast upgrade` installs the previous version | GitHub's releases API is cached for ~60s. Wait a minute after publishing. |
 | `status --all` is slow | It fetches every repo. `--no-fetch` reads local refs instantly, at the cost of possible staleness. |
 
