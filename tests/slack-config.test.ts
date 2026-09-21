@@ -151,3 +151,28 @@ test('a raw CU- task id links without the workspace segment', () => {
   assert.equal(clickupTaskUrl('CU-869E077ZM'), 'https://app.clickup.com/t/869e077zm');
   assert.equal(clickupTaskUrl('cu-869e077zm'), 'https://app.clickup.com/t/869e077zm');
 });
+
+// --- posting targets the channel id when one is stored; the name is for people ---
+const { readSlackChannelName } = await import('../src/config/slack.js');
+
+test('readSlackChannel prefers the stored channel id over the name', () => {
+  forgetSlack();
+  saveSlackConfig({ channel: '#releases', channelId: 'C0123ABCDEF' });
+  assert.equal(readSlackChannel(), 'C0123ABCDEF');
+  assert.equal(readSlackChannelName(), '#releases');
+});
+
+test('without an id the name is the posting target', () => {
+  forgetSlack();
+  saveSlackConfig({ channel: '#releases' });
+  assert.equal(readSlackChannel(), '#releases');
+  assert.equal(readSlackChannelName(), '#releases');
+});
+
+test('the channel env var beats both', () => {
+  forgetSlack();
+  saveSlackConfig({ channel: '#releases', channelId: 'C0123ABCDEF' });
+  process.env.VAST_SLACK_CHANNEL = 'C0999ZZZZZZ';
+  assert.equal(readSlackChannel(), 'C0999ZZZZZZ');
+  delete process.env.VAST_SLACK_CHANNEL;
+});

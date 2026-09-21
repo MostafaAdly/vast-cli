@@ -14,7 +14,10 @@
 export interface SlackConfig {
     token?: string;
     /** Stored with the leading '#', the way people write it. */
+    /** How the channel is shown to people: `#releases`. */
     channel?: string;
+    /** Where posts actually go when known: the channel's id, stable across renames. */
+    channelId?: string;
     /** The workspace name, kept only so `status` can name it without a call. */
     team?: string;
     /**
@@ -45,7 +48,14 @@ export declare function readSlackConfig(): SlackConfig;
  * unset-looking variable should behave as unset.
  */
 export declare function readSlackToken(): string | null;
+/**
+ * The posting target: the env var, else the stored channel id, else the name.
+ * The id wins over the name because Slack accepts either and only the id
+ * survives a channel rename.
+ */
 export declare function readSlackChannel(): string | null;
+/** The channel as a person reads it (`#releases`), never the id. */
+export declare function readSlackChannelName(): string | null;
 /** Merge a patch into the stored config, keeping every field it does not name. */
 export declare function saveSlackConfig(patch: Partial<SlackConfig>): void;
 export declare function forgetSlack(): void;
