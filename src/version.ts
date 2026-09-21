@@ -5,4 +5,4 @@
  * build and bundle. Change the version with `npm version <level>`.
  */
 
-export const VERSION = '2.0.3';
+export const VERSION = '2.1.0';
