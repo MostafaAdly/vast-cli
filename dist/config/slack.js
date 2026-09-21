@@ -56,7 +56,20 @@ export function readSlackToken() {
         return fromEnv;
     return readSlackConfig().token?.trim() || null;
 }
+/**
+ * The posting target: the env var, else the stored channel id, else the name.
+ * The id wins over the name because Slack accepts either and only the id
+ * survives a channel rename.
+ */
 export function readSlackChannel() {
+    const fromEnv = process.env.VAST_SLACK_CHANNEL?.trim();
+    if (fromEnv)
+        return fromEnv;
+    const config = readSlackConfig();
+    return config.channelId?.trim() || config.channel?.trim() || null;
+}
+/** The channel as a person reads it (`#releases`), never the id. */
+export function readSlackChannelName() {
     const fromEnv = process.env.VAST_SLACK_CHANNEL?.trim();
     if (fromEnv)
         return fromEnv;

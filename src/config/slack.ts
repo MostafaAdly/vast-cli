@@ -19,7 +19,10 @@ import { vastHome } from './workspace.js';
 export interface SlackConfig {
   token?: string;
   /** Stored with the leading '#', the way people write it. */
+  /** How the channel is shown to people: `#releases`. */
   channel?: string;
+  /** Where posts actually go when known: the channel's id, stable across renames. */
+  channelId?: string;
   /** The workspace name, kept only so `status` can name it without a call. */
   team?: string;
   /**
@@ -76,7 +79,20 @@ export function readSlackToken(): string | null {
   return readSlackConfig().token?.trim() || null;
 }
 
+/**
+ * The posting target: the env var, else the stored channel id, else the name.
+ * The id wins over the name because Slack accepts either and only the id
+ * survives a channel rename.
+ */
 export function readSlackChannel(): string | null {
+  const fromEnv = process.env.VAST_SLACK_CHANNEL?.trim();
+  if (fromEnv) return fromEnv;
+  const config = readSlackConfig();
+  return config.channelId?.trim() || config.channel?.trim() || null;
+}
+
+/** The channel as a person reads it (`#releases`), never the id. */
+export function readSlackChannelName(): string | null {
   const fromEnv = process.env.VAST_SLACK_CHANNEL?.trim();
   if (fromEnv) return fromEnv;
   return readSlackConfig().channel?.trim() || null;

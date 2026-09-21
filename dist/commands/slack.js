@@ -10,7 +10,7 @@
  */
 import inquirer from 'inquirer';
 import { forgetSlack, readSlackChannel, readSlackConfig, readSlackToken, saveSlackConfig, slackFile, } from '../config/slack.js';
-import { SlackError, authTest, findChannelId, joinChannel } from '../utils/slack.js';
+import { SlackError, authTest, channelInfo, findChannelId, isChannelId, joinChannel } from '../utils/slack.js';
 import { createHeader, createInfoBox, createSuccessBox, formatKeyValue, log } from '../utils/ui.js';
 async function setup() {
     console.log(createHeader('Slack setup', 'release announcements'));
@@ -46,15 +46,26 @@ async function setup() {
         {
             type: 'input',
             name: 'channel',
-            message: 'Channel to announce releases in:',
-            default: existing.channel ?? '#releases',
-            validate: (value) => (value.trim().replace(/^#/, '') ? true : 'A channel name is required'),
+            message: 'Channel to announce releases in (name or id, e.g. #releases or C0123ABCDEF):',
+            default: existing.channelId ?? existing.channel ?? '#releases',
+            validate: (value) => (value.trim().replace(/^#/, '') ? true : 'A channel name or id is required'),
         },
     ]);
-    const name = channel.trim().replace(/^#/, '');
+    // A name is looked up; an id is verified. Either way what gets stored is
+    // both: the id to post to, the name for people to read.
+    const typed = channel.trim();
+    let name = typed.replace(/^#/, '');
     let channelId;
     try {
-        channelId = await findChannelId(token.trim(), name);
+        if (isChannelId(typed)) {
+            const info = await channelInfo(token.trim(), typed);
+            channelId = info?.id ?? null;
+            if (info)
+                name = info.name;
+        }
+        else {
+            channelId = await findChannelId(token.trim(), name);
+        }
     }
     catch (error) {
         // Almost always a missing scope; say which one rather than the raw code.
@@ -68,7 +79,9 @@ async function setup() {
         return;
     }
     if (!channelId) {
-        log.error(`No channel named #${name} in ${who.team}.`);
+        log.error(isChannelId(typed)
+            ? `No channel with id ${typed} in ${who.team}.`
+            : `No channel named #${name} in ${who.team}.`);
         log.muted('Check the spelling; a private channel is only visible once the bot has been invited to it.');
         process.exitCode = 1;
         return;
@@ -83,8 +96,8 @@ async function setup() {
     catch {
         // Ignored on purpose; see above.
     }
-    saveSlackConfig({ token: token.trim(), channel: `#${name}`, team: who.team });
-    console.log(createSuccessBox(`Slack is set up for ${who.team}`, `Releases announce into #${name}.\n` +
+    saveSlackConfig({ token: token.trim(), channel: `#${name}`, channelId, team: who.team });
+    console.log(createSuccessBox(`Slack is set up for ${who.team}`, `Releases announce into #${name} (${channelId}).\n` +
         `Stored in ${slackFile()} (owner-only); the token is never printed.\n` +
         'Announce a release with `vast promote <repo> --to production --slack`.'));
 }
@@ -116,7 +129,13 @@ async function status() {
     console.log(createInfoBox('slack', [
         formatKeyValue('File', slackFile()),
         formatKeyValue('Workspace', team),
-        formatKeyValue('Channel', channel ? (channelFromEnv ? `${channel} (VAST_SLACK_CHANNEL)` : channel) : 'none'),
+        formatKeyValue('Channel', channel
+            ? channelFromEnv
+                ? `${channel} (VAST_SLACK_CHANNEL)`
+                : config.channelId
+                    ? `${config.channel ?? config.channelId} (${config.channelId})`
+                    : channel
+            : 'none'),
         formatKeyValue('Token', token ? (tokenFromEnv ? 'from VAST_SLACK_TOKEN env var' : 'stored (owner-only)') : 'none'),
         formatKeyValue('Session', session),
         formatKeyValue('User overrides', overrides ? `${overrides} in the "users" map` : 'none'),

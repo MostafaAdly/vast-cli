@@ -422,13 +422,14 @@ The announcement is opt-in and never load-bearing:
 Set it up once:
 
 ```bash
-vast slack setup    # asks for the bot token (hidden), verifies it, then asks for the channel
+vast slack setup    # asks for the bot token (hidden), verifies it, then asks for the channel (name or id)
 vast slack status   # which workspace and channel are stored, and whether the token still works
 vast slack logout   # forget both
 ```
 
-`setup` verifies the token before storing anything, checks the channel exists, and for a
-public channel tries to join it itself. For a private channel you invite the bot yourself.
+`setup` verifies the token before storing anything, checks the channel exists (give it a
+name like `#releases` or an id like `C0123ABCDEF`, both are stored, and posts go to the id
+so a rename never breaks it), and for a public channel tries to join it itself. For a private channel you invite the bot yourself.
 The Slack app needs the scopes `chat:write`, `users:read`, `users:read.email`,
 `channels:read`, `groups:read` and `channels:join`, and the bot has to be a member of the
 channel it posts to.

@@ -186,3 +186,36 @@ test('findChannelId raises a Slack error such as a missing scope', async () => {
     (error: Error) => error instanceof SlackError && error.message === 'missing_scope',
   );
 });
+
+// --- channels may be given by id as well as by name ---
+test('isChannelId recognises Slack channel ids and nothing else', async () => {
+  const { isChannelId } = await import('../src/utils/slack.js');
+  assert.equal(isChannelId('C0123ABCDEF'), true);
+  assert.equal(isChannelId('G0123ABCDEF'), true);
+  assert.equal(isChannelId(' c0123abcdef '), false, 'ids are upper-case');
+  assert.equal(isChannelId('#releases'), false);
+  assert.equal(isChannelId('releases'), false);
+  assert.equal(isChannelId('Cshort'), false);
+});
+
+test('channelInfo resolves an id to its name through conversations.info', async () => {
+  const { channelInfo } = await import('../src/utils/slack.js');
+  const urls: string[] = [];
+  const fetchFn = (async (url: string | URL | Request) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ ok: true, channel: { id: 'C0123ABCDEF', name: 'releases', is_private: false } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+  assert.deepEqual(await channelInfo('tok', 'C0123ABCDEF', fetchFn), { id: 'C0123ABCDEF', name: 'releases' });
+  assert.match(urls[0], /conversations\.info\?channel=C0123ABCDEF$/);
+});
+
+test('channelInfo answers null for an unknown id and raises for anything else', async () => {
+  const { channelInfo, SlackError } = await import('../src/utils/slack.js');
+  const notFound = (async () => new Response(JSON.stringify({ ok: false, error: 'channel_not_found' }), { status: 200 })) as typeof fetch;
+  assert.equal(await channelInfo('tok', 'C0123ABCDEF', notFound), null);
+  const scope = (async () => new Response(JSON.stringify({ ok: false, error: 'missing_scope' }), { status: 200 })) as typeof fetch;
+  await assert.rejects(() => channelInfo('tok', 'C0123ABCDEF', scope), SlackError);
+});

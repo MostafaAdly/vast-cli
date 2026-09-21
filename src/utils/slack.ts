@@ -157,6 +157,34 @@ const PAGE_SIZE = '1000';
  * channel does not exist. Paging is followed to the end: a workspace with more
  * than 1000 channels would otherwise lose the ones late in the alphabet.
  */
+/** Slack channel ids are upper-case, start with C (public), G (private) or D (DM). */
+export function isChannelId(value: string): boolean {
+  return /^[CGD][A-Z0-9]{8,}$/.test(value);
+}
+
+/**
+ * The name behind a channel id, so setup can confirm what the user typed and
+ * status can show something a person recognises. Unknown id → null.
+ */
+export async function channelInfo(
+  token: string,
+  id: string,
+  fetchFn: FetchFn = fetch,
+): Promise<{ id: string; name: string } | null> {
+  try {
+    const body = await call<SlackResponse & { channel?: { id?: string; name?: string } }>(
+      `${API}/conversations.info?${new URLSearchParams({ channel: id }).toString()}`,
+      { headers: authHeader(token) },
+      fetchFn,
+    );
+    if (!body.channel?.id) return null;
+    return { id: body.channel.id, name: body.channel.name ?? id };
+  } catch (error) {
+    if (error instanceof SlackError && error.message === 'channel_not_found') return null;
+    throw error;
+  }
+}
+
 export async function findChannelId(
   token: string,
   name: string,

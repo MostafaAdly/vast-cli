@@ -59,6 +59,16 @@ export declare function joinChannel(token: string, channelId: string, fetchFn?: 
  * channel does not exist. Paging is followed to the end: a workspace with more
  * than 1000 channels would otherwise lose the ones late in the alphabet.
  */
+/** Slack channel ids are upper-case, start with C (public), G (private) or D (DM). */
+export declare function isChannelId(value: string): boolean;
+/**
+ * The name behind a channel id, so setup can confirm what the user typed and
+ * status can show something a person recognises. Unknown id → null.
+ */
+export declare function channelInfo(token: string, id: string, fetchFn?: FetchFn): Promise<{
+    id: string;
+    name: string;
+} | null>;
 export declare function findChannelId(token: string, name: string, fetchFn?: FetchFn): Promise<string | null>;
 export {};
 //# sourceMappingURL=slack.d.ts.map
