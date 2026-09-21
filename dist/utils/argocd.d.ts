@@ -14,6 +14,19 @@
 export declare class ArgoUnauthorizedError extends Error {
     constructor(message: string);
 }
+/**
+ * The API is not answering as an API: a load balancer is demanding a browser
+ * sign-in in front of it.
+ *
+ * Staging's ArgoCD sits behind an AWS ALB `authenticate-oidc` rule, which
+ * intercepts EVERY path — `/api/v1/session` included — and answers 302 to
+ * Google. No token can get past that, and no amount of retrying will change it,
+ * so it is its own error: the CLI reports it once, says who can fix it, and
+ * carries on with the work that never needed ArgoCD.
+ */
+export declare class ArgoSsoWallError extends Error {
+    constructor(message: string);
+}
 export interface ArgoApp {
     /** Synced | OutOfSync | Unknown */
     syncStatus: string;
@@ -78,6 +91,11 @@ export interface RolloutResult {
     reason?: string;
     /** The last application state read, when one was read. */
     app?: ArgoApp;
+    /**
+     * The API is behind a browser sign-in, so no rollout can ever be confirmed
+     * from here. Distinct from a failure, because the deploy itself is fine.
+     */
+    ssoWall?: boolean;
 }
 /** The tag has to be live AND settled — a Synced/Healthy old image is not a rollout. */
 export declare function rolloutDone(app: ArgoApp, tag: string): boolean;

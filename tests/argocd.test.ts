@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 
 import {
+  ArgoSsoWallError,
   ArgoUnauthorizedError,
   DEFAULT_ROLLOUT_TIMING,
   getApplication,
@@ -389,4 +390,134 @@ test('refreshApplication reports a rejected token as unauthorized', async () => 
     () => refreshApplication('https://argo.example', 'tok', 'vastpay-pwa', fetchFn),
     ArgoUnauthorizedError,
   );
+});
+
+// --- the SSO wall ----------------------------------------------------------
+//
+// Staging's ArgoCD now sits behind an AWS ALB `authenticate-oidc` rule, so
+// EVERY path — `/api/v1/session` included — answers 302 to Google. Node's fetch
+// follows that redirect and lands on a 200 text/html sign-in page, which used
+// to reach `JSON.parse` and die as `Unexpected token '<'`. Neither the redirect
+// nor the HTML is an ArgoCD answer, so both must be named for what they are.
+
+/** The ALB's answer: a redirect to Google, with the auth nonce cookie. */
+function ssoRedirectFetch(status = 302): typeof fetch {
+  return (async () =>
+    new Response(null, {
+      status,
+      headers: {
+        location:
+          'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=y&response_type=code',
+        'set-cookie': 'AWSALBAuthNonce=abc; Path=/',
+        server: 'awselb/2.0',
+      },
+    })) as typeof fetch;
+}
+
+/** What following that redirect lands on: a Google sign-in page, not JSON. */
+const ssoHtmlFetch = (async () =>
+  new Response('<!doctype html><html><body>Sign in</body></html>', {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  })) as typeof fetch;
+
+test('login reports the SSO wall instead of choking on the sign-in page', async () => {
+  await assert.rejects(
+    () => login('https://argocd-stg.example.com', 'me', 'pw', ssoRedirectFetch()),
+    ArgoSsoWallError,
+  );
+  await assert.rejects(
+    () => login('https://argocd-stg.example.com', 'me', 'pw', ssoHtmlFetch),
+    (error: Error) => {
+      assert.ok(error instanceof ArgoSsoWallError);
+      // The password must never leak into this message either.
+      assert.doesNotMatch(error.message, /pw/);
+      return true;
+    },
+  );
+});
+
+test('userinfo reports the SSO wall rather than a dead session', async () => {
+  for (const fetchFn of [ssoRedirectFetch(), ssoHtmlFetch]) {
+    await assert.rejects(
+      () => userinfo('https://argocd-stg.example.com', 'tok', fetchFn),
+      ArgoSsoWallError,
+    );
+  }
+});
+
+test('getApplication reports the SSO wall, and never as an unauthorized token', async () => {
+  for (const fetchFn of [ssoRedirectFetch(), ssoHtmlFetch]) {
+    await assert.rejects(
+      () => getApplication('https://argocd-stg.example.com', 'tok', 'pwa', fetchFn),
+      (error: Error) => {
+        assert.ok(error instanceof ArgoSsoWallError);
+        assert.ok(!(error instanceof ArgoUnauthorizedError), 'the token is fine; the LB is not');
+        return true;
+      },
+    );
+  }
+});
+
+test('refreshApplication reports the SSO wall', async () => {
+  const { refreshApplication } = await import('../src/utils/argocd.js');
+  for (const fetchFn of [ssoRedirectFetch(), ssoHtmlFetch]) {
+    await assert.rejects(
+      () => refreshApplication('https://argocd-stg.example.com', 'tok', 'pwa', fetchFn),
+      ArgoSsoWallError,
+    );
+  }
+});
+
+test('every redirect status the ALB may use is treated as the wall', async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    await assert.rejects(
+      () => getApplication('https://argocd-stg.example.com', 'tok', 'pwa', ssoRedirectFetch(status)),
+      ArgoSsoWallError,
+      `HTTP ${status} must be read as the SSO wall`,
+    );
+  }
+});
+
+// The message is the whole value of this error: the user cannot fix it, only
+// DevOps can, and only by exempting the API paths.
+test('the SSO wall message names the host and the fix', async () => {
+  const error = await getApplication(
+    'https://argocd-stg.example.com',
+    'tok',
+    'pwa',
+    ssoRedirectFetch(),
+  ).catch((e: Error) => e);
+  assert.match(error.message, /argocd-stg\.example\.com/);
+  assert.match(error.message, /browser sign-in \(SSO\)/);
+  assert.match(error.message, /exempt \/api\/\* from that rule/);
+});
+
+// A JSON path must keep behaving exactly as before: `redirect: 'manual'` is the
+// only thing that changed about it.
+test('an ordinary JSON answer is unaffected by the redirect handling', async () => {
+  const fetchFn = (async () =>
+    new Response(JSON.stringify({ status: { sync: { status: 'Synced', revision: 'r1' } } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+  assert.deepEqual(await getApplication('https://argo.example', 'tok', 'pwa', fetchFn), {
+    syncStatus: 'Synced',
+    healthStatus: 'Unknown',
+    images: [],
+    revision: 'r1',
+  });
+});
+
+// Twelve retries against a load balancer that will never answer JSON is a
+// minute of waiting followed by a FALSE "failed" on a deploy whose build and
+// tag commit both succeeded. That false failure is the bug.
+test('an SSO wall during the wait stops at once instead of retrying twelve times', async () => {
+  const h = harness([new ArgoSsoWallError('behind a browser sign-in')]);
+  const result = await waitForRollout('pwa', 'pwa', '1.2.3', h.deps, FAST);
+  assert.equal(result.ok, false);
+  assert.equal(result.ssoWall, true);
+  assert.equal(result.reason, 'argocd api behind sso');
+  assert.equal(result.elapsedMs, 0, 'nothing may be retried');
+  assert.deepEqual(h.lines, [], 'and nothing may be printed as a retry');
 });
