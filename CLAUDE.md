@@ -121,6 +121,14 @@ in `Vast-deployments`:
   refused: it dispatches, skips the ArgoCD wait, and reports `tag committed —
   rollout not confirmed`. An *expired* token still stops it in front of the build,
   because the pre-dispatch read fails.
+- **Since 2026-09-21 the staging ArgoCD host sits behind an ALB Google sign-in
+  (`authenticate-oidc`, vastgroupsa.com) that also covers `/api/*`**, so the CLI
+  cannot reach ArgoCD's API at all — login and stored tokens are both useless.
+  The CLI detects it (`ArgoSsoWallError`) and degrades exactly like the no-token
+  case: dispatch, tag committed, wait skipped, `tag committed — rollout not
+  confirmed (ArgoCD API behind SSO)`. Do not "fix" this by scraping cookies or
+  embedding a browser flow. The fix is DevOps exempting `/api/*` from the
+  sign-in rule (ArgoCD's own login still protects it).
 - `vast argocd login` stores a session token in `~/.vast-cli/argocd/<env>.json`,
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.

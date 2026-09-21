@@ -11,7 +11,13 @@ import {
   type Sweep,
 } from '../src/commands/deploy.js';
 import { getRepo } from '../src/config/repos.js';
-import { ArgoUnauthorizedError, rolloutDone, type ArgoApp, type RolloutResult } from '../src/utils/argocd.js';
+import {
+  ArgoSsoWallError,
+  ArgoUnauthorizedError,
+  rolloutDone,
+  type ArgoApp,
+  type RolloutResult,
+} from '../src/utils/argocd.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
@@ -458,4 +464,59 @@ test('without a token there is nothing to refresh with', async () => {
   const { deps: d, calls } = deps({ readArgocdToken: () => null });
   await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
   assert.deepEqual(calls.refreshed, []);
+});
+
+// --- the SSO wall ----------------------------------------------------------
+//
+// The load balancer in front of staging's ArgoCD started demanding a browser
+// sign-in on every path, API included. The CLI cannot get through it — but the
+// build and the tag commit never needed ArgoCD at all, so losing the API costs
+// exactly the confirmation and nothing else. Reporting FAILED here was a lie
+// about a deploy that had already shipped.
+test('an SSO wall found before dispatch still builds, and says the rollout is unconfirmed', async () => {
+  const { slot, lines } = recordingSlot();
+  const d = deps({
+    getApplication: async () => {
+      throw new ArgoSsoWallError("ArgoCD's API at https://argocd-stg.example.com is behind a browser sign-in (SSO)");
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(
+    d.calls.dispatched,
+    ['VastPayPwa@1.5.7-rc1->staging'],
+    'the build needs no ArgoCD session and must still run',
+  );
+  assert.deepEqual(d.calls.rollouts, [], 'there is nothing to wait on through the wall');
+  assert.deepEqual(d.calls.refreshed, [], 'and nothing to refresh through it either');
+  assert.match(outcome.detail, /1\.5\.7-rc1 tag committed — rollout not confirmed/);
+  assert.match(outcome.detail, /browser sign-in/);
+  assert.match(outcome.detail, /exempt \/api\/\*/);
+  assert.ok(!/live on/.test(outcome.detail), 'nothing may claim the tag is live');
+  assert.equal(
+    lines[lines.length - 1],
+    '  VastPayPwa  run 77  succeeded  0s  tag committed — rollout not confirmed (ArgoCD API behind SSO)',
+  );
+});
+
+// The wall can also appear only after the build — the token was read fine
+// before dispatch and the rule was added, or the pre-read simply hit a
+// different node. Same truth, same outcome.
+test('an SSO wall found during the rollout wait is unconfirmed, not failed', async () => {
+  const { slot, lines } = recordingSlot();
+  const d = deps({
+    waitForRollout: async (_label, app, tag): Promise<RolloutResult> => {
+      d.calls.rollouts.push(`${app}:${tag}`);
+      return { ok: false, elapsedMs: 300, reason: 'argocd api behind sso', ssoWall: true };
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d.deps);
+
+  assert.equal(outcome.status, 'released');
+  assert.deepEqual(d.calls.rollouts, ['vastpay-pwa:1.5.7-rc1'], 'the wait did start');
+  assert.match(outcome.detail, /1\.5\.7-rc1 tag committed — rollout not confirmed/);
+  assert.match(outcome.detail, /exempt \/api\/\*/);
+  assert.ok(!/live on/.test(outcome.detail));
+  assert.match(lines[lines.length - 1], /tag committed — rollout not confirmed \(ArgoCD API behind SSO\)/);
 });

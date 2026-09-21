@@ -12,8 +12,8 @@
 import inquirer from 'inquirer';
 import { DEPLOY_ENVS } from '../config/repos.js';
 import { argocdFile, argocdHost, forgetArgocdToken, readArgocdToken, saveArgocdToken, } from '../config/argocd.js';
-import { login as argoLogin, userinfo } from '../utils/argocd.js';
-import { createHeader, createInfoBox, createSuccessBox, formatKeyValue, log } from '../utils/ui.js';
+import { ArgoSsoWallError, login as argoLogin, userinfo } from '../utils/argocd.js';
+import { createErrorBox, createHeader, createInfoBox, createSuccessBox, formatKeyValue, log, } from '../utils/ui.js';
 function parseEnv(value) {
     const env = value.trim().toLowerCase();
     if (!DEPLOY_ENVS.includes(env)) {
@@ -48,6 +48,16 @@ async function login(options) {
         token = await argoLogin(host, username, answers.password);
     }
     catch (error) {
+        // A load balancer sitting in front of the API answers the login with a
+        // redirect to a browser sign-in page, not with JSON. Nothing the user can
+        // do fixes that, so say who can — and never write a token we did not get.
+        if (error instanceof ArgoSsoWallError) {
+            console.log(createErrorBox('ArgoCD is not reachable from the CLI', `${error.message}\n\n` +
+                'Deploys still work without a token: the build runs and the tag is\n' +
+                'committed, but the rollout cannot be confirmed.'));
+            process.exitCode = 1;
+            return;
+        }
         // The message comes from ArgoCD ("Invalid username or password"); the
         // credentials themselves are never part of it.
         log.error(error instanceof Error ? error.message : String(error));
@@ -76,7 +86,12 @@ async function status() {
                     : 'expired — run `vast argocd login`';
             }
             catch (error) {
-                state = `unknown — ${error instanceof Error ? error.message : String(error)}`;
+                // The token may be perfectly good — it simply cannot be presented to
+                // anything, because the API is not what answers.
+                state =
+                    error instanceof ArgoSsoWallError
+                        ? `unreachable — ${error.message}`
+                        : `unknown — ${error instanceof Error ? error.message : String(error)}`;
             }
         }
         console.log(createInfoBox(env, [
@@ -113,6 +128,12 @@ Why this exists:
 
   ArgoCD uses local accounts, so this is a real login: once per token lifetime,
   not once per release.
+
+  If login reports that the API is behind a browser sign-in, a load balancer
+  rule is intercepting every path in front of ArgoCD and no token can get past
+  it. Deploys still run — the image is built and the tag committed — but the
+  CLI reports "rollout not confirmed" instead of waiting. Only DevOps can fix
+  it, by exempting /api/* from that rule.
 
 The password is never stored, never echoed and never logged — only the session
 token it returns, written owner-only under ~/.vast-cli/argocd/<env>.json.

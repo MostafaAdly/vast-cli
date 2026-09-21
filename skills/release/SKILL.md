@@ -63,6 +63,14 @@ vast upgrade --check
   confirm before continuing. A token that exists but is reported invalid is
   different: that one *does* stop the deploy in front of the build (see §4,
   `argocd unauthorized`), and they log in again.
+- **`vast argocd status` says the API is behind a browser sign-in (SSO).** The
+  ArgoCD host sits behind a load-balancer sign-in that covers `/api/*` too, so
+  the CLI cannot reach ArgoCD's API at all. **Do not try to log in and do not
+  retry** — neither can work, and `vast argocd login` will report the same thing.
+  Proceed with the release exactly as for a missing token, then relay that
+  rollouts cannot be confirmed until DevOps exempts `/api/*` from that sign-in
+  rule, and point the user at the ArgoCD UI in a browser to watch the rollout
+  themselves.
 - **A newer release exists.** `vast upgrade --check` says
   `Latest is X; you have Y`. Run `vast upgrade` now, before starting, and say
   that you did. The instructions in this skill describe the current CLI, so
@@ -305,6 +313,14 @@ skipped the ArgoCD wait rather than refusing the deploy. Report the repo as
 released-but-unconfirmed, say that the rollout almost certainly happened and can
 be checked in ArgoCD, and suggest the user run `vast argocd login` so the next
 deploy is confirmed for them. Do not re-run the deploy to "make it green".
+
+**`tag committed — rollout not confirmed (ArgoCD API behind SSO)`.** Also not a
+failure, and not something a login fixes. ArgoCD's API is behind a browser
+sign-in at the load balancer, so the CLI could not read the application and
+skipped the wait; the build ran and the tag was committed just the same. Report
+the repo as released-but-unconfirmed, point the user at the ArgoCD UI in a
+browser, and say the fix is DevOps exempting `/api/*` from the sign-in rule.
+**Do not re-run the deploy and do not suggest `vast argocd login`.**
 
 **`argocd unauthorized`.** The stored token expired or was revoked. Nothing was
 built: the token is used to read the application *before* the dispatch, so the

@@ -18,7 +18,7 @@ import inquirer from 'inquirer';
 import { argoApp, getRepo, reposForRelease, } from '../config/repos.js';
 import { productionRefusal } from '../config/production-lock.js';
 import { argocdAppUrl, argocdHost, readArgocdToken } from '../config/argocd.js';
-import { ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, refreshApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
+import { ArgoSsoWallError, ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, refreshApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
@@ -224,12 +224,19 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
     // documented retry for a run that failed committing the tag, so this is the
     // common case rather than a corner one.
     let before;
+    // A load balancer demanding a browser sign-in in front of the API. Not a
+    // reason to refuse: the build and the tag commit never touch ArgoCD, so this
+    // costs the confirmation and nothing else — exactly like having no token.
+    let ssoWall = false;
     try {
         if (token)
             before = await deps.getApplication(host, token, app);
     }
     catch (error) {
-        if (error instanceof ArgoUnauthorizedError) {
+        if (error instanceof ArgoSsoWallError) {
+            ssoWall = true;
+        }
+        else if (error instanceof ArgoUnauthorizedError) {
             const why = 'argocd unauthorized — run `vast argocd login`';
             say(`  ${label}  ${why}`, 'error');
             return outcome('failed', why);
@@ -285,12 +292,25 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
     // Without a token there is nothing to wait on. The run went green, so the tag
     // IS committed and ArgoCD will almost certainly pick it up — but "almost
     // certainly" is not "confirmed", and the line says which of the two this is.
-    if (!token) {
-        const why = 'tag committed — rollout not confirmed (no ArgoCD token)';
+    //
+    // The SSO wall lands in the same place for the same reason: whatever is
+    // blocking the API, the tag IS committed, and calling that a failure would be
+    // a lie about a deploy that already shipped.
+    const unconfirmed = (kind) => {
+        const why = kind === 'sso'
+            ? 'tag committed — rollout not confirmed (ArgoCD API behind SSO)'
+            : 'tag committed — rollout not confirmed (no ArgoCD token)';
         say(`  ${label}  run ${runId}  succeeded  ${ranFor}  ${why}`, 'success');
-        return outcome('released', `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
-            '`vast argocd login` to confirm next time)');
-    }
+        return outcome('released', kind === 'sso'
+            ? `${version} tag committed — rollout not confirmed (ArgoCD's API is behind a ` +
+                'browser sign-in; ask DevOps to exempt /api/*)'
+            : `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
+                '`vast argocd login` to confirm next time)');
+    };
+    if (!token)
+        return unconfirmed('token');
+    if (ssoWall)
+        return unconfirmed('sso');
     // The tag is committed. ArgoCD would notice on its next ~3 minute poll; asking
     // it to refresh now turns that into seconds. Best effort — a refresh that
     // fails just means the wait below runs on ArgoCD's own timer, and an
@@ -317,6 +337,10 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
         ? (current) => rolloutDone(current, version) && current.revision !== wasAt
         : (current) => rolloutDone(current, version));
     const rolledFor = formatElapsed(rollout.elapsedMs);
+    // The wall can also go up between the pre-dispatch read and the wait. Same
+    // truth, same outcome: shipped, unconfirmed.
+    if (!rollout.ok && rollout.ssoWall)
+        return unconfirmed('sso');
     if (!rollout.ok) {
         const why = rollout.reason ?? 'rollout did not complete';
         say(`  ${label}  argocd ${app}  ${why}  ${rolledFor}  ${appUrl}`, 'error');

@@ -133,10 +133,11 @@ and delete the checkout.
 - **[GitHub CLI](https://cli.github.com/) (`gh`), authenticated.** Check with
   `gh auth status`. Every command talks to GitHub through `gh`; nothing works without it.
 - Access to the Vast-menu organisation
-- **An ArgoCD staging account**, and one `vast argocd login` on this machine. Deploys wait
-  for ArgoCD to confirm the new tag is live. Without a token `vast release` and
-  `vast deploy` still run, but they cannot confirm the rollout and say so in the summary —
-  log in for live confirmation. Check with `vast argocd status`.
+- **An ArgoCD staging account**, one `vast argocd login` on this machine, and an ArgoCD
+  API the CLI can actually reach. Deploys wait for ArgoCD to confirm the new tag is live.
+  Without a token — or when the ArgoCD host sits behind a browser sign-in that also covers
+  its API — `vast release` and `vast deploy` still run, but they cannot confirm the
+  rollout and say so in the summary. Check with `vast argocd status`.
 
 ## Commands
 
@@ -182,10 +183,13 @@ sync/health pair (`OutOfSync/Progressing` and so on). The ceiling is **15 minute
 that the repo is reported as timed out, with the ArgoCD URL to look at. A timeout means
 the rollout is still in ArgoCD's hands — it does not mean the build failed.
 
-Without an ArgoCD token the deploy still runs: the image is built and the tag is
-committed, the ArgoCD wait is skipped, and the summary reads `tag committed — rollout not
-confirmed (no ArgoCD token)` instead of claiming the version is live. Run `vast argocd
-login` to get live confirmation.
+Confirmation needs the ArgoCD API to be reachable by the CLI — a stored token on its own
+is not enough. When it is not, the deploy still runs: the image is built and the tag is
+committed, the ArgoCD wait is skipped, and the summary says so instead of claiming the
+version is live. Without a token that reads `tag committed — rollout not confirmed (no
+ArgoCD token)`, and `vast argocd login` fixes it. When the ArgoCD host is behind a browser
+sign-in that also covers `/api/*` it reads `tag committed — rollout not confirmed (ArgoCD
+API behind SSO)`, and logging in cannot fix it — see Troubleshooting.
 
 Every promotion fetches first, then fast-forwards your local branches to match, reporting
 what it pulled:
@@ -493,6 +497,7 @@ Later runs keep that choice rather than re-picking, even when they find the othe
 | `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
 | `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
 | `tag committed — rollout not confirmed (no ArgoCD token)` | The build ran and the tag was committed, but you have never logged in on this machine (or you logged out), so the CLI could not watch ArgoCD. The rollout is almost certainly happening — check the app in ArgoCD, or run `vast argocd login` so the next deploy is confirmed for you. |
+| `ArgoCD's API is behind a browser sign-in (SSO)` / `tag committed — rollout not confirmed (ArgoCD API behind SSO)` | The ArgoCD host sits behind a load-balancer Google sign-in that covers every path, including `/api/*`, so the CLI cannot reach ArgoCD's API at all: `vast argocd login` cannot log in and a stored token cannot be used. **Deploys still work** — the build runs and the tag is committed; only the rollout confirmation is skipped. Watch the rollout in the ArgoCD UI in a browser. The fix is DevOps': exempt `/api/*` from the sign-in rule (ArgoCD's own login still protects the API), or give the CLI another API route. Logging in again will not help, and neither will re-running the deploy. |
 | `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
 | `timed out after 15m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 15 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
 | `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 15 minutes if the rebuild produces no new commit. |

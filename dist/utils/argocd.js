@@ -18,6 +18,49 @@ export class ArgoUnauthorizedError extends Error {
         this.name = 'ArgoUnauthorizedError';
     }
 }
+/**
+ * The API is not answering as an API: a load balancer is demanding a browser
+ * sign-in in front of it.
+ *
+ * Staging's ArgoCD sits behind an AWS ALB `authenticate-oidc` rule, which
+ * intercepts EVERY path — `/api/v1/session` included — and answers 302 to
+ * Google. No token can get past that, and no amount of retrying will change it,
+ * so it is its own error: the CLI reports it once, says who can fix it, and
+ * carries on with the work that never needed ArgoCD.
+ */
+export class ArgoSsoWallError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ArgoSsoWallError';
+    }
+}
+/** The statuses an ALB auth rule bounces an unauthenticated request with. */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+function ssoWallMessage(host) {
+    return (`ArgoCD's API at ${host} is behind a browser sign-in (SSO) at the load balancer, ` +
+        'so the CLI cannot reach it. Ask DevOps to exempt /api/* from that rule; ' +
+        "ArgoCD's own login still protects it.");
+}
+/**
+ * Every call into the ArgoCD API goes through here, so the wall is detected in
+ * exactly one place.
+ *
+ * `redirect: 'manual'` is the load-bearing part. Left to itself, fetch follows
+ * the ALB's 302 to Google and returns a 200 text/html sign-in page, which then
+ * reaches `JSON.parse` and dies as `Unexpected token '<'` — a message that
+ * says nothing about what is actually wrong. The HTML check is the belt to
+ * that braces: an intercepting proxy that answers 200 with a login page is the
+ * same wall wearing a different status code.
+ */
+async function argoRequest(host, path, init, fetchFn) {
+    const res = await fetchFn(`${host}${path}`, { ...init, redirect: 'manual' });
+    if (REDIRECT_STATUSES.has(res.status))
+        throw new ArgoSsoWallError(ssoWallMessage(host));
+    if ((res.headers.get('content-type') ?? '').trim().toLowerCase().startsWith('text/html')) {
+        throw new ArgoSsoWallError(ssoWallMessage(host));
+    }
+    return { res, body: await res.text() };
+}
 /** Best-effort message out of an ArgoCD error body, which is `{error, message}`. */
 function serverMessage(body, status) {
     try {
@@ -38,12 +81,11 @@ function serverMessage(body, status) {
  * echoed back, and never included in a thrown message.
  */
 export async function login(host, username, password, fetchFn = fetch) {
-    const res = await fetchFn(`${host}/api/v1/session`, {
+    const { res, body } = await argoRequest(host, '/api/v1/session', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username, password }),
-    });
-    const body = await res.text();
+    }, fetchFn);
     if (!res.ok)
         throw new Error(`argocd login failed: ${serverMessage(body, res.status)}`);
     const token = JSON.parse(body).token;
@@ -58,12 +100,9 @@ export async function login(host, username, password, fetchFn = fetch) {
  * print "expired", not blow up — so 401/403 returns `{ loggedIn: false }`.
  */
 export async function userinfo(host, token, fetchFn = fetch) {
-    const res = await fetchFn(`${host}/api/v1/session/userinfo`, {
-        headers: { authorization: `Bearer ${token}` },
-    });
+    const { res, body } = await argoRequest(host, '/api/v1/session/userinfo', { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403)
         return { loggedIn: false };
-    const body = await res.text();
     if (!res.ok)
         throw new Error(`argocd userinfo failed: ${serverMessage(body, res.status)}`);
     const parsed = JSON.parse(body);
@@ -72,10 +111,7 @@ export async function userinfo(host, token, fetchFn = fetch) {
     return parsed.username ? { loggedIn: true, username: parsed.username } : { loggedIn: true };
 }
 export async function getApplication(host, token, app, fetchFn = fetch) {
-    const res = await fetchFn(`${host}/api/v1/applications/${encodeURIComponent(app)}`, {
-        headers: { authorization: `Bearer ${token}` },
-    });
-    const body = await res.text();
+    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}`, { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403) {
         throw new ArgoUnauthorizedError(`argocd rejected the token: ${serverMessage(body, res.status)}`);
     }
@@ -100,8 +136,7 @@ export async function getApplication(host, token, app, fetchFn = fetch) {
  * the waiter reads the state on its own schedule.
  */
 export async function refreshApplication(host, token, app, fetchFn = fetch) {
-    const res = await fetchFn(`${host}/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`, { headers: { authorization: `Bearer ${token}` } });
-    const body = await res.text();
+    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`, { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403) {
         throw new ArgoUnauthorizedError(`argocd rejected the token: ${serverMessage(body, res.status)}`);
     }
@@ -158,6 +193,17 @@ export async function waitForRollout(label, appName, tag, deps, timing = DEFAULT
             // A bad token will never come good by waiting, and every other repo in
             // the release is about to hit the same wall. Stop now and say what fixes
             // it rather than burning fifteen minutes per repo.
+            // Nothing gets through an ALB auth rule, so twelve retries would only
+            // turn a working deploy into a false failure a minute later. Say it once.
+            if (error instanceof ArgoSsoWallError) {
+                return {
+                    ok: false,
+                    elapsedMs: deps.now() - start,
+                    reason: 'argocd api behind sso',
+                    ssoWall: true,
+                    app: lastApp,
+                };
+            }
             if (error instanceof ArgoUnauthorizedError) {
                 return {
                     ok: false,
