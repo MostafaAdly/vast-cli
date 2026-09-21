@@ -57,6 +57,10 @@ npm run dev        # run TypeScript directly via tsx
 - `git log --merges` matches on parent count, not subject text — fixtures that
   need merge commits must create real ones (`git merge --no-ff`), not
   `--allow-empty` commits that merely look like merges.
+- A bare number is a PR number by design, so a test that shortens a fixture SHA
+  must cut it where it still contains a letter (see `shortShaWithLetter` in
+  `tests/picks.test.ts`). An 8-char prefix is all digits about once in forty
+  runs, and that was the suite's one flake until 2.2.2.
 
 ## Releasing this CLI
 
