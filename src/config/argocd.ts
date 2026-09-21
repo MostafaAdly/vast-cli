@@ -34,6 +34,13 @@ interface StoredArgocd {
   token?: string;
   username?: string;
   savedAt?: string;
+  /**
+   * The load balancer's own session cookie (`AWSELBAuthSessionCookie-*`), pasted
+   * by the user out of a browser that has signed in. It gets requests past the
+   * ALB's Google sign-in so ArgoCD's real login and API can be reached at all.
+   */
+  albCookie?: string;
+  albCookieSavedAt?: string;
 }
 
 export function argocdFile(env: DeployEnv): string {
@@ -85,6 +92,49 @@ export function saveArgocdToken(env: DeployEnv, token: string, username: string)
 
 export function forgetArgocdToken(env: DeployEnv): void {
   rmSync(argocdFile(env), { force: true });
+}
+
+/** Only the cookies the load balancer itself sets. Everything else a browser holds is noise. */
+const ALB_COOKIE_PREFIX = 'AWSELBAuthSessionCookie';
+
+/**
+ * Turn whatever the user pasted into the exact `Cookie` header value to send.
+ *
+ * People copy this three ways: the bare value from DevTools, one `name=value`
+ * pair, or a whole `Cookie:` line lifted from a request. All three are accepted,
+ * and only the `AWSELBAuthSessionCookie-*` pairs are kept — the ALB splits long
+ * sessions into `-0`, `-1`, ... so several may be needed, while `_ga`,
+ * `AWSALBAuthNonce` and `argocd.token` must never be stored or sent.
+ */
+export function normalizeAlbCookie(input: string): string | null {
+  const text = input.trim().replace(/^cookie:\s*/i, '');
+  if (!text) return null;
+  if (!text.includes('=')) return `${ALB_COOKIE_PREFIX}-0=${text}`;
+  const pairs = text
+    .split(';')
+    .map((pair) => pair.trim())
+    .filter((pair) => pair.startsWith(ALB_COOKIE_PREFIX) && pair.includes('='));
+  return pairs.length > 0 ? pairs.join('; ') : null;
+}
+
+/** The stored ALB cookie for an env, or null. The env var wins, like the token's. */
+export function readAlbCookie(env: DeployEnv): string | null {
+  const fromEnv = process.env[`VAST_ARGOCD_ALB_COOKIE_${env.toUpperCase()}`]?.trim();
+  if (fromEnv) return fromEnv;
+  const stored = read(env).albCookie?.trim();
+  return stored || null;
+}
+
+export function albCookieSavedAt(env: DeployEnv): string | null {
+  return read(env).albCookieSavedAt ?? null;
+}
+
+export function saveAlbCookie(env: DeployEnv, cookie: string): void {
+  const file = argocdFile(env);
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const next: StoredArgocd = { ...read(env), albCookie: cookie, albCookieSavedAt: new Date().toISOString() };
+  writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
+  chmodSync(file, 0o600);
 }
 
 export function argocdAppUrl(env: DeployEnv, app: string): string {

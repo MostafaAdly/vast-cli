@@ -139,3 +139,61 @@ test('argocdAppUrl points at the env host', () => {
 });
 
 process.on('exit', () => rmSync(SANDBOX, { recursive: true, force: true }));
+
+// --- the load-balancer session cookie that gets the CLI past the SSO wall ---
+const {
+  normalizeAlbCookie,
+  readAlbCookie,
+  saveAlbCookie,
+  albCookieSavedAt,
+} = await import('../src/config/argocd.js');
+
+test('normalizeAlbCookie accepts a bare value and names it', () => {
+  assert.equal(normalizeAlbCookie('  abc123  '), 'AWSELBAuthSessionCookie-0=abc123');
+});
+
+test('normalizeAlbCookie keeps only the ALB session pairs out of a whole Cookie line', () => {
+  const line = '_ga=GA1.1; AWSALBAuthNonce=nonce; AWSELBAuthSessionCookie-0=part0; AWSELBAuthSessionCookie-1=part1; argocd.token=';
+  assert.equal(
+    normalizeAlbCookie(line),
+    'AWSELBAuthSessionCookie-0=part0; AWSELBAuthSessionCookie-1=part1',
+  );
+});
+
+test('normalizeAlbCookie returns null when nothing usable was pasted', () => {
+  assert.equal(normalizeAlbCookie('_ga=GA1.1; argocd.token='), null);
+  assert.equal(normalizeAlbCookie('   '), null);
+});
+
+test('saveAlbCookie stores the cookie beside the token, owner-only, with a timestamp', () => {
+  clean();
+  saveArgocdToken('staging', 'tok', 'admin');
+  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=part0');
+  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=part0');
+  assert.equal(readArgocdToken('staging'), 'tok', 'the token survives saving a cookie');
+  assert.ok(albCookieSavedAt('staging'));
+  assert.equal(statSync(argocdFile('staging')).mode & 0o777, 0o600);
+});
+
+test('the ALB cookie env var beats the stored one', () => {
+  clean();
+  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=stored');
+  process.env.VAST_ARGOCD_ALB_COOKIE_STAGING = 'AWSELBAuthSessionCookie-0=fromenv';
+  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=fromenv');
+  process.env.VAST_ARGOCD_ALB_COOKIE_STAGING = '   ';
+  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=stored');
+  delete process.env.VAST_ARGOCD_ALB_COOKIE_STAGING;
+});
+
+test('no cookie stored and no env var reads as null', () => {
+  clean();
+  assert.equal(readAlbCookie('staging'), null);
+  assert.equal(albCookieSavedAt('staging'), null);
+});
+
+test('forgetArgocdToken drops the cookie too', () => {
+  clean();
+  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=part0');
+  forgetArgocdToken('staging');
+  assert.equal(readAlbCookie('staging'), null);
+});

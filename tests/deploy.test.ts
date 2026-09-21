@@ -179,6 +179,7 @@ function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls 
       calls.refreshed.push(`${app}@${calls.rollouts.length}`);
     },
     readArgocdToken: () => 'a-token',
+    readAlbCookie: () => null,
     argocdHost: () => 'https://argocd-stg.example.com',
     argocdAppUrl: (_env, app) => `https://argocd-stg.example.com/applications/${app}`,
     ...over,
@@ -519,4 +520,56 @@ test('an SSO wall found during the rollout wait is unconfirmed, not failed', asy
   assert.match(outcome.detail, /exempt \/api\/\*/);
   assert.ok(!/live on/.test(outcome.detail));
   assert.match(lines[lines.length - 1], /tag committed — rollout not confirmed \(ArgoCD API behind SSO\)/);
+});
+
+// --- the ALB session cookie reaches every ArgoCD read a deploy makes ---
+test('the stored ALB cookie is passed to the snapshot, the refresh and the wait', async () => {
+  const { slot } = recordingSlot();
+  const cookies: Array<string | null | undefined> = [];
+  const { deps: d } = deps({
+    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=part0',
+    getApplication: async (_h, _t, _a, _f, cookie) => {
+      cookies.push(cookie);
+      return STALE;
+    },
+    refreshApplication: async (_h, _t, _a, _f, cookie) => {
+      cookies.push(cookie);
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.equal(outcome.status, 'released');
+  // snapshot + refresh; the wait is faked here, its closure is exercised below.
+  assert.deepEqual(cookies, ['AWSELBAuthSessionCookie-0=part0', 'AWSELBAuthSessionCookie-0=part0']);
+});
+
+test('the rollout wait reads the app with the cookie too', async () => {
+  const { slot } = recordingSlot();
+  const cookies: Array<string | null | undefined> = [];
+  const { deps: d } = deps({
+    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=part0',
+    getApplication: async (_h, _t, _a, _f, cookie) => {
+      cookies.push(cookie);
+      return HEALTHY;
+    },
+    waitForRollout: async (_label, _app, _tag, rdeps): Promise<RolloutResult> => {
+      const app = await rdeps.getApp();
+      return { ok: true, elapsedMs: 1000, app };
+    },
+  });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.ok(cookies.length >= 2 && cookies.every((c) => c === 'AWSELBAuthSessionCookie-0=part0'));
+});
+
+test('hitting the wall with a stored cookie says the cookie expired', async () => {
+  const { slot } = recordingSlot();
+  const { deps: d } = deps({
+    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=old',
+    getApplication: async () => {
+      throw new ArgoSsoWallError('wall');
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.equal(outcome.status, 'released');
+  assert.match(outcome.detail, /session cookie expired/);
+  assert.match(outcome.detail, /vast argocd login/);
 });

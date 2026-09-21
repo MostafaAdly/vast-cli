@@ -56,9 +56,18 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 function ssoWallMessage(host: string): string {
   return (
     `ArgoCD's API at ${host} is behind a browser sign-in (SSO) at the load balancer, ` +
-    'so the CLI cannot reach it. Ask DevOps to exempt /api/* from that rule; ' +
-    "ArgoCD's own login still protects it."
+    'so the CLI cannot reach it. Sign in to ArgoCD in your browser once, then run ' +
+    '`vast argocd login` and paste the load-balancer session cookie when asked. ' +
+    'The permanent fix is for DevOps to exempt /api/* from that rule.'
   );
+}
+
+/** A user-pasted `AWSELBAuthSessionCookie-*` value; null when the wall is not in the way. */
+type AlbCookie = string | null | undefined;
+
+/** The auth headers a call needs, with the ALB cookie riding along when there is one. */
+function withCookie(headers: Record<string, string>, cookie: AlbCookie): Record<string, string> {
+  return cookie ? { ...headers, cookie } : headers;
 }
 
 /**
@@ -109,13 +118,14 @@ export async function login(
   username: string,
   password: string,
   fetchFn: FetchFn = fetch,
+  cookie: AlbCookie = null,
 ): Promise<string> {
   const { res, body } = await argoRequest(
     host,
     '/api/v1/session',
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: withCookie({ 'content-type': 'application/json' }, cookie),
       body: JSON.stringify({ username, password }),
     },
     fetchFn,
@@ -137,11 +147,12 @@ export async function userinfo(
   host: string,
   token: string,
   fetchFn: FetchFn = fetch,
+  cookie: AlbCookie = null,
 ): Promise<{ loggedIn: boolean; username?: string }> {
   const { res, body } = await argoRequest(
     host,
     '/api/v1/session/userinfo',
-    { headers: { authorization: `Bearer ${token}` } },
+    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
     fetchFn,
   );
   if (res.status === 401 || res.status === 403) return { loggedIn: false };
@@ -158,11 +169,12 @@ export async function getApplication(
   token: string,
   app: string,
   fetchFn: FetchFn = fetch,
+  cookie: AlbCookie = null,
 ): Promise<ArgoApp> {
   const { res, body } = await argoRequest(
     host,
     `/api/v1/applications/${encodeURIComponent(app)}`,
-    { headers: { authorization: `Bearer ${token}` } },
+    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
     fetchFn,
   );
 
@@ -203,11 +215,12 @@ export async function refreshApplication(
   token: string,
   app: string,
   fetchFn: FetchFn = fetch,
+  cookie: AlbCookie = null,
 ): Promise<void> {
   const { res, body } = await argoRequest(
     host,
     `/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`,
-    { headers: { authorization: `Bearer ${token}` } },
+    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
     fetchFn,
   );
   if (res.status === 401 || res.status === 403) {
