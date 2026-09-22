@@ -11,7 +11,7 @@
  */
 import inquirer from 'inquirer';
 import { DEPLOY_ENVS } from '../config/repos.js';
-import { albCookieSavedAt, argocdFile, argocdHost, forgetArgocdToken, normalizeAlbCookie, readAlbCookie, readArgocdToken, saveAlbCookie, saveArgocdToken, } from '../config/argocd.js';
+import { albCookieSavedAt, argocdFile, argocdHost, forgetArgocdToken, isArgocdEnabled, setArgocdEnabled, normalizeAlbCookie, readAlbCookie, readArgocdToken, saveAlbCookie, saveArgocdToken, } from '../config/argocd.js';
 import { ArgoSsoWallError, login as argoLogin, userinfo } from '../utils/argocd.js';
 import { createErrorBox, createHeader, createInfoBox, createSuccessBox, formatKeyValue, log, } from '../utils/ui.js';
 function parseEnv(value) {
@@ -122,8 +122,12 @@ async function status() {
         const host = argocdHost(env);
         const token = readArgocdToken(env);
         const fromEnvVar = Boolean(process.env[`VAST_ARGOCD_TOKEN_${env.toUpperCase()}`]?.trim());
+        const enabled = isArgocdEnabled(env);
         let state = 'no token — run `vast argocd login`';
-        if (token) {
+        if (!enabled) {
+            state = 'not checked — confirmation is disabled';
+        }
+        else if (token) {
             // Only asked when a token exists, so `status` makes no network call for
             // an env you have never logged in to — production included.
             try {
@@ -149,11 +153,22 @@ async function status() {
             : 'none';
         console.log(createInfoBox(env, [
             formatKeyValue('Host', host),
+            formatKeyValue('Confirmation', enabled ? 'enabled' : 'disabled — `vast argocd enable` to turn on'),
             formatKeyValue('Token', token ? (fromEnvVar ? 'from VAST_ARGOCD_TOKEN env var' : argocdFile(env)) : 'none'),
             formatKeyValue('Cookie', cookie),
             formatKeyValue('Session', state),
         ]));
     }
+}
+function setEnabled(enabled, options) {
+    const env = parseEnv(options.to);
+    setArgocdEnabled(env, enabled);
+    console.log(enabled
+        ? createSuccessBox(`ArgoCD confirmation enabled for ${env}`, 'Deploys will refresh the app and wait until it is Synced/Healthy again.\n' +
+            'Check the connection with `vast argocd status`.')
+        : createSuccessBox(`ArgoCD confirmation disabled for ${env}`, 'Deploys still build and commit the tag, but make no ArgoCD call at all\n' +
+            'and report "rollout not confirmed (ArgoCD disabled)". Turn it back on\n' +
+            'with `vast argocd enable`.'));
 }
 function logout(options) {
     const env = parseEnv(options.to);
@@ -170,6 +185,8 @@ Examples:
   $ vast argocd login                 log in to staging
   $ vast argocd login --username me   skip the username prompt
   $ vast argocd logout                forget the staging token
+  $ vast argocd disable               stop talking to ArgoCD during deploys
+  $ vast argocd enable                start confirming rollouts again
 
 Why this exists:
 
@@ -200,6 +217,11 @@ Set VAST_ARGOCD_TOKEN_STAGING (or _PRODUCTION) to supply a token instead, and
 VAST_ARGOCD_ALB_COOKIE_STAGING for the cookie; the env vars win over the file. Override the server with a "host" field in
 that same file.
 
+When ArgoCD cannot be reached from your machine at all, \`vast argocd disable\`
+turns every ArgoCD call off: releases and deploys still build and commit the tag,
+report "rollout not confirmed (ArgoCD disabled)", and never fail on ArgoCD. The
+switch is per environment and survives \`vast argocd logout\`.
+
 Production is not deployed by this CLI yet, so you only need staging.
 `);
     cmd
@@ -212,6 +234,16 @@ Production is not deployed by this CLI yet, so you only need staging.
         .option('--to <env>', 'Environment to log in to (staging|production)', 'staging')
         .option('--username <user>', 'ArgoCD username (prompted when omitted)')
         .action(login);
+    cmd
+        .command('enable')
+        .description('Confirm rollouts through ArgoCD during release and deploy (the default)')
+        .option('--to <env>', 'Environment (staging|production)', 'staging')
+        .action((options) => setEnabled(true, options));
+    cmd
+        .command('disable')
+        .description('Skip every ArgoCD call during release and deploy; rollouts go unconfirmed')
+        .option('--to <env>', 'Environment (staging|production)', 'staging')
+        .action((options) => setEnabled(false, options));
     cmd
         .command('logout')
         .description('Forget the stored ArgoCD token and session cookie')

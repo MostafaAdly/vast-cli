@@ -156,7 +156,7 @@ worked examples.
 | `vast release` | Promote develop→staging, derive the version, deploy, wait until it is live |
 | `vast promote` | Merge branches, or open a release/hotfix PR into production — `--slack` announces it |
 | `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
-| `vast argocd` | Log in to ArgoCD, check the stored token, log out |
+| `vast argocd` | Log in to ArgoCD, check the stored token, log out, or `enable`/`disable` rollout confirmation |
 | `vast slack` | Set up the Slack bot token and channel, check them, log out |
 | `vast workflow` | Trigger a raw GitHub Actions workflow — never on a protected branch |
 | `vast production` | Show or change the production deploy lock |
@@ -529,7 +529,9 @@ exchanges the password for a token and forgets the password. Alongside it sits t
 load-balancer session cookie you pasted, which the CLI sends on every ArgoCD request.
 `vast argocd status` reports whether a token is stored and whether ArgoCD still accepts it,
 and whether a cookie is stored — `Cookie: present (saved <date>)` or `Cookie: none`. It
-never prints either value. `vast argocd logout` deletes the file, clearing both. For CI or
+never prints either value. `vast argocd logout` deletes the file, clearing both.
+`vast argocd disable` writes an empty `argocd/<env>.disabled` marker that turns every ArgoCD
+call off for that environment; `vast argocd enable` removes it. For CI or
 a throwaway shell, set `VAST_ARGOCD_TOKEN_STAGING` and `VAST_ARGOCD_ALB_COOKIE_STAGING`
 and they win over the file, with nothing written to disk.
 
@@ -589,6 +591,7 @@ from the sign-in rule, and the cookie step disappears.
 | `tag committed — rollout not confirmed (no ArgoCD token)` | The build ran and the tag was committed, but you have never logged in on this machine (or you logged out), so the CLI could not watch ArgoCD. The rollout is almost certainly happening — check the app in ArgoCD, or run `vast argocd login` so the next deploy is confirmed for you. |
 | `ArgoCD's API is behind a browser sign-in (SSO)` / `tag committed — rollout not confirmed (ArgoCD API behind SSO)` | The ArgoCD host sits behind a load-balancer Google sign-in that covers every path, including `/api/*`, and the CLI has no session cookie to get past it. Sign in to `https://argocd-stg.vastmenu.com` in your browser, copy the `AWSELBAuthSessionCookie-0` value from DevTools → Application → Cookies, and run `vast argocd login` — it asks for the cookie, then for your ArgoCD username and password. Full steps: [When ArgoCD sits behind a browser sign-in](#when-argocd-sits-behind-a-browser-sign-in). **Deploys still work** meanwhile — the build runs and the tag is committed; only the rollout confirmation is skipped, and you can watch it in the ArgoCD UI. The permanent fix is DevOps': exempt `/api/*` from the sign-in rule (ArgoCD's own login still protects the API), and the cookie step goes away. |
 | `tag committed — rollout not confirmed (ArgoCD session cookie expired — run vast argocd login again)` | Your load-balancer session cookie has aged out — it lasts about a week — so the CLI hit the sign-in wall again and skipped the rollout wait. Nothing failed: the build ran and the tag was committed. Grab a fresh cookie from the browser and run `vast argocd login` again, and the next deploy is confirmed for you. Do not re-run the deploy to "make it green". |
+| A release fails or stalls on ArgoCD (login, refresh, or the rollout wait) and you just need to ship | Run `vast argocd disable`. Releases and deploys then build and commit the tag as usual, make no ArgoCD call at all, and report `tag committed — rollout not confirmed (ArgoCD disabled)` instead of failing. Watch the rollout in the ArgoCD UI. `vast argocd enable` turns confirmation back on; the switch is per environment (`--to`) and survives `vast argocd logout`. |
 | `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
 | `timed out after 15m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 15 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
 | `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 15 minutes if the rebuild produces no new commit. |

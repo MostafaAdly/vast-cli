@@ -330,6 +330,13 @@ browser. To get confirmations back, relay the cookie procedure in §0 for them t
 run themselves — never handle the cookie yourself. The permanent fix is DevOps
 exempting `/api/*` from the sign-in rule. **Do not re-run the deploy.**
 
+**`tag committed — rollout not confirmed (ArgoCD disabled)`.** The user has
+turned confirmation off with `vast argocd disable`, so the CLI made no ArgoCD call.
+Not a failure: report the repo as released-but-unconfirmed and point at the ArgoCD
+UI. If a release keeps failing on ArgoCD itself (login, refresh or the wait) and the
+user needs to ship, suggest they run `vast argocd disable` themselves and
+`vast argocd enable` once ArgoCD is reachable again. Do not flip it for them.
+
 **`tag committed — rollout not confirmed (ArgoCD session cookie expired — run
 vast argocd login again)`.** Not a failure either. The stored load-balancer
 session cookie aged out — it lasts about a week — so the CLI hit the sign-in wall

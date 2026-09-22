@@ -28,7 +28,7 @@ import {
   type RepoConfig,
 } from '../config/repos.js';
 import { productionRefusal } from '../config/production-lock.js';
-import { argocdAppUrl, argocdHost, readAlbCookie, readArgocdToken } from '../config/argocd.js';
+import { argocdAppUrl, argocdHost, isArgocdEnabled, readAlbCookie, readArgocdToken } from '../config/argocd.js';
 import {
   ArgoSsoWallError,
   ArgoUnauthorizedError,
@@ -246,6 +246,8 @@ export interface DeployDeps {
   readArgocdToken: (env: DeployEnv) => string | null;
   /** The user-pasted load-balancer cookie that gets past the SSO wall, if any. */
   readAlbCookie: (env: DeployEnv) => string | null;
+  /** `vast argocd disable` turns every ArgoCD call off for that env. */
+  argocdEnabled: (env: DeployEnv) => boolean;
   argocdHost: (env: DeployEnv) => string;
   argocdAppUrl: (env: DeployEnv, app: string) => string;
   /** Overridden only by tests that exercise the real waiter. */
@@ -261,6 +263,7 @@ export const DEFAULT_DEPLOY_DEPS: DeployDeps = {
   refreshApplication,
   readArgocdToken,
   readAlbCookie,
+  argocdEnabled: isArgocdEnabled,
   argocdHost,
   argocdAppUrl,
 };
@@ -312,7 +315,10 @@ export async function deployOne(
   // confirmation that the cluster took the tag. So the deploy runs, the wait is
   // skipped, and the outcome says plainly that the rollout was not confirmed
   // rather than claiming the version is live.
-  const token = deps.readArgocdToken(env);
+  // Disabled means no ArgoCD call of any kind — no snapshot, no refresh, no
+  // wait — so an unreachable host can never turn a good build into a failure.
+  const argoOn = deps.argocdEnabled(env);
+  const token = argoOn ? deps.readArgocdToken(env) : null;
   const cookie = deps.readAlbCookie(env);
 
   const host = deps.argocdHost(env);
@@ -409,11 +415,13 @@ export async function deployOne(
   // The SSO wall lands in the same place for the same reason: whatever is
   // blocking the API, the tag IS committed, and calling that a failure would be
   // a lie about a deploy that already shipped.
-  const unconfirmed = (kind: 'token' | 'sso'): DeployOutcome => {
+  const unconfirmed = (kind: 'token' | 'sso' | 'disabled'): DeployOutcome => {
     const why =
       kind === 'sso'
         ? 'tag committed — rollout not confirmed (ArgoCD API behind SSO)'
-        : 'tag committed — rollout not confirmed (no ArgoCD token)';
+        : kind === 'disabled'
+          ? 'tag committed — rollout not confirmed (ArgoCD disabled)'
+          : 'tag committed — rollout not confirmed (no ArgoCD token)';
     say(`  ${label}  run ${runId}  succeeded  ${ranFor}  ${why}`, 'success');
     // A wall hit WITH a cookie means the cookie aged out (they last about a
     // week); without one, the user has never bridged it. Different next steps.
@@ -426,10 +434,14 @@ export async function deployOne(
       'released',
       kind === 'sso'
         ? ssoDetail
-        : `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
+        : kind === 'disabled'
+          ? `${version} tag committed — rollout not confirmed (ArgoCD disabled; ` +
+            '`vast argocd enable` to confirm rollouts again)'
+          : `${version} tag committed — rollout not confirmed (no ArgoCD token; ` +
             '`vast argocd login` to confirm next time)',
     );
   };
+  if (!argoOn) return unconfirmed('disabled');
   if (!token) return unconfirmed('token');
   if (ssoWall) return unconfirmed('sso');
 

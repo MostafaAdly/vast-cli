@@ -180,6 +180,7 @@ function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls 
     },
     readArgocdToken: () => 'a-token',
     readAlbCookie: () => null,
+    argocdEnabled: () => true,
     argocdHost: () => 'https://argocd-stg.example.com',
     argocdAppUrl: (_env, app) => `https://argocd-stg.example.com/applications/${app}`,
     ...over,
@@ -572,4 +573,28 @@ test('hitting the wall with a stored cookie says the cookie expired', async () =
   assert.equal(outcome.status, 'released');
   assert.match(outcome.detail, /session cookie expired/);
   assert.match(outcome.detail, /vast argocd login/);
+});
+
+// --- `vast argocd disable`: deploy runs, ArgoCD is never touched ---
+test('with ArgoCD disabled the deploy runs and no ArgoCD call is made', async () => {
+  const { slot, lines } = recordingSlot();
+  let argoCalls = 0;
+  const { deps: d, calls } = deps({
+    argocdEnabled: () => false,
+    getApplication: async () => {
+      argoCalls++;
+      return STALE;
+    },
+    refreshApplication: async () => {
+      argoCalls++;
+    },
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
+  assert.equal(outcome.status, 'released');
+  assert.equal(calls.dispatched.length, 1, 'the build still runs');
+  assert.equal(argoCalls, 0);
+  assert.deepEqual(calls.rollouts, []);
+  assert.match(outcome.detail, /ArgoCD disabled/);
+  assert.match(outcome.detail, /vast argocd enable/);
+  assert.match(lines.at(-1) ?? '', /rollout not confirmed \(ArgoCD disabled\)/);
 });

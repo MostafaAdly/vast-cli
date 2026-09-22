@@ -45,5 +45,7 @@ export declare function normalizeAlbCookie(input: string): string | null;
 export declare function readAlbCookie(env: DeployEnv): string | null;
 export declare function albCookieSavedAt(env: DeployEnv): string | null;
 export declare function saveAlbCookie(env: DeployEnv, cookie: string): void;
+export declare function isArgocdEnabled(env: DeployEnv): boolean;
+export declare function setArgocdEnabled(env: DeployEnv, enabled: boolean): void;
 export declare function argocdAppUrl(env: DeployEnv, app: string): string;
 //# sourceMappingURL=argocd.d.ts.map
