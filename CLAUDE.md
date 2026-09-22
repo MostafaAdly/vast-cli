@@ -141,6 +141,11 @@ in `Vast-deployments`:
   wall again and says `ArgoCD session cookie expired — run vast argocd login
   again`. The permanent fix is still DevOps exempting `/api/*` from the sign-in
   rule (ArgoCD's own login still protects it).
+- `vast argocd disable [--to env]` writes `~/.vast-cli/argocd/<env>.disabled`, and
+  `deployOne` then makes no ArgoCD call at all (no snapshot, refresh or wait) and
+  reports `rollout not confirmed (ArgoCD disabled)`. It is a separate marker, not a
+  field in the token file, so `logout` cannot silently re-enable it. `enable`
+  removes it.
 - `vast argocd login` stores a session token in `~/.vast-cli/argocd/<env>.json`,
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.

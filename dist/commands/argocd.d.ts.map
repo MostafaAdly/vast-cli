@@ -1,1 +1,1 @@
-{"version":3,"file":"argocd.d.ts","sourceRoot":"","sources":["../../src/commands/argocd.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;GAUG;AAEH,OAAO,EAAE,OAAO,EAAE,MAAM,WAAW,CAAC;AAoMpC,wBAAgB,qBAAqB,CAAC,OAAO,EAAE,OAAO,GAAG,IAAI,CA+D5D"}
+{"version":3,"file":"argocd.d.ts","sourceRoot":"","sources":["../../src/commands/argocd.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;GAUG;AAEH,OAAO,EAAE,OAAO,EAAE,MAAM,WAAW,CAAC;AA6NpC,wBAAgB,qBAAqB,CAAC,OAAO,EAAE,OAAO,GAAG,IAAI,CAkF5D"}

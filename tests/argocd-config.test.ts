@@ -197,3 +197,24 @@ test('forgetArgocdToken drops the cookie too', () => {
   forgetArgocdToken('staging');
   assert.equal(readAlbCookie('staging'), null);
 });
+
+// --- the on/off switch for rollout confirmation ---
+const { isArgocdEnabled, setArgocdEnabled } = await import('../src/config/argocd.js');
+
+test('ArgoCD confirmation is on by default', () => {
+  clean();
+  setArgocdEnabled('staging', true);
+  assert.equal(isArgocdEnabled('staging'), true);
+});
+
+test('disabling is per environment and survives a logout', () => {
+  clean();
+  saveArgocdToken('staging', 'tok', 'admin');
+  setArgocdEnabled('staging', false);
+  assert.equal(isArgocdEnabled('staging'), false);
+  assert.equal(isArgocdEnabled('production'), true);
+  forgetArgocdToken('staging');
+  assert.equal(isArgocdEnabled('staging'), false, 'logging out must not silently turn it back on');
+  setArgocdEnabled('staging', true);
+  assert.equal(isArgocdEnabled('staging'), true);
+});

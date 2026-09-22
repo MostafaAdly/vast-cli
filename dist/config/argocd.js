@@ -113,6 +113,28 @@ export function saveAlbCookie(env, cookie) {
     writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
     chmodSync(file, 0o600);
 }
+/**
+ * Whether deploys should talk to ArgoCD at all. On by default.
+ *
+ * The switch is its own marker file rather than a field in the token file, so
+ * `vast argocd logout` (which deletes that file) can never quietly turn
+ * confirmation back on while the host is still unreachable.
+ */
+function disabledMarker(env) {
+    return join(vastHome(), 'argocd', `${env}.disabled`);
+}
+export function isArgocdEnabled(env) {
+    return !existsSync(disabledMarker(env));
+}
+export function setArgocdEnabled(env, enabled) {
+    const marker = disabledMarker(env);
+    if (enabled) {
+        rmSync(marker, { force: true });
+        return;
+    }
+    mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
+    writeFileSync(marker, `${new Date().toISOString()}\n`, 'utf-8');
+}
 export function argocdAppUrl(env, app) {
     return `${argocdHost(env)}/applications/${app}`;
 }
