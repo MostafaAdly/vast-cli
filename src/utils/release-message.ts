@@ -18,7 +18,7 @@
  */
 
 import { parseSubject, tidy } from './changelog.js';
-import { clickupTaskUrl } from '../config/slack.js';
+import { bullet, bulletBlocks, type Person } from './slack-rich-text.js';
 import type { ShippedPr } from './shipped.js';
 import { contributorKey, mergeContributors, type Contributor } from './contributors.js';
 import { isPipelineNoise } from './pr-subject.js';
@@ -70,16 +70,6 @@ export function extractTickets(texts: string[]): string[] {
     }
   }
   return seen;
-}
-
-/**
- * Slack's mrkdwn reserves exactly three characters, and escaping them is the
- * whole of the rule — `&` first, or the escapes would escape each other.
- * Applied to free text in `text` only; link URLs are left alone, and blocks are
- * JSON, where none of this is special.
- */
-function escape(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** The order everything in the message follows: the order the PRs were opened in. */
@@ -141,9 +131,7 @@ export function releaseContributors(prs: ShippedPr[]): Contributor[] {
  * named in plain text instead, because a release note that silently drops a
  * person is worse than one that cannot ping them.
  */
-type Person = { userId: string } | { plain: string };
-
-function people(prs: ShippedPr[], mentions: Record<string, string | null>): Person[] {
+export function namedPeople(prs: ShippedPr[], mentions: Record<string, string | null>): Person[] {
   return releaseContributors(prs).map((c) => {
     const id = mentions[contributorKey(c)];
     return id ? { userId: id } : { plain: `@${c.name.trim() || c.login || ''}` };
@@ -159,61 +147,13 @@ function tickets(prs: ShippedPr[], fallbackSubjects: string[]): string[] {
   return extractTickets([...byNumber(prs).flatMap((pr) => [pr.branch, pr.title]), ...fallbackSubjects]);
 }
 
-type Element =
-  | { type: 'link'; url: string; text: string }
-  | { type: 'text'; text: string }
-  | { type: 'user'; user_id: string };
-
-/** `items` with a ", " text element between each pair, as the list is typed by hand. */
-function commaSeparated(items: Element[]): Element[] {
-  return items.flatMap((item, i) => (i === 0 ? [item] : [{ type: 'text', text: ', ' } as Element, item]));
-}
-
 export function buildReleaseMessage(input: ReleaseMessageInput): ReleaseMessage {
-  const label = `${input.displayName} - ${input.branch}`;
-  const description = describe(input.prs, input.summaries, input.fallbackSubjects);
-  const named = people(input.prs, input.mentions);
-  const ids = tickets(input.prs, input.fallbackSubjects);
-
-  const parts = [`• <${input.prUrl}|${escape(label)}> - ${escape(description)}`];
-  if (named.length > 0) {
-    parts.push(`(${named.map((p) => ('userId' in p ? `<@${p.userId}>` : escape(p.plain))).join(', ')})`);
-  }
-  if (ids.length > 0) {
-    parts.push(`(${ids.map((id) => `<${clickupTaskUrl(id)}|${id}>`).join(', ')})`);
-  }
-
-  const elements: Element[] = [
-    { type: 'link', url: input.prUrl, text: label },
-    { type: 'text', text: ` - ${description}${named.length > 0 ? ' (' : ''}` },
-  ];
-  if (named.length > 0) {
-    elements.push(
-      ...commaSeparated(
-        named.map((p): Element => ('userId' in p ? { type: 'user', user_id: p.userId } : { type: 'text', text: p.plain })),
-      ),
-    );
-    elements.push({ type: 'text', text: ids.length > 0 ? ') (' : ')' });
-  } else if (ids.length > 0) {
-    elements.push({ type: 'text', text: ' (' });
-  }
-  if (ids.length > 0) {
-    elements.push(...commaSeparated(ids.map((id): Element => ({ type: 'link', url: clickupTaskUrl(id), text: id }))));
-    elements.push({ type: 'text', text: ')' });
-  }
-
-  const blocks = [
-    {
-      type: 'rich_text',
-      elements: [
-        {
-          type: 'rich_text_list',
-          style: 'bullet',
-          elements: [{ type: 'rich_text_section', elements }],
-        },
-      ],
-    },
-  ];
-
-  return { text: parts.join(' '), blocks };
+  const b = bullet({
+    url: input.prUrl,
+    label: `${input.displayName} - ${input.branch}`,
+    description: describe(input.prs, input.summaries, input.fallbackSubjects),
+    people: namedPeople(input.prs, input.mentions),
+    tickets: tickets(input.prs, input.fallbackSubjects),
+  });
+  return { text: b.text, blocks: bulletBlocks([b]) };
 }
