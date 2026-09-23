@@ -199,11 +199,11 @@ Slack error goes to stderr so stdout stays valid JSON.
 
 | Case | Behaviour |
 |---|---|
-| Repo not cloned | `not cloned — vast clone` line, sweep continues, exit 1 at the end |
+| Repo not cloned | named: `not cloned — run vast clone`, exit 1 at the end; in a sweep: skipped, exit 0 (as `vast release` does) |
 | Fetch fails | per-repo error line, sweep continues, exit 1 at the end |
 | `--to staging` on a repo with no develop | `no develop branch`, skipped, exit 0 |
 | `gh pr view` fails for one PR | PR shown with number and branch, `details unavailable` |
-| `gh pr list` fails | report without In flight, one warning line |
+| `gh pr list` fails | report without In flight; a note on the repo (`notes` in the model and JSON), printed after the report |
 | `claude` missing or answer rejected | titles only |
 | Slack not configured or post fails | report still printed, exit 1 |
 
