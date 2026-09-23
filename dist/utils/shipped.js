@@ -16,21 +16,14 @@
 import { execFileSync } from 'child_process';
 import { ORG } from './remote.js';
 import { contributorKey, isExcludedContributor, mergeContributors, } from './contributors.js';
-/** "Merge pull request #796 from Vast-Menu/feat/x" -> number and source branch. */
-const MERGE_SUBJECT = /^Merge pull request #(\d+) from (\S+)/;
-/**
- * The CI opens its own PRs to rewrite package.json's version on each branch.
- * They describe the pipeline, not the product, so the team has nothing to read
- * in them — the same exclusion notes.sh makes.
- */
-const BUMP_BRANCH = /\/bump-(stage|prod)-/;
+import { isBumpBranch, parsePrSubject } from './pr-subject.js';
 function prNumberOfSubject(subject) {
-    const m = MERGE_SUBJECT.exec(subject.trim());
-    if (!m)
+    const pr = parsePrSubject(subject);
+    // The CI's own bump PRs describe the pipeline, not the product — the same
+    // exclusion notes.sh makes.
+    if (!pr || isBumpBranch(pr.branch))
         return null;
-    if (BUMP_BRANCH.test(m[2]))
-        return null;
-    return Number(m[1]);
+    return pr.number;
 }
 /** Unique, ascending — the order a reader scans a list of PR numbers in. */
 function tidyNumbers(numbers) {

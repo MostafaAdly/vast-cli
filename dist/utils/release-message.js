@@ -17,8 +17,9 @@
  * tests.
  */
 import { parseSubject, tidy } from './changelog.js';
-import { clickupTaskUrl } from '../config/slack.js';
+import { bullet, bulletBlocks } from './slack-rich-text.js';
 import { contributorKey, mergeContributors } from './contributors.js';
+import { isPipelineNoise } from './pr-subject.js';
 /**
  * Ticket ids as the team writes them: ClickUp's own `CU-` ids and the `VA-`
  * custom ids used across the Vast lists. Matched case-insensitively because
@@ -33,16 +34,6 @@ const TICKET = /\b(?:VA-\d+|CU-[a-z0-9]+)\b/gi;
  * PR.
  */
 const MAX_SUBJECTS = 6;
-/**
- * Subjects that describe the pipeline, not the product: merge commits, and the
- * version bumps CI writes on every deploy. Nobody in the channel wants to read
- * them.
- */
-function isPipelineNoise(subject) {
-    return (/^Merge (pull request|branch|remote-tracking)/i.test(subject) ||
-        /^chore:\s*bump version to /i.test(subject) ||
-        /^chore:\s*align package\.json version/i.test(subject));
-}
 export function extractTickets(texts) {
     const seen = [];
     for (const text of texts) {
@@ -53,15 +44,6 @@ export function extractTickets(texts) {
         }
     }
     return seen;
-}
-/**
- * Slack's mrkdwn reserves exactly three characters, and escaping them is the
- * whole of the rule — `&` first, or the escapes would escape each other.
- * Applied to free text in `text` only; link URLs are left alone, and blocks are
- * JSON, where none of this is special.
- */
-function escape(text) {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 /** The order everything in the message follows: the order the PRs were opened in. */
 function byNumber(prs) {
@@ -113,7 +95,12 @@ export function describe(prs, summaries, fallbackSubjects) {
 export function releaseContributors(prs) {
     return mergeContributors(byNumber(prs).map((pr) => pr.contributors));
 }
-function people(prs, mentions) {
+/**
+ * A resolved Slack id becomes a real mention; anyone Slack could not match is
+ * named in plain text instead, because a release note that silently drops a
+ * person is worse than one that cannot ping them.
+ */
+export function namedPeople(prs, mentions) {
     return releaseContributors(prs).map((c) => {
         const id = mentions[contributorKey(c)];
         return id ? { userId: id } : { plain: `@${c.name.trim() || c.login || ''}` };
@@ -127,49 +114,14 @@ function people(prs, mentions) {
 function tickets(prs, fallbackSubjects) {
     return extractTickets([...byNumber(prs).flatMap((pr) => [pr.branch, pr.title]), ...fallbackSubjects]);
 }
-/** `items` with a ", " text element between each pair, as the list is typed by hand. */
-function commaSeparated(items) {
-    return items.flatMap((item, i) => (i === 0 ? [item] : [{ type: 'text', text: ', ' }, item]));
-}
 export function buildReleaseMessage(input) {
-    const label = `${input.displayName} - ${input.branch}`;
-    const description = describe(input.prs, input.summaries, input.fallbackSubjects);
-    const named = people(input.prs, input.mentions);
-    const ids = tickets(input.prs, input.fallbackSubjects);
-    const parts = [`• <${input.prUrl}|${escape(label)}> - ${escape(description)}`];
-    if (named.length > 0) {
-        parts.push(`(${named.map((p) => ('userId' in p ? `<@${p.userId}>` : escape(p.plain))).join(', ')})`);
-    }
-    if (ids.length > 0) {
-        parts.push(`(${ids.map((id) => `<${clickupTaskUrl(id)}|${id}>`).join(', ')})`);
-    }
-    const elements = [
-        { type: 'link', url: input.prUrl, text: label },
-        { type: 'text', text: ` - ${description}${named.length > 0 ? ' (' : ''}` },
-    ];
-    if (named.length > 0) {
-        elements.push(...commaSeparated(named.map((p) => ('userId' in p ? { type: 'user', user_id: p.userId } : { type: 'text', text: p.plain }))));
-        elements.push({ type: 'text', text: ids.length > 0 ? ') (' : ')' });
-    }
-    else if (ids.length > 0) {
-        elements.push({ type: 'text', text: ' (' });
-    }
-    if (ids.length > 0) {
-        elements.push(...commaSeparated(ids.map((id) => ({ type: 'link', url: clickupTaskUrl(id), text: id }))));
-        elements.push({ type: 'text', text: ')' });
-    }
-    const blocks = [
-        {
-            type: 'rich_text',
-            elements: [
-                {
-                    type: 'rich_text_list',
-                    style: 'bullet',
-                    elements: [{ type: 'rich_text_section', elements }],
-                },
-            ],
-        },
-    ];
-    return { text: parts.join(' '), blocks };
+    const b = bullet({
+        url: input.prUrl,
+        label: `${input.displayName} - ${input.branch}`,
+        description: describe(input.prs, input.summaries, input.fallbackSubjects),
+        people: namedPeople(input.prs, input.mentions),
+        tickets: tickets(input.prs, input.fallbackSubjects),
+    });
+    return { text: b.text, blocks: bulletBlocks([b]) };
 }
 //# sourceMappingURL=release-message.js.map

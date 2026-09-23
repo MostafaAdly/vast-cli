@@ -153,6 +153,7 @@ worked examples.
 | `vast clone` | Clone the repos your team needs |
 | `vast upgrade` | Update to the latest release |
 | `vast status` | Deployed versions and branch drift |
+| `vast pending` | What staging has that production lacks (or develop vs staging), by PR — `--parity` both ways |
 | `vast release` | Promote develop→staging, derive the version, deploy, wait until it is live |
 | `vast promote` | Merge branches, or open a release/hotfix PR into production — `--slack` announces it |
 | `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
@@ -229,6 +230,39 @@ production migrates, the column reads `Vast-deployments` like staging does.
 **DRIFT** is how many commits are waiting on `develop` that `staging` does not
 have. Only DRIFT needs a local checkout — the tags are read over the API, so they
 are reported even for a repo you have never cloned.
+
+### What's waiting: `vast pending`
+
+```bash
+vast pending VastPayPwa                 # staging PRs production lacks
+vast pending VastPayPwa --parity        # ...and production PRs staging lacks
+vast pending VastPayPwa --to staging    # develop PRs staging lacks (what the next promote carries)
+vast pending --all --short              # every repo, one summary table, titles only
+```
+
+It compares **by PR, not by commit**: PR numbers are read from the
+`Merge pull request #N` subjects on each side, so a PR cherry-picked into a hotfix
+counts as present. Release, hotfix and bump PRs are left out, as are version bumps
+and Helm-values-only commits. PRs already inside an open release/hotfix PR are
+listed as **In flight**; anything waiting more than 14 days is marked **stale**.
+
+`--parity` adds the other direction: on production but not staging (fixes that went
+straight to production), or with `--to staging`, on staging but not develop.
+Anything found on one side only is also checked by code content. **`ported (same
+code)`** means the same change is on the other side under another commit.
+**`not found on <branch>`** is not proof it is missing: a port-back that needed
+conflict fixes has different code, so check it by hand.
+
+Each PR shows a 2-3 word phrase from your local `claude` plus its title; `--short`
+shows titles only and skips the model (so does a machine without `claude`).
+`--by-ticket` groups PRs under their ClickUp tickets.
+
+| Flag | Output |
+|---|---|
+| (none) | Terminal report |
+| `--markdown` | Also prints the report as markdown, ready to paste |
+| `--slack` | Posts one message to the Slack channel from `vast slack setup`: one bullet per repo, the source-not-target direction only. Exits 1 if it cannot post |
+| `--json` | The report as JSON and nothing else, for scripts and the `/release` skill |
 
 ### Versions are derived, not typed
 

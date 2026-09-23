@@ -150,6 +150,25 @@ in `Vast-deployments`:
   mode 0600, never a password. `VAST_ARGOCD_TOKEN_<ENV>` overrides it. Tests must
   keep this under `VAST_CLI_HOME` like every other config path.
 
+## vast pending
+
+- Read-only report of what one branch has that the next lacks: `--to production`
+  (default) is staging vs production, `--to staging` is develop vs staging;
+  `--parity` adds the reverse. The two `*-BackEnd` repos have no develop and are
+  skipped under `--to staging`.
+- Compared **by PR number** from `Merge pull request #N` subjects on every commit
+  (`src/utils/parity.ts`), never by commit: a `--pick` hotfix carries PRs as
+  cherry-picked merges. Vehicles (`release/*`, `hotfix/*`, `bump-*`) and
+  bookkeeping (version bumps, Helm-values-only commits) are dropped; the rules
+  live in `src/utils/pr-subject.ts`, shared with the release announcement.
+- Items left on one side are checked by patch-id: `ported (same code)`. The
+  limit is deliberate wording: a conflict-resolved port-back reads `not found
+  on <branch>`, never "missing".
+- `--slack` posts the forward direction only, one bullet per repo in the
+  announcement's shape (`src/utils/slack-rich-text.ts`), and exits 1 if it
+  cannot post. Never run it live while developing: `~/.vast-cli/slack.json`
+  exists and it would post to the team channel.
+
 ## Slack announcements
 
 - `vast promote --to production --slack` posts one message after the release PR

@@ -17,7 +17,7 @@ export interface SummaryDeps {
     available: () => boolean;
     run: (prompt: string) => string;
 }
-interface PrForSummary {
+export interface PrForSummary {
     number: number;
     title: string;
     branch: string;
@@ -33,6 +33,12 @@ export declare function heuristicSummary(title: string): string;
 export declare function buildSummaryPrompt(prs: PrForSummary[]): string;
 /** A model phrase, or null if it is anything but a short plain phrase. */
 export declare function screenSummary(s: string): string | null;
+/**
+ * The model's phrases alone, screened, with no fallback. A PR the model
+ * skipped or answered badly is absent, and an empty result means no model
+ * answered at all — which is how `vast pending` knows to show titles instead
+ * of the weaker rule-based phrase.
+ */
+export declare function modelPhrases(prs: PrForSummary[], deps?: SummaryDeps): Promise<Record<number, string>>;
 export declare function summarizePrs(prs: PrForSummary[], deps?: SummaryDeps): Promise<Record<number, string>>;
-export {};
 //# sourceMappingURL=pr-summary.d.ts.map

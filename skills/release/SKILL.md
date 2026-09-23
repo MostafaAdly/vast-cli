@@ -106,6 +106,16 @@ lookup failed. If **every** repo's columns read `not migrated` or `?`, the user'
 account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
 rather than treating it as nine separate failures.
 
+**Reading `vast pending`.** `vast pending <repo>` (or `--all`, `--frontend`, `--backend`)
+is read-only and is the right way to answer "what goes in the next release?" or "what
+is waiting?". Use `--json` when you need to reason over it. It compares by PR:
+**In flight** means the PR is already inside an open release/hotfix PR, so do not
+pick it again; **stale** means it has waited more than 14 days. With `--parity`, a
+production-only item marked `ported (same code)` is fine, and one marked `not found
+on staging` needs a human check, not a claim that it is missing: a port-back that
+needed conflict fixes has different code. `--to staging` does the same for develop
+vs staging. Never add `--slack` unless the user asked for it to be posted.
+
 ---
 
 ## 1. Staging release — the default path
@@ -370,6 +380,9 @@ route.
 
 `vast promote --to production` still works and is unaffected: it cuts the branch
 and opens the PR in the app repo, and ships nothing.
+
+Before cutting a release or hotfix PR, run `vast pending <repo> --json` and tell the
+user what is waiting and what is already in flight, so nothing is picked twice.
 
 Production is two commands with a human review gate between them, and
 `/release <repo> --to production` covers only the first:
