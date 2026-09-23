@@ -399,23 +399,30 @@ vast promote VastPayPwa --to production --pick 812 --slack
 ```
 
 ```
-• Vastmenu Dashboard - release/2.1.25 - Per-card-type commission fixed addon (@Mohamed Ammar Al-Sati) (VA-12755)
+• Vastpay Pwa V2 - hotfix/2.1.15 - ELM single charge, Apple Pay layout, guest token reuse, ELM 3DS confirmation, stale order recovery, order dialog UI, cancelled order detection (@Mostafa Adly, @Osama Elshimy) (VA-13091, VA-13085, VA-13121)
 ```
 
-The bullet's link text is the repo's display name plus the branch that was cut, linked
-to the release PR. The description is the titles of the PRs being shipped — bump PRs are
-left out, and with `--pick` it is exactly the PRs you picked; where a change arrived
-without a PR the commit subject is used instead. Authors are mentioned as real Slack
-users, matched from their commit email, and fall back to a plain `@Name` when no Slack
-account matches. Every `VA-####` or `CU-…` ticket found in a PR title, a branch name or a
-commit subject is linked to ClickUp.
+It is posted as a real Slack bulleted list item, not a typed `•`, with real mentions and
+ticket links. The bullet's link text is the repo's display name plus the branch that was
+cut, linked to the release PR. The description gives each shipped PR a two-or-three word
+summary, in ascending PR number order: the local `claude` CLI writes them when it is
+installed, and a rule-based short form of the PR title is used when it is not (or when its
+answer does not pass screening). Bump PRs are left out, and with `--pick` it is exactly
+the PRs you picked; where nothing arrived through a PR the commit subjects are used
+instead. The people named are everyone who worked on those PRs — the PR authors and the
+authors of their commits — once each; Mahmoud Elzahaby, Ali Elhabal and Youssif Elzahaby
+and bots are always left out. They are mentioned as real Slack users, matched from their
+commit email, and fall back to a plain `@Name` when no Slack account matches. Every
+`VA-####` or `CU-…` ticket found in a PR branch, a PR title or a commit subject is linked
+to ClickUp, in the same PR order.
 
 The announcement is opt-in and never load-bearing:
 
 - Without `--slack`, nothing is posted. Staging never posts at all — this is a production
   announcement only.
 - `--dry-run --slack` prints the message it would send and sends nothing. Use it to check
-  the wording before it reaches the channel.
+  the wording before it reaches the channel. What it prints is the plain-text fallback;
+  Slack renders it as a bulleted list item with real mentions and ticket links.
 - If Slack fails, the promote still succeeds. The PR is already open, so the CLI prints
   the message and the Slack error and exits 0. Post it by hand and carry on.
 

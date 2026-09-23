@@ -118,19 +118,24 @@ export async function lookupUserByEmail(
  * Unfurling is off on both links and media: the message is a dense single line
  * of PR and ClickUp links, and Slack would otherwise stack a preview card under
  * each one and bury the next release.
+ *
+ * When blocks are given, Slack renders them and uses `text` only for the
+ * notification and for clients that cannot draw blocks — so both are sent.
  */
 export async function postMessage(
   token: string,
   channel: string,
   text: string,
   fetchFn: FetchFn = fetch,
+  blocks?: unknown[],
 ): Promise<{ ts: string; channel: string }> {
-  const body = (await post(
-    `${API}/chat.postMessage`,
-    token,
-    { channel, text, unfurl_links: false, unfurl_media: false },
-    fetchFn,
-  )) as SlackResponse & { ts?: string; channel?: string };
+  const payload = blocks
+    ? { channel, text, blocks, unfurl_links: false, unfurl_media: false }
+    : { channel, text, unfurl_links: false, unfurl_media: false };
+  const body = (await post(`${API}/chat.postMessage`, token, payload, fetchFn)) as SlackResponse & {
+    ts?: string;
+    channel?: string;
+  };
   return { ts: body.ts ?? '', channel: body.channel ?? channel };
 }
 

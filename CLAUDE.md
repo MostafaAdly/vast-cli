@@ -165,10 +165,20 @@ in `Vast-deployments`:
 - The ClickUp workspace id is a constant — tickets link to
   `https://app.clickup.com/t/90121402342/<id>`. Do not inline it a second time.
 - **The message shape is a contract with the team's channel**, not a formatting
-  detail: `• <PR link|Display Name - branch> - description (@author) (TICKET)`.
-  Its builder is pure — PRs, commits and author lookups in, string out, no network
-  — and tested. Change the shape only with Mostafa, and change it in the tests
-  first.
+  detail: it is Mostafa's own hand-written post,
+  `• <PR link|Display Name - branch> - summary, summary (@person, @person) (TICKET, TICKET)`,
+  posted as a real Slack `rich_text_list` bullet (with a mrkdwn `text` fallback),
+  summaries and tickets in ascending PR number order. Its builder
+  (`src/utils/release-message.ts`) is pure — PRs, summaries and resolved mentions
+  in, `{ text, blocks }` out, no network — and tested against that exact post.
+  Change the shape only with Mostafa, and change it in the tests first.
+- People named are PR authors plus commit authors, merged per person. The people
+  never named live in `EXCLUDED_CONTRIBUTORS` in `src/utils/contributors.ts`,
+  beside its bot rules — nowhere else.
+- Per-PR summaries come from the local `claude` CLI, summarize-style
+  (`src/utils/pr-summary.ts`), screened like `--summarize` output, with a
+  deterministic rule-based fallback when `claude` is missing or its answer fails
+  screening. The announcement never depends on a model being available.
 - A Slack failure never fails the promote: the PR is already open, so the message
   and the error are printed and the exit code stays 0.
 - Repo display names come from the config (`displayName`) — Vastmenu Dashboard,

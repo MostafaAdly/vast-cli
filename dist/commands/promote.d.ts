@@ -16,7 +16,9 @@ import { type RepoConfig } from '../config/repos.js';
 import { type ReleaseKind } from '../utils/release-branch.js';
 import { type ResolvedPick } from '../utils/picks.js';
 import { type BodyMode } from '../utils/changelog.js';
-import { buildReleaseMessage, type ShippedPr } from '../utils/release-message.js';
+import { type ShippedPr } from '../utils/shipped.js';
+import { summarizePrs } from '../utils/pr-summary.js';
+import { buildReleaseMessage } from '../utils/release-message.js';
 /**
  * Everything the announcement reaches outside itself, in one injectable bag —
  * so the announce step can be tested end to end without a network, a Slack
@@ -27,11 +29,12 @@ export interface AnnounceDeps {
     readSlackChannel: () => string | null;
     slackUserOverride: (login: string) => string | null;
     lookupUserByEmail: (token: string, email: string) => Promise<string | null>;
-    postMessage: (token: string, channel: string, text: string) => Promise<{
+    postMessage: (token: string, channel: string, text: string, blocks: unknown[]) => Promise<{
         ts: string;
         channel: string;
     }>;
     shippedPrs: (repo: string, numbers: number[]) => Promise<ShippedPr[]>;
+    summarizePrs: typeof summarizePrs;
     buildReleaseMessage: typeof buildReleaseMessage;
 }
 /**

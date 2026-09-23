@@ -2,8 +2,9 @@
  * What actually shipped in a release, expressed as the PRs it carries.
  *
  * The Slack announcement is read by people who do not read commit logs, so it
- * is built from PRs and their authors rather than from raw subjects. The PR
- * numbers come out of the merge commits already in the branch — the same
+ * is built from PRs and the people who wrote them rather than from raw
+ * subjects. The PR numbers come out of the commit subjects already in the
+ * branch — the same
  * source `skills/release/notes.sh` uses, and for the same reason: `gh search
  * commits` only indexes a repo's default branch, which here is `production`,
  * so it is blind to everything a release is made of.
@@ -16,18 +17,30 @@
 import { execFileSync } from 'child_process';
 import { ORG } from './remote.js';
 import type { ResolvedPick } from './picks.js';
-import type { ShippedPr } from './release-message.js';
+import {
+  contributorKey,
+  isExcludedContributor,
+  mergeContributors,
+  type Contributor,
+} from './contributors.js';
+
+/**
+ * A PR as the announcement uses it. Defined here, next to the code that fills
+ * it in, so the message builder depends on the data and not the other way
+ * round.
+ */
+export interface ShippedPr {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  /** PR author first, then everyone else who wrote its commits. */
+  contributors: Contributor[];
+}
 
 /** How a PR number becomes the PR itself. Injectable so tests never touch gh. */
 export interface PrLookup {
-  (repo: string, number: number): Promise<{
-    title: string;
-    url: string;
-    authorLogin: string;
-    authorName: string;
-    authorEmails: string[];
-    branch: string;
-  } | null>;
+  (repo: string, number: number): Promise<Omit<ShippedPr, 'number'> | null>;
 }
 
 /** "Merge pull request #796 from Vast-Menu/feat/x" -> number and source branch. */
@@ -53,15 +66,18 @@ function tidyNumbers(numbers: number[]): number[] {
 }
 
 /**
- * PR numbers merged into `head` that `base` does not have.
+ * PR numbers carried by `head` that `base` does not have.
  *
- * `--merges` matches on parent count, not on the subject, so this sees exactly
- * the real merge commits and nothing that merely looks like one.
+ * Every commit is read, not just `--merges`. A hotfix built with `--pick`
+ * carries each PR as a cherry-pick of its merge commit: an ordinary one-parent
+ * commit whose subject still reads "Merge pull request #328 from …". Reading
+ * only real merges found nothing on such a branch, and the announcement fell
+ * back to raw subjects with nobody credited.
  */
 export function prNumbersInRange(dir: string, base: string, head: string): number[] {
   let out: string;
   try {
-    out = execFileSync('git', ['log', `${base}..${head}`, '--merges', '--pretty=format:%s'], {
+    out = execFileSync('git', ['log', `${base}..${head}`, '--pretty=format:%s'], {
       cwd: dir,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -75,6 +91,7 @@ export function prNumbersInRange(dir: string, base: string, head: string): numbe
     .split('\n')
     .map(prNumberOfSubject)
     .filter((n): n is number => n !== null);
+  // A PR merged on the branch and also cherry-picked onto it is still one PR.
   return tidyNumbers(numbers);
 }
 
@@ -97,7 +114,7 @@ interface GhPrView {
   url?: string;
   author?: { login?: string; name?: string };
   headRefName?: string;
-  commits?: Array<{ authors?: Array<{ email?: string }> }>;
+  commits?: Array<{ authors?: Array<{ name?: string; email?: string; login?: string }> }>;
 }
 
 /**
@@ -106,6 +123,97 @@ interface GhPrView {
  */
 function usableEmail(email: string | undefined): email is string {
   return Boolean(email && email.trim() && !/noreply/i.test(email));
+}
+
+interface CommitAuthor extends Contributor {
+  commits: number;
+}
+
+/** Commit authors pooled per person, in the order they first appear. */
+function commitAuthors(view: GhPrView): CommitAuthor[] {
+  const byKey = new Map<string, CommitAuthor>();
+  for (const commit of view.commits ?? []) {
+    for (const a of commit.authors ?? []) {
+      const person: Contributor = { name: a.name ?? '', login: a.login || null, emails: [] };
+      const key = contributorKey(person);
+      if (!key) continue;
+      const seen = byKey.get(key) ?? { ...person, commits: 0 };
+      seen.commits += 1;
+      if (!seen.login && person.login) seen.login = person.login;
+      if (usableEmail(a.email) && !seen.emails.includes(a.email)) seen.emails.push(a.email);
+      byKey.set(key, seen);
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Which commit author is the PR author in git's eyes.
+ *
+ * GitHub often knows the PR author only by login, while their commits carry a
+ * name and an email but no login. A commit author whose login matches is them
+ * outright; failing that, the loginless author of most of the commits is taken
+ * to be them. Anyone with a different login, or on the exclusion list, is
+ * never picked — otherwise a PR author could be renamed after a colleague, or
+ * vanish under an excluded person's name.
+ */
+function ownerOf(authorLogin: string, authors: CommitAuthor[]): CommitAuthor | null {
+  const login = authorLogin.toLowerCase();
+  if (login) {
+    const exact = authors.find((a) => a.login?.toLowerCase() === login);
+    if (exact) return exact;
+  }
+  let best: CommitAuthor | null = null;
+  for (const a of authors) {
+    if (a.login || isExcludedContributor(a)) continue;
+    if (!best || a.commits > best.commits) best = a;
+  }
+  return best;
+}
+
+/**
+ * `gh pr view --json number,title,url,author,headRefName,commits` output ->
+ * the PR as the announcement needs it. Null when the output is not a PR.
+ */
+export function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null {
+  let view: GhPrView;
+  try {
+    view = JSON.parse(json) as GhPrView;
+  } catch {
+    return null;
+  }
+  if (!view || typeof view !== 'object') return null;
+
+  const authorLogin = view.author?.login ?? '';
+  const authorName = view.author?.name ?? '';
+  const authors = commitAuthors(view);
+
+  // An excluded PR author is dropped anyway, so lending them a commit
+  // author's identity would only hide that commit author from the list.
+  const authorExcluded = isExcludedContributor({ name: authorName, login: authorLogin || null, emails: [] });
+  const owner = authorExcluded ? null : ownerOf(authorLogin, authors);
+
+  const prAuthor: Contributor[] =
+    authorLogin || authorName
+      ? [
+          {
+            // GitHub display names are optional; the login is always there.
+            name: authorName || owner?.name || authorLogin,
+            login: authorLogin || null,
+            emails: owner ? [...owner.emails] : [],
+          },
+        ]
+      : [];
+  const others: Contributor[] = authors
+    .filter((a) => a !== owner)
+    .map((a) => ({ name: a.name, login: a.login, emails: a.emails }));
+
+  return {
+    title: view.title ?? '',
+    url: view.url ?? '',
+    branch: view.headRefName ?? '',
+    contributors: mergeContributors([prAuthor, others]),
+  };
 }
 
 /** The real lookup: `gh pr view`. Returns null on any failure. */
@@ -124,21 +232,7 @@ export const ghPrLookup: PrLookup = async (repo, number) => {
       ],
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
-    const parsed = JSON.parse(out) as GhPrView;
-    const login = parsed.author?.login ?? '';
-    const emails = (parsed.commits ?? [])
-      .flatMap((c) => c.authors ?? [])
-      .map((a) => a.email)
-      .filter(usableEmail);
-    return {
-      title: parsed.title ?? '',
-      url: parsed.url ?? '',
-      authorLogin: login,
-      // GitHub display names are optional; the login is always there.
-      authorName: parsed.author?.name || login,
-      authorEmails: [...new Set(emails)],
-      branch: parsed.headRefName ?? '',
-    };
+    return parseGhPrView(out);
   } catch {
     // A deleted PR, a permissions gap, or a gh that is not authenticated —
     // none of which is a reason to abandon the announcement.
@@ -165,51 +259,46 @@ export async function shippedPrs(
 }
 
 /**
- * GitHub login -> Slack user id, one entry per distinct author.
+ * Contributor key -> Slack user id, one entry per distinct person.
  *
- * Order of trust: a hand-configured override first (it exists precisely for
- * the people whose git email matches nothing in Slack), then each commit email
- * in turn. A login nobody can be found for maps to null, and the message then
- * names them in plain text instead of mentioning them.
+ * Keyed by `contributorKey` because most contributors come from commits and
+ * have no login at all. Order of trust: a hand-configured override first —
+ * by login, then by key, since the key is the only handle a commit-only
+ * contributor has — then each known email in turn. Anyone nobody can be found
+ * for maps to null, and the message then names them in plain text.
  */
 export async function resolveMentions(
-  prs: ShippedPr[],
+  contributors: Contributor[],
   deps: {
     token: string | null;
     lookup: (token: string, email: string) => Promise<string | null>;
-    override: (login: string) => string | null;
+    override: (key: string) => string | null;
   },
 ): Promise<Record<string, string | null>> {
   const mentions: Record<string, string | null> = {};
-
-  // Distinct logins, with the emails seen for each across all their PRs.
-  const emailsByLogin = new Map<string, string[]>();
-  for (const pr of prs) {
-    if (!pr.authorLogin) continue;
-    const seen = emailsByLogin.get(pr.authorLogin) ?? [];
-    for (const email of pr.authorEmails) if (!seen.includes(email)) seen.push(email);
-    emailsByLogin.set(pr.authorLogin, seen);
-  }
-
   const { token } = deps;
-  for (const [login, emails] of emailsByLogin) {
+
+  // The same person across several PRs is resolved once, with every email
+  // seen for them pooled; excluded people are never looked up at all.
+  for (const person of mergeContributors([contributors])) {
+    const key = contributorKey(person);
     // No token means nobody is mentioned at all, overrides included: a raw
     // `<@U123>` only renders as a name in a message Slack actually receives,
     // and an unconfigured run only ever prints the message.
     if (!token) {
-      mentions[login] = null;
+      mentions[key] = null;
       continue;
     }
     // An override exists precisely for the people whose git email matches
     // nothing in Slack, so it is trusted ahead of any lookup — and spends no
     // API call.
-    const override = deps.override(login);
+    const override = overrideFor(person, key, deps.override);
     if (override) {
-      mentions[login] = override;
+      mentions[key] = override;
       continue;
     }
     let id: string | null = null;
-    for (const email of emails) {
+    for (const email of person.emails) {
       try {
         id = await deps.lookup(token, email);
       } catch {
@@ -218,8 +307,25 @@ export async function resolveMentions(
       }
       if (id) break;
     }
-    mentions[login] = id;
+    mentions[key] = id;
   }
 
   return mentions;
+}
+
+function overrideFor(
+  person: Contributor,
+  key: string,
+  override: (key: string) => string | null,
+): string | null {
+  for (const handle of [person.login, key]) {
+    if (!handle) continue;
+    try {
+      const id = override(handle);
+      if (id) return id;
+    } catch {
+      // A malformed override config costs that override, not the message.
+    }
+  }
+  return null;
 }
