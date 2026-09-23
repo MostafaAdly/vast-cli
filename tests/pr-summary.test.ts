@@ -5,6 +5,7 @@ import {
   buildSummaryPrompt,
   screenSummary,
   summarizePrs,
+  modelPhrases,
   type SummaryDeps,
 } from '../src/utils/pr-summary.js';
 
@@ -187,4 +188,35 @@ test('no PRs means no model call', async () => {
   const deps = fakeDeps('{}');
   assert.deepEqual(await summarizePrs([], deps), {});
   assert.equal(deps.prompts.length, 0);
+});
+
+test('modelPhrases returns only the screened model phrases, no fallback', async () => {
+  const phrases = await modelPhrases(
+    [
+      { number: 1, title: 'fix: reuse guest tokens', branch: 'a' },
+      { number: 2, title: 'feat: order dialog', branch: 'b' },
+    ],
+    { available: () => true, run: () => '{"1": "guest token reuse", "2": "see https://example.com"}' },
+  );
+  assert.deepEqual(phrases, { 1: 'guest token reuse' });
+});
+
+test('modelPhrases is empty when no model is available', async () => {
+  const phrases = await modelPhrases([{ number: 1, title: 'fix: x', branch: 'a' }], {
+    available: () => false,
+    run: () => {
+      throw new Error('must not be called');
+    },
+  });
+  assert.deepEqual(phrases, {});
+});
+
+test('modelPhrases is empty when the model call throws', async () => {
+  const phrases = await modelPhrases([{ number: 1, title: 'fix: x', branch: 'a' }], {
+    available: () => true,
+    run: () => {
+      throw new Error('timeout');
+    },
+  });
+  assert.deepEqual(phrases, {});
 });

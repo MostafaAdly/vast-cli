@@ -22,7 +22,7 @@ export interface SummaryDeps {
   run: (prompt: string) => string;
 }
 
-interface PrForSummary {
+export interface PrForSummary {
   number: number;
   title: string;
   branch: string;
@@ -250,7 +250,13 @@ function runClaude(prompt: string): string {
 
 const defaultDeps: SummaryDeps = { available: isClaudeAvailable, run: runClaude };
 
-export async function summarizePrs(
+/**
+ * The model's phrases alone, screened, with no fallback. A PR the model
+ * skipped or answered badly is absent, and an empty result means no model
+ * answered at all — which is how `vast pending` knows to show titles instead
+ * of the weaker rule-based phrase.
+ */
+export async function modelPhrases(
   prs: PrForSummary[],
   deps: SummaryDeps = defaultDeps,
 ): Promise<Record<number, string>> {
@@ -261,13 +267,24 @@ export async function summarizePrs(
   try {
     if (deps.available()) answer = parseAnswer(deps.run(buildSummaryPrompt(prs)));
   } catch {
-    // No model, a timeout, a crash: every PR simply takes the heuristic.
+    // No model, a timeout, a crash: no phrases, and the caller decides.
     answer = null;
   }
 
   for (const pr of prs) {
     const phrase = answer?.[String(pr.number)];
-    out[pr.number] = (typeof phrase === 'string' && screenSummary(phrase)) || heuristicSummary(pr.title);
+    const screened = typeof phrase === 'string' ? screenSummary(phrase) : null;
+    if (screened) out[pr.number] = screened;
   }
+  return out;
+}
+
+export async function summarizePrs(
+  prs: PrForSummary[],
+  deps: SummaryDeps = defaultDeps,
+): Promise<Record<number, string>> {
+  const phrases = await modelPhrases(prs, deps);
+  const out: Record<number, string> = {};
+  for (const pr of prs) out[pr.number] = phrases[pr.number] ?? heuristicSummary(pr.title);
   return out;
 }
