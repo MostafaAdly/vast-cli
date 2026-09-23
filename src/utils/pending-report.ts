@@ -6,6 +6,7 @@
  * call) lives in src/commands/pending.ts.
  */
 
+import { clickupTaskUrl } from '../config/slack.js';
 import { parseSubject, tidy } from './changelog.js';
 import { extractTickets } from './release-message.js';
 import type { Contributor } from './contributors.js';
@@ -297,4 +298,66 @@ export function renderTerminal(report: PendingReport, o: RenderOptions): string 
   const sections = report.repos.map((r) => terminalRepo(r, o).join('\n'));
   const parts = report.repos.length > 1 ? [sweepTable(report, o).join('\n'), ...sections] : sections;
   return parts.join('\n\n');
+}
+
+function mdPr(p: PendingPr, o: RenderOptions, r: Role, indent = ''): string {
+  const age = ageDays(p.landedAt, o.now);
+  const text = !o.short && p.phrase ? `**${p.phrase}** — ${p.title}` : p.title;
+  const parts = [`[#${p.number}](${p.url}) ${text}`];
+  if (p.contributors.length > 0) parts.push(p.contributors.map(personName).join(', '));
+  if (p.tickets.length > 0) parts.push(p.tickets.map((t) => `[${t}](${clickupTaskUrl(t)})`).join(', '));
+  parts.push(`${age}d`, ...markers(p, age, r));
+  return `${indent}- ${parts.join(' · ')}`;
+}
+
+function mdCommit(c: PendingCommit, o: RenderOptions, r: Role): string {
+  const age = ageDays(c.landedAt, o.now);
+  return `- \`${c.sha.slice(0, 7)}\` ${c.subject} · ${[`${age}d`, ...markers(c, age, r)].join(' · ')}`;
+}
+
+function mdPrList(prs: PendingPr[], o: RenderOptions, r: Role): string[] {
+  if (!o.byTicket) return prs.map((p) => mdPr(p, o, r));
+  return groupByTicket(prs).flatMap((g) => [
+    `- **${g.ticket ? `[${g.ticket}](${clickupTaskUrl(g.ticket)})` : 'Untracked'}**`,
+    ...g.prs.map((p) => mdPr(p, o, r, '  ')),
+  ]);
+}
+
+function mdRepo(r: RepoPending, o: RenderOptions): string[] {
+  const title = r.forward ? `## ${r.displayName} — ${r.forward.source} → ${r.forward.target}` : `## ${r.displayName}`;
+  if (r.problem || !r.forward) return [title, '', `_${r.problem?.message ?? ''}_`];
+  const f = r.forward;
+  const rv = r.reverse;
+  if (itemCount(f) === 0 && (!rv || itemCount(rv) === 0)) return [title, '', 'In sync.'];
+
+  const lines = [title];
+  const section = (heading: string, body: string[]): void => {
+    if (body.length > 0) lines.push('', `### ${heading}`, '', ...body);
+  };
+  const fwd: Role = { role: 'forward', other: f.target };
+  for (const g of f.inFlight) section(`In flight · [${g.branch} (#${g.number})](${g.url})`, mdPrList(g.prs, o, fwd));
+  section(`Waiting (${f.waiting.length})`, mdPrList(f.waiting, o, fwd));
+  section(`Direct commits (${f.direct.length})`, f.direct.map((c) => mdCommit(c, o, fwd)));
+  if (itemCount(f) === 0) lines.push('', `Nothing on ${f.source} that ${f.target} lacks.`);
+
+  if (rv) {
+    const back: Role = { role: 'reverse', other: rv.target };
+    if (itemCount(rv) === 0) lines.push('', `Nothing on ${rv.source} that ${rv.target} lacks.`);
+    else
+      section(`On ${rv.source}, not on ${rv.target} (${itemCount(rv)})`, [
+        ...mdPrList(prsOf(rv), o, back),
+        ...rv.direct.map((c) => mdCommit(c, o, back)),
+      ]);
+  }
+  return lines;
+}
+
+/** Ready to paste into a ClickUp doc or a PR description. */
+export function renderMarkdown(report: PendingReport, o: RenderOptions): string {
+  return `${report.repos.map((r) => mdRepo(r, o).join('\n')).join('\n\n')}\n`;
+}
+
+/** For the /release skill and scripts. Dates serialise as ISO strings. */
+export function renderJson(report: PendingReport): string {
+  return JSON.stringify(report, null, 2);
 }

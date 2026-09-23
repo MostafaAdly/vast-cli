@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDirection, renderTerminal, type RepoPending } from '../src/utils/pending-report.js';
+import { buildDirection, renderJson, renderMarkdown, renderTerminal, type RepoPending } from '../src/utils/pending-report.js';
 import { NOW, daysAgo, REPO_URL, OSAMA, MOSTAFA, pr, fixtureRepo, fixtureReport } from './pending-fixtures.js';
 
 const OPTS = { now: NOW, byTicket: false, short: false };
@@ -130,4 +130,64 @@ test('terminal: a sweep opens with a summary table', () => {
   assert.match(table[0], /^ {2}REPO +WAITING +IN FLIGHT +PRODUCTION ONLY +OLDEST$/);
   assert.match(table[1], /^ {2}VastPayPwaV2 +3 +1 +2 +21d$/);
   assert.match(table[2], /^ {2}VastPay-BackEnd +no develop branch$/);
+});
+
+test('markdown: one repo with both directions', () => {
+  const pull = (n: number): string => `${REPO_URL}/pull/${n}`;
+  assert.equal(
+    renderMarkdown(fixtureReport(), OPTS),
+    [
+      '## Vastpay Pwa V2 — staging → production',
+      '',
+      `### In flight · [hotfix/2.1.15 (#334)](${pull(334)})`,
+      '',
+      `- [#301](${pull(301)}) **ELM single charge** — One create-charge per sheet · Mostafa Adly · 13d`,
+      '',
+      '### Waiting (2)',
+      '',
+      `- [#298](${pull(298)}) Old change · Osama Elshimy · 21d · ⚠ stale`,
+      `- [#313](${pull(313)}) **guest token reuse** — Reuse guest tokens without overriding customer sessions · Osama Elshimy · [VA-13091](https://app.clickup.com/t/90121402342/VA-13091) · 9d`,
+      '',
+      '### Direct commits (1)',
+      '',
+      '- `46d26d9` fix(pwa): preserve disabled plugin lifecycle · 3d',
+      '',
+      '### On production, not on staging (2)',
+      '',
+      `- [#270](${pull(270)}) Include guest token in send-OTP request · Osama Elshimy · 30d · ported (same code)`,
+      `- [#332](${pull(332)}) Raise pwa-v2 memory request · Osama Elshimy · 5d · ⚠ not found on staging`,
+      '',
+    ].join('\n'),
+  );
+});
+
+test('markdown: in sync and problem repos are one line each', () => {
+  const synced = fixtureRepo();
+  synced.forward = { ...synced.forward!, inFlight: [], waiting: [], direct: [] };
+  synced.reverse = null;
+  const skipped: RepoPending = {
+    ...fixtureRepo(),
+    displayName: 'Vastpay Backend',
+    forward: null,
+    reverse: null,
+    problem: { kind: 'skipped', message: 'no develop branch' },
+  };
+  assert.equal(
+    renderMarkdown(fixtureReport([synced, skipped], false), OPTS),
+    '## Vastpay Pwa V2 — staging → production\n\nIn sync.\n\n## Vastpay Backend\n\n_no develop branch_\n',
+  );
+});
+
+test('markdown --by-ticket nests PRs under linked tickets', () => {
+  const out = renderMarkdown(fixtureReport(), { ...OPTS, byTicket: true });
+  assert.match(out, /- \*\*\[VA-13091\]\(https:\/\/app\.clickup\.com\/t\/90121402342\/VA-13091\)\*\*\n {2}- \[#313\]/);
+  assert.match(out, /- \*\*Untracked\*\*\n {2}- \[#298\]/);
+});
+
+test('json round-trips the model with ISO dates', () => {
+  const parsed = JSON.parse(renderJson(fixtureReport()));
+  assert.equal(parsed.to, 'production');
+  assert.equal(parsed.generatedAt, NOW.toISOString());
+  assert.equal(parsed.repos[0].forward.waiting[1].number, 313);
+  assert.equal(parsed.repos[0].forward.waiting[1].landedAt, daysAgo(9).toISOString());
 });
