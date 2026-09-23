@@ -15,6 +15,7 @@ import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerCloneCommand } from './commands/clone.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerStatusCommand } from './commands/status.js';
+import { registerPendingCommand } from './commands/pending.js';
 import { registerPromoteCommand } from './commands/promote.js';
 import { registerDeployCommand } from './commands/deploy.js';
 import { registerReleaseCommand } from './commands/release.js';
@@ -93,6 +94,7 @@ export class VastCli {
     registerInitCommand(this.program);
     registerCloneCommand(this.program);
     registerStatusCommand(this.program);
+    registerPendingCommand(this.program);
     registerPromoteCommand(this.program);
     registerReleaseCommand(this.program);
     registerDeployCommand(this.program);
