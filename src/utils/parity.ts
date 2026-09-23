@@ -96,7 +96,7 @@ function filesByCommit(dir: string, base: string, head: string): Map<string, str
 /** Patch-ids of every non-merge commit in the range, in one pipe. */
 function patchIdsOfCommits(dir: string, base: string, head: string): Map<string, string> {
   const map = new Map<string, string>();
-  const log = git(dir, ['log', '-p', '--no-merges', '--no-color', `${base}..${head}`]);
+  const log = git(dir, ['log', '-p', '--format=commit %H', '--no-merges', '--no-color', `${base}..${head}`]);
   if (!log.trim()) return map;
   for (const line of git(dir, ['patch-id', '--stable'], log).split('\n')) {
     const [patchId, sha] = line.trim().split(/\s+/);
@@ -107,7 +107,7 @@ function patchIdsOfCommits(dir: string, base: string, head: string): Map<string,
 
 /** A merge's patch-id is that of its whole change against the branch it landed on. */
 function patchIdOfMerge(dir: string, merge: RawCommit): string | null {
-  const diff = git(dir, ['diff', '--no-color', merge.parents[0], merge.sha]);
+  const diff = git(dir, ['diff', '--no-color', '--no-ext-diff', merge.parents[0], merge.sha]);
   if (!diff.trim()) return null;
   return git(dir, ['patch-id', '--stable'], diff).trim().split(/\s+/)[0] || null;
 }

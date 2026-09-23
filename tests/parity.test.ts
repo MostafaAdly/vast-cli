@@ -158,6 +158,33 @@ test('a PR lands when its merge was committed', () => {
   }
 });
 
+test('ports are still found under a user git config that reshapes log and diff output', () => {
+  const r = repo();
+  try {
+    r.git('checkout', '-qb', 'staging');
+    // Its own commit first, so the port gets a new parent and a new SHA
+    // rather than recreating the production commit byte for byte.
+    commit(r, 'staging', 'd.txt', 'd\n', 'fix: direct on staging');
+    const cTip = mergePr(r, 'production', 30, 'fix/c', 'c.txt');
+    r.git('checkout', '-q', 'staging');
+    r.git('cherry-pick', cTip);
+    // Settings a developer may well have: abbreviated or custom log headers
+    // would hide the SHA patch-id keys on, and an external diff tool would
+    // replace the patch altogether.
+    r.git('config', 'log.abbrevCommit', 'true');
+    r.git('config', 'format.pretty', '%h %s');
+    r.git('config', 'diff.external', 'false');
+
+    const p = compareBranches(r.dir, 'staging', 'production');
+    const port = p.onlySource.direct.find((c) => c.subject === 'feat: c.txt')!;
+    const pr30 = p.onlyTarget.prs.find((u) => u.number === 30)!;
+    assert.equal(p.onlySource.ported.has(port.sha), true);
+    assert.equal(p.onlyTarget.ported.has(pr30.sha), true);
+  } finally {
+    r.cleanup();
+  }
+});
+
 test('identical branches compare empty', () => {
   const r = repo();
   try {
