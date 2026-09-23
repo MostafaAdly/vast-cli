@@ -23,6 +23,7 @@ import {
   mergeContributors,
   type Contributor,
 } from './contributors.js';
+import { isBumpBranch, parsePrSubject } from './pr-subject.js';
 
 /**
  * A PR as the announcement uses it. Defined here, next to the code that fills
@@ -43,21 +44,12 @@ export interface PrLookup {
   (repo: string, number: number): Promise<Omit<ShippedPr, 'number'> | null>;
 }
 
-/** "Merge pull request #796 from Vast-Menu/feat/x" -> number and source branch. */
-const MERGE_SUBJECT = /^Merge pull request #(\d+) from (\S+)/;
-
-/**
- * The CI opens its own PRs to rewrite package.json's version on each branch.
- * They describe the pipeline, not the product, so the team has nothing to read
- * in them — the same exclusion notes.sh makes.
- */
-const BUMP_BRANCH = /\/bump-(stage|prod)-/;
-
 function prNumberOfSubject(subject: string): number | null {
-  const m = MERGE_SUBJECT.exec(subject.trim());
-  if (!m) return null;
-  if (BUMP_BRANCH.test(m[2])) return null;
-  return Number(m[1]);
+  const pr = parsePrSubject(subject);
+  // The CI's own bump PRs describe the pipeline, not the product — the same
+  // exclusion notes.sh makes.
+  if (!pr || isBumpBranch(pr.branch)) return null;
+  return pr.number;
 }
 
 /** Unique, ascending — the order a reader scans a list of PR numbers in. */

@@ -21,6 +21,7 @@ import { parseSubject, tidy } from './changelog.js';
 import { clickupTaskUrl } from '../config/slack.js';
 import type { ShippedPr } from './shipped.js';
 import { contributorKey, mergeContributors, type Contributor } from './contributors.js';
+import { isPipelineNoise } from './pr-subject.js';
 
 export interface ReleaseMessageInput {
   /** The human name of the app, e.g. "Vastpay Pwa V2". */
@@ -59,19 +60,6 @@ const TICKET = /\b(?:VA-\d+|CU-[a-z0-9]+)\b/gi;
  * PR.
  */
 const MAX_SUBJECTS = 6;
-
-/**
- * Subjects that describe the pipeline, not the product: merge commits, and the
- * version bumps CI writes on every deploy. Nobody in the channel wants to read
- * them.
- */
-function isPipelineNoise(subject: string): boolean {
-  return (
-    /^Merge (pull request|branch|remote-tracking)/i.test(subject) ||
-    /^chore:\s*bump version to /i.test(subject) ||
-    /^chore:\s*align package\.json version/i.test(subject)
-  );
-}
 
 export function extractTickets(texts: string[]): string[] {
   const seen: string[] = [];
