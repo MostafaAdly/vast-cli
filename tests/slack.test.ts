@@ -117,6 +117,23 @@ test('postMessage posts the text as JSON with unfurling off', async () => {
   });
 });
 
+// The blocks carry the real bullet and mentions; text stays in the body because
+// it is what the notification and any client that cannot render blocks shows.
+test('postMessage sends blocks alongside the text when given them', async () => {
+  const { fetchFn, calls } = fakeFetch([{ ok: true, ts: '1.2', channel: 'C123' }]);
+  const blocks = [{ type: 'rich_text', elements: [] }];
+
+  await postMessage('xoxb-abc', 'C123', '• hello', fetchFn, blocks);
+
+  assert.deepEqual(JSON.parse(calls[0].body ?? '{}'), {
+    channel: 'C123',
+    text: '• hello',
+    blocks,
+    unfurl_links: false,
+    unfurl_media: false,
+  });
+});
+
 test('postMessage surfaces not_in_channel as a SlackError', async () => {
   const { fetchFn } = fakeFetch([{ ok: false, error: 'not_in_channel' }]);
   await assert.rejects(

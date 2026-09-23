@@ -414,10 +414,12 @@ command. Do not post anything yourself:
 vast promote <repo> --to production --slack
 ```
 
-It posts one message to the team's configured channel after the PR opens, naming the
-repo and branch, the PRs being shipped, their authors and any ClickUp tickets. Relay the
-message `vast` printed, exactly as it printed it, so the user can see what the channel
-saw. `--dry-run --slack` prints the message without sending it — use that when the user
+It posts one message to the team's configured channel after the PR opens: a single
+Slack bullet naming the repo and branch, a two-or-three word summary of each PR being
+shipped in ascending PR order, everyone who worked on them (PR and commit authors, with a
+fixed few people and bots always left out) and any ClickUp tickets. Relay the message
+`vast` printed, exactly as it printed it, so the user can see what the channel saw — in
+Slack it appears as a real bulleted item with real mentions and ticket links. `--dry-run --slack` prints the message without sending it — use that when the user
 wants to check the wording first.
 
 If Slack is not configured, `vast` says `Slack not configured — run vast slack setup`.

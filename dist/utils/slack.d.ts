@@ -37,8 +37,11 @@ export declare function lookupUserByEmail(token: string, email: string, fetchFn?
  * Unfurling is off on both links and media: the message is a dense single line
  * of PR and ClickUp links, and Slack would otherwise stack a preview card under
  * each one and bury the next release.
+ *
+ * When blocks are given, Slack renders them and uses `text` only for the
+ * notification and for clients that cannot draw blocks — so both are sent.
  */
-export declare function postMessage(token: string, channel: string, text: string, fetchFn?: FetchFn): Promise<{
+export declare function postMessage(token: string, channel: string, text: string, fetchFn?: FetchFn, blocks?: unknown[]): Promise<{
     ts: string;
     channel: string;
 }>;

@@ -2,8 +2,9 @@
  * What actually shipped in a release, expressed as the PRs it carries.
  *
  * The Slack announcement is read by people who do not read commit logs, so it
- * is built from PRs and their authors rather than from raw subjects. The PR
- * numbers come out of the merge commits already in the branch — the same
+ * is built from PRs and the people who wrote them rather than from raw
+ * subjects. The PR numbers come out of the commit subjects already in the
+ * branch — the same
  * source `skills/release/notes.sh` uses, and for the same reason: `gh search
  * commits` only indexes a repo's default branch, which here is `production`,
  * so it is blind to everything a release is made of.
@@ -13,23 +14,32 @@
  * must never cost the release its announcement.
  */
 import type { ResolvedPick } from './picks.js';
-import type { ShippedPr } from './release-message.js';
+import { type Contributor } from './contributors.js';
+/**
+ * A PR as the announcement uses it. Defined here, next to the code that fills
+ * it in, so the message builder depends on the data and not the other way
+ * round.
+ */
+export interface ShippedPr {
+    number: number;
+    title: string;
+    url: string;
+    branch: string;
+    /** PR author first, then everyone else who wrote its commits. */
+    contributors: Contributor[];
+}
 /** How a PR number becomes the PR itself. Injectable so tests never touch gh. */
 export interface PrLookup {
-    (repo: string, number: number): Promise<{
-        title: string;
-        url: string;
-        authorLogin: string;
-        authorName: string;
-        authorEmails: string[];
-        branch: string;
-    } | null>;
+    (repo: string, number: number): Promise<Omit<ShippedPr, 'number'> | null>;
 }
 /**
- * PR numbers merged into `head` that `base` does not have.
+ * PR numbers carried by `head` that `base` does not have.
  *
- * `--merges` matches on parent count, not on the subject, so this sees exactly
- * the real merge commits and nothing that merely looks like one.
+ * Every commit is read, not just `--merges`. A hotfix built with `--pick`
+ * carries each PR as a cherry-pick of its merge commit: an ordinary one-parent
+ * commit whose subject still reads "Merge pull request #328 from …". Reading
+ * only real merges found nothing on such a branch, and the announcement fell
+ * back to raw subjects with nobody credited.
  */
 export declare function prNumbersInRange(dir: string, base: string, head: string): number[];
 /**
@@ -40,6 +50,11 @@ export declare function prNumbersInRange(dir: string, base: string, head: string
  * contribute nothing.
  */
 export declare function prNumbersOfPicks(picks: ResolvedPick[]): number[];
+/**
+ * `gh pr view --json number,title,url,author,headRefName,commits` output ->
+ * the PR as the announcement needs it. Null when the output is not a PR.
+ */
+export declare function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null;
 /** The real lookup: `gh pr view`. Returns null on any failure. */
 export declare const ghPrLookup: PrLookup;
 /**
@@ -48,16 +63,17 @@ export declare const ghPrLookup: PrLookup;
  */
 export declare function shippedPrs(repo: string, numbers: number[], lookup?: PrLookup): Promise<ShippedPr[]>;
 /**
- * GitHub login -> Slack user id, one entry per distinct author.
+ * Contributor key -> Slack user id, one entry per distinct person.
  *
- * Order of trust: a hand-configured override first (it exists precisely for
- * the people whose git email matches nothing in Slack), then each commit email
- * in turn. A login nobody can be found for maps to null, and the message then
- * names them in plain text instead of mentioning them.
+ * Keyed by `contributorKey` because most contributors come from commits and
+ * have no login at all. Order of trust: a hand-configured override first —
+ * by login, then by key, since the key is the only handle a commit-only
+ * contributor has — then each known email in turn. Anyone nobody can be found
+ * for maps to null, and the message then names them in plain text.
  */
-export declare function resolveMentions(prs: ShippedPr[], deps: {
+export declare function resolveMentions(contributors: Contributor[], deps: {
     token: string | null;
     lookup: (token: string, email: string) => Promise<string | null>;
-    override: (login: string) => string | null;
+    override: (key: string) => string | null;
 }): Promise<Record<string, string | null>>;
 //# sourceMappingURL=shipped.d.ts.map

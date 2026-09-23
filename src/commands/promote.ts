@@ -37,10 +37,17 @@ import { resolvePicks, type ResolvedPick } from '../utils/picks.js';
 import { nextPatch, stripRc } from '../utils/version.js';
 import { ORG } from '../utils/remote.js';
 import { commitSubjects, type BodyMode } from '../utils/changelog.js';
-import { prNumbersInRange, prNumbersOfPicks, shippedPrs, resolveMentions } from '../utils/shipped.js';
+import {
+  prNumbersInRange,
+  prNumbersOfPicks,
+  shippedPrs,
+  resolveMentions,
+  type ShippedPr,
+} from '../utils/shipped.js';
+import { summarizePrs } from '../utils/pr-summary.js';
 import { readSlackToken, readSlackChannel, slackUserOverride } from '../config/slack.js';
 import { lookupUserByEmail, postMessage } from '../utils/slack.js';
-import { buildReleaseMessage, type ShippedPr } from '../utils/release-message.js';
+import { buildReleaseMessage, releaseContributors } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 
 /**
@@ -83,8 +90,10 @@ export interface AnnounceDeps {
     token: string,
     channel: string,
     text: string,
+    blocks: unknown[],
   ) => Promise<{ ts: string; channel: string }>;
   shippedPrs: (repo: string, numbers: number[]) => Promise<ShippedPr[]>;
+  summarizePrs: typeof summarizePrs;
   buildReleaseMessage: typeof buildReleaseMessage;
 }
 
@@ -93,8 +102,9 @@ const defaultAnnounceDeps: AnnounceDeps = {
   readSlackChannel,
   slackUserOverride,
   lookupUserByEmail: (token, email) => lookupUserByEmail(token, email),
-  postMessage: (token, channel, text) => postMessage(token, channel, text),
+  postMessage: (token, channel, text, blocks) => postMessage(token, channel, text, fetch, blocks),
   shippedPrs: (repo, numbers) => shippedPrs(repo, numbers),
+  summarizePrs,
   buildReleaseMessage,
 };
 
@@ -125,20 +135,29 @@ export async function announceRelease(
 
   const prs = await deps.shippedPrs(repo.name, numbers);
   // Commit subjects back the message up when a PR could not be read — or when
-  // the work landed without going through a PR at all.
-  const fallbackSubjects = commitSubjects(dir, 'origin/production', head);
-  const mentions = await resolveMentions(prs, {
+  // the work landed without going through a PR at all. A dry-run pick has no
+  // cut branch, and staging stands in for far more than was picked, so the
+  // picks' own subjects are the honest fallback there.
+  const fallbackSubjects =
+    opts.dryRun && picks.length > 0
+      ? picks.map((p) => p.subject)
+      : commitSubjects(dir, 'origin/production', head);
+  // Only what a summary needs: the model is never shown who wrote the PR.
+  const summaries = await deps.summarizePrs(prs.map(({ number, title, branch }) => ({ number, title, branch })));
+  const contributors = releaseContributors(prs);
+  const mentions = await resolveMentions(contributors, {
     token: deps.readSlackToken(),
     lookup: deps.lookupUserByEmail,
     override: deps.slackUserOverride,
   });
 
-  const text = deps.buildReleaseMessage({
+  const { text, blocks } = deps.buildReleaseMessage({
     displayName: repo.displayName,
     branch,
     // No PR exists on a dry run; the repo's PR list is the nearest real link.
     prUrl: url ?? `https://github.com/${ORG}/${repo.name}/pulls`,
     prs,
+    summaries,
     fallbackSubjects,
     mentions,
   });
@@ -146,6 +165,9 @@ export async function announceRelease(
   if (opts.dryRun) {
     console.log(createHeader('Slack message (dry run)', `${repo.displayName} | ${branch}`));
     console.log(text);
+    // What is printed is the plain fallback; the post itself is a rich_text
+    // bullet, and a reader of the dry run should not expect a typed "•".
+    console.log('  (Slack renders this as a bulleted list item with real mentions and ticket links)');
     return;
   }
 
@@ -158,7 +180,7 @@ export async function announceRelease(
   }
 
   try {
-    await deps.postMessage(token, channel, text);
+    await deps.postMessage(token, channel, text, blocks);
     log.success(`announced in ${channel}`);
   } catch (error) {
     // Deliberately not a failure: the release PR is already open, and the
@@ -484,10 +506,11 @@ Examples:
   $ vast promote VastPayPwa --to production --slack -n  print the message only
 
 Slack announcement (--slack, production only):
-  Runs after the release PR is open and names what shipped: each PR, its
-  author, and any ClickUp ticket the branch carried. Authors are @-mentioned
-  when their commit email matches a Slack account; anyone it cannot match is
-  named in plain text instead.
+  Runs after the release PR is open and posts one Slack bullet naming what
+  shipped: a short summary of each PR in ascending PR order, everyone who
+  worked on them, and any ClickUp ticket the PRs carried. People are
+  @-mentioned when their commit email matches a Slack account; anyone it
+  cannot match is named in plain text instead.
 
   It never fails the promotion. With no token or channel configured, and if
   Slack refuses the post, the message is printed for you to paste by hand and
