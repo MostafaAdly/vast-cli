@@ -21,6 +21,7 @@ import { lookupUserByEmail, postMessage } from '../utils/slack.js';
 import { ORG } from '../utils/remote.js';
 import { createHeader } from '../utils/ui.js';
 import { buildDirection, renderJson, renderMarkdown, renderTerminal, } from '../utils/pending-report.js';
+import { terminalStyle } from '../utils/pending-style.js';
 import { buildPendingSlack, pendingContributors } from '../utils/pending-slack.js';
 const execFileAsync = promisify(execFile);
 export function parseOpenReleasePrs(json) {
@@ -50,6 +51,7 @@ export const defaultPendingDeps = {
     lookupUserByEmail: (token, email) => lookupUserByEmail(token, email),
     postMessage: (token, channel, text, blocks) => postMessage(token, channel, text, fetch, blocks),
     now: () => new Date(),
+    terminalStyle: () => terminalStyle(),
     out: (text) => console.log(text),
     err: (text) => console.error(text),
 };
@@ -84,6 +86,7 @@ async function collectOne(repo, to, opts, sweep, deps) {
     const base = {
         repo: repo.name,
         displayName: repo.displayName,
+        repoUrl,
         compareUrl: source ? `${repoUrl}/compare/${target}...${source}` : '',
         forward: null,
         reverse: null,
@@ -227,7 +230,7 @@ export async function runPending(names, opts, deps = defaultPendingDeps) {
         deps.out(renderJson(report));
     }
     else {
-        deps.out(renderTerminal(report, render));
+        deps.out(renderTerminal(report, { ...render, style: deps.terminalStyle() }));
         if (opts.markdown)
             deps.out(['', MARKDOWN_START, renderMarkdown(report, render), MARKDOWN_END].join('\n'));
     }
@@ -286,6 +289,9 @@ How items are matched:
   "In flight" lists PRs already inside an open release/hotfix PR; a direct
   commit whose change that PR's branch carries is marked "in flight" too.
   "stale" marks work waiting more than 14 days.
+
+In a terminal the report is coloured and PRs, commits, branches, tickets and
+repos are clickable links; piped output, --markdown and --json stay plain.
 `)
         .action(async (names, opts) => {
         process.exitCode = await runPending(names, opts);

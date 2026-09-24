@@ -10,7 +10,7 @@ import { Command } from 'commander';
 import type { RepoConfig } from '../config/repos.js';
 import { type Parity } from '../utils/parity.js';
 import { type PrBatchLookup } from '../utils/shipped.js';
-import { type OpenReleasePr } from '../utils/pending-report.js';
+import { type OpenReleasePr, type TerminalStyle } from '../utils/pending-report.js';
 export interface PendingOptions {
     to: string;
     parity: boolean;
@@ -48,6 +48,8 @@ export interface PendingDeps {
     lookupUserByEmail: (token: string, email: string) => Promise<string | null>;
     postMessage: (token: string, channel: string, text: string, blocks: unknown[]) => Promise<unknown>;
     now: () => Date;
+    /** Colours and links when stdout is a terminal; plain otherwise. */
+    terminalStyle: () => TerminalStyle;
     out: (text: string) => void;
     err: (text: string) => void;
 }

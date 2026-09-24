@@ -267,6 +267,11 @@ Each PR shows a 2-3 word phrase from your local `claude` plus its title; `--shor
 shows titles only and skips the model (so does a machine without `claude`).
 `--by-ticket` groups PRs under their ClickUp tickets.
 
+In a terminal the report is coloured, and PR numbers, commits, branches, release PRs, ClickUp
+tickets and repo names are clickable (in iTerm2, VS Code, Warp, WezTerm, kitty and GNOME Terminal;
+others show plain text). `NO_COLOR` drops the colour and keeps the links; piped output, `--markdown`
+and `--json` stay plain.
+
 | Flag | Output |
 |---|---|
 | (none) | Terminal report |

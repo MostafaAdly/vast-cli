@@ -62,6 +62,8 @@ export interface RepoProblem {
 export interface RepoPending {
   repo: string;
   displayName: string;
+  /** The repo on GitHub, for commit, branch and PR links. */
+  repoUrl: string;
   /** GitHub's compare view, target...source. */
   compareUrl: string;
   forward: PendingDirection | null;
@@ -99,7 +101,40 @@ export interface RenderOptions {
   now: Date;
   byTicket: boolean;
   short: boolean;
+  /** Colours and links for a real terminal; plain text when omitted. */
+  style?: TerminalStyle;
 }
+
+/** What a piece of the terminal report is, so a style can colour it. */
+export type Tone =
+  | 'repo'
+  | 'muted'
+  | 'inFlight'
+  | 'waiting'
+  | 'direct'
+  | 'reverse'
+  | 'pr'
+  | 'phrase'
+  | 'ticket'
+  | 'sha'
+  | 'stale'
+  | 'ported'
+  | 'notFound'
+  | 'error'
+  | 'ok';
+
+/**
+ * How the terminal report is dressed. Kept as an interface so this file stays
+ * free of escape codes: the command hands in chalk and OSC 8 links when it is
+ * writing to a terminal, and everything else — tests, pipes, --markdown — gets
+ * the plain text.
+ */
+export interface TerminalStyle {
+  paint(tone: Tone, text: string): string;
+  link(text: string, url: string): string;
+}
+
+export const PLAIN_STYLE: TerminalStyle = { paint: (_tone, text) => text, link: (text) => text };
 
 /** Over two weeks on staging without reaching production is worth a nudge. */
 export const STALE_DAYS = 14;
@@ -208,40 +243,83 @@ export function groupByTicket(prs: PendingPr[]): Array<{ ticket: string | null; 
 /** `inFlight`: the list sits under an open release PR, so age is no longer the question. */
 type Role = { role: 'forward' | 'reverse'; other: string; inFlight?: boolean };
 
-function markers(item: PendingPr | PendingCommit, age: number, r: Role): string[] {
-  const out: string[] = [];
-  if (item.ported) out.push('ported (same code)');
+type Marker = { text: string; tone: Tone; carrier?: { number: number; branch: string } };
+
+function markerParts(item: PendingPr | PendingCommit, age: number, r: Role): Marker[] {
+  const out: Marker[] = [];
+  if (item.ported) out.push({ text: 'ported (same code)', tone: 'ported' });
   // Not proof of absence: a port-back that needed conflict fixes has
   // different code, so the wording stays "not found".
-  else if (r.role === 'reverse') out.push(`⚠ not found on ${r.other}`);
+  else if (r.role === 'reverse') out.push({ text: `⚠ not found on ${r.other}`, tone: 'notFound' });
   // Already on its way: how long it waited is no longer the question.
-  else if ('inFlight' in item && item.inFlight) out.push(`in flight · ${item.inFlight.branch} (#${item.inFlight.number})`);
-  else if (age > STALE_DAYS && !r.inFlight) out.push('⚠ stale');
-  if ('detailsUnavailable' in item && item.detailsUnavailable) out.push('details unavailable');
+  else if ('inFlight' in item && item.inFlight)
+    out.push({ text: `in flight · ${item.inFlight.branch} (#${item.inFlight.number})`, tone: 'inFlight', carrier: item.inFlight });
+  else if (age > STALE_DAYS && !r.inFlight) out.push({ text: '⚠ stale', tone: 'stale' });
+  if ('detailsUnavailable' in item && item.detailsUnavailable) out.push({ text: 'details unavailable', tone: 'muted' });
   return out;
+}
+
+function markers(item: PendingPr | PendingCommit, age: number, r: Role): string[] {
+  return markerParts(item, age, r).map((m) => m.text);
 }
 
 function prText(p: PendingPr, short: boolean): string {
   return !short && p.phrase ? `${p.phrase} — ${p.title}` : p.title;
 }
 
-function terminalPr(p: PendingPr, o: RenderOptions, r: Role, indent: string): string[] {
-  const age = ageDays(p.landedAt, o.now);
-  const meta = [p.contributors.map(personName).join(', '), p.tickets.join(', '), `${age}d`].filter(Boolean).join(' · ');
-  const flags = markers(p, age, r).map((m) => `  ${m}`).join('');
-  return [`${indent}#${p.number}  ${prText(p, o.short)}`, `${indent}      ${meta}${flags}`];
+/** Everything the terminal renderer needs besides the item itself. */
+interface Term {
+  o: RenderOptions;
+  s: TerminalStyle;
+  repoUrl: string;
 }
 
-function terminalCommit(c: PendingCommit, o: RenderOptions, r: Role): string {
-  const age = ageDays(c.landedAt, o.now);
-  return `    ${c.sha.slice(0, 7)}  ${c.subject} · ${age}d${markers(c, age, r).map((m) => `  ${m}`).join('')}`;
+function branchLink(t: Term, branch: string, tone: Tone): string {
+  return t.s.link(t.s.paint(tone, branch), `${t.repoUrl}/tree/${branch}`);
 }
 
-function terminalPrList(prs: PendingPr[], o: RenderOptions, r: Role): string[] {
-  if (!o.byTicket) return prs.flatMap((p) => terminalPr(p, o, r, '    '));
+function terminalMarkers(t: Term, item: PendingPr | PendingCommit, age: number, r: Role): string {
+  return markerParts(item, age, r)
+    .map((m) => {
+      if (!m.carrier) return `  ${t.s.paint(m.tone, m.text)}`;
+      const pull = t.s.link(t.s.paint('inFlight', `(#${m.carrier.number})`), `${t.repoUrl}/pull/${m.carrier.number}`);
+      return `  ${t.s.paint('inFlight', 'in flight · ')}${branchLink(t, m.carrier.branch, 'inFlight')} ${pull}`;
+    })
+    .join('');
+}
+
+function terminalPr(t: Term, p: PendingPr, r: Role, indent: string): string[] {
+  const { s } = t;
+  const age = ageDays(p.landedAt, t.o.now);
+  const number = s.link(s.paint('pr', `#${p.number}`), p.url);
+  const text = !t.o.short && p.phrase ? `${s.paint('phrase', p.phrase)}${s.paint('muted', ' — ')}${p.title}` : p.title;
+
+  // The meta line reads as one muted run, with each ticket lifted out of it
+  // as a link.
+  const people = p.contributors.map(personName).join(', ');
+  const days = `${age}d`;
+  const tickets = p.tickets.map((id) => s.link(s.paint('ticket', id), clickupTaskUrl(id)));
+  const meta =
+    tickets.length === 0
+      ? s.paint('muted', [people, days].filter(Boolean).join(' · '))
+      : `${people ? s.paint('muted', `${people} · `) : ''}${tickets.join(s.paint('muted', ', '))}${s.paint('muted', ` · ${days}`)}`;
+
+  return [`${indent}${number}  ${text}`, `${indent}      ${meta}${terminalMarkers(t, p, age, r)}`];
+}
+
+function terminalCommit(t: Term, c: PendingCommit, r: Role): string {
+  const { s } = t;
+  const age = ageDays(c.landedAt, t.o.now);
+  const sha = s.link(s.paint('sha', c.sha.slice(0, 7)), `${t.repoUrl}/commit/${c.sha}`);
+  return `    ${sha}  ${c.subject}${s.paint('muted', ` · ${age}d`)}${terminalMarkers(t, c, age, r)}`;
+}
+
+function terminalPrList(t: Term, prs: PendingPr[], r: Role): string[] {
+  const { s } = t;
+  if (!t.o.byTicket) return prs.flatMap((p) => terminalPr(t, p, r, '    '));
   return groupByTicket(prs).flatMap((g) => [
-    `    ${g.ticket ?? 'Untracked'}`,
-    ...g.prs.flatMap((p) => terminalPr(p, o, r, '      ')),
+    `    ${g.ticket ? s.link(s.paint('ticket', g.ticket), clickupTaskUrl(g.ticket)) : s.paint('muted', 'Untracked')}`,
+    ...g.prs.flatMap((p) => terminalPr(t, p, r, '      ')),
   ]);
 }
 
@@ -256,12 +334,23 @@ function footer(d: PendingDirection, now: Date): string {
   return parts.join(' · ');
 }
 
-function terminalRepo(r: RepoPending, o: RenderOptions): string[] {
-  if (r.problem || !r.forward) return [`  ${r.repo}  ${r.problem?.message ?? ''}`.trimEnd()];
+function repoLink(t: Term, repo: string): string {
+  return t.s.link(t.s.paint('repo', repo), t.repoUrl);
+}
+
+function problemText(t: Term, problem: RepoProblem | null): string {
+  if (!problem) return '';
+  return t.s.paint(problem.kind === 'error' ? 'error' : 'muted', problem.message);
+}
+
+function terminalRepo(r: RepoPending, o: RenderOptions, s: TerminalStyle): string[] {
+  const t: Term = { o, s, repoUrl: r.repoUrl };
+  if (r.problem || !r.forward) return [`  ${repoLink(t, r.repo)}  ${problemText(t, r.problem)}`.trimEnd()];
   const f = r.forward;
   const rv = r.reverse;
-  const head = `  ${r.repo} | ${f.source} → ${f.target}`;
-  if (itemCount(f) === 0 && (!rv || itemCount(rv) === 0)) return [`${head} · in sync`];
+  const direction = s.link(s.paint('muted', `${f.source} → ${f.target}`), r.compareUrl);
+  const head = `  ${repoLink(t, r.repo)} ${s.paint('muted', '|')} ${direction}`;
+  if (itemCount(f) === 0 && (!rv || itemCount(rv) === 0)) return [`${head}${s.paint('ok', ' · in sync')}`];
 
   const lines = [head];
   const section = (title: string, body: string[]): void => {
@@ -269,18 +358,21 @@ function terminalRepo(r: RepoPending, o: RenderOptions): string[] {
   };
   const fwd: Role = { role: 'forward', other: f.target };
   const carried: Role = { ...fwd, inFlight: true };
-  for (const g of f.inFlight) section(`In flight · ${g.branch} (#${g.number}, open)`, terminalPrList(g.prs, o, carried));
-  section(`Waiting (${f.waiting.length})`, terminalPrList(f.waiting, o, fwd));
-  section(`Direct commits (${f.direct.length})`, f.direct.map((c) => terminalCommit(c, o, fwd)));
-  lines.push('', itemCount(f) > 0 ? `  ${footer(f, o.now)}` : `  Nothing on ${f.source} that ${f.target} lacks.`);
+  for (const g of f.inFlight) {
+    const title = `${s.paint('inFlight', 'In flight · ')}${branchLink(t, g.branch, 'inFlight')} ${s.link(s.paint('inFlight', `(#${g.number}, open)`), g.url)}`;
+    section(title, terminalPrList(t, g.prs, carried));
+  }
+  section(s.paint('waiting', `Waiting (${f.waiting.length})`), terminalPrList(t, f.waiting, fwd));
+  section(s.paint('direct', `Direct commits (${f.direct.length})`), f.direct.map((c) => terminalCommit(t, c, fwd)));
+  lines.push('', `  ${s.paint(itemCount(f) > 0 ? 'muted' : 'ok', itemCount(f) > 0 ? footer(f, o.now) : `Nothing on ${f.source} that ${f.target} lacks.`)}`);
 
   if (rv) {
     const back: Role = { role: 'reverse', other: rv.target };
-    if (itemCount(rv) === 0) lines.push('', `  Nothing on ${rv.source} that ${rv.target} lacks.`);
+    if (itemCount(rv) === 0) lines.push('', `  ${s.paint('ok', `Nothing on ${rv.source} that ${rv.target} lacks.`)}`);
     else
-      section(`On ${rv.source}, not on ${rv.target} (${itemCount(rv)})`, [
-        ...terminalPrList(prsOf(rv), o, back),
-        ...rv.direct.map((c) => terminalCommit(c, o, back)),
+      section(s.paint('reverse', `On ${rv.source}, not on ${rv.target} (${itemCount(rv)})`), [
+        ...terminalPrList(t, prsOf(rv), back),
+        ...rv.direct.map((c) => terminalCommit(t, c, back)),
       ]);
   }
   return lines;
@@ -290,7 +382,7 @@ function terminalRepo(r: RepoPending, o: RenderOptions): string[] {
  * WAITING counts PRs and direct commits alike: both are work the target lacks.
  * A direct commit an open release branch already carries counts as IN FLIGHT.
  */
-function sweepTable(report: PendingReport, o: RenderOptions): string[] {
+function sweepTable(report: PendingReport, o: RenderOptions, s: TerminalStyle): string[] {
   const header = ['REPO', 'WAITING', 'IN FLIGHT', ...(report.parity ? [`${report.to.toUpperCase()} ONLY`] : []), 'OLDEST'];
   const rows: string[][] = report.repos.map((r) => {
     if (r.problem || !r.forward) return [r.repo, r.problem?.message ?? ''];
@@ -307,16 +399,29 @@ function sweepTable(report: PendingReport, o: RenderOptions): string[] {
   });
   const full = rows.filter((row) => row.length === header.length);
   const widths = header.map((h, i) => Math.max(h.length, ...full.map((row) => row[i].length), ...(i === 0 ? rows.map((row) => row[0].length) : [])));
-  const fmt = (row: string[]): string =>
-    row.length === header.length
-      ? `  ${row.map((c, i) => (i === row.length - 1 ? c : c.padEnd(widths[i]))).join('  ')}`
-      : `  ${row[0].padEnd(widths[0])}  ${row[1]}`;
-  return [fmt(header), ...rows.map(fmt)];
+  // Padding is measured on the plain text and added outside any colour or
+  // link, so escape codes never throw the columns out.
+  const pad = (plain: string, dressed: string, width: number): string => dressed + ' '.repeat(Math.max(0, width - plain.length));
+  const repoCell = (i: number): string => {
+    const r = report.repos[i];
+    return s.link(s.paint('repo', r.repo), r.repoUrl);
+  };
+  const headerLine = `  ${header.map((c, i) => (i === header.length - 1 ? s.paint('muted', c) : pad(c, s.paint('muted', c), widths[i]))).join('  ')}`;
+  const lines = rows.map((row, i) => {
+    if (row.length !== header.length) {
+      const r = report.repos[i];
+      const message = s.paint(r.problem?.kind === 'error' ? 'error' : 'muted', row[1]);
+      return `  ${pad(row[0], repoCell(i), widths[0])}  ${message}`;
+    }
+    return `  ${row.map((c, j) => (j === 0 ? pad(c, repoCell(i), widths[0]) : j === row.length - 1 ? c : c.padEnd(widths[j]))).join('  ')}`;
+  });
+  return [headerLine, ...lines];
 }
 
 export function renderTerminal(report: PendingReport, o: RenderOptions): string {
-  const sections = report.repos.map((r) => terminalRepo(r, o).join('\n'));
-  const parts = report.repos.length > 1 ? [sweepTable(report, o).join('\n'), ...sections] : sections;
+  const s = o.style ?? PLAIN_STYLE;
+  const sections = report.repos.map((r) => terminalRepo(r, o, s).join('\n'));
+  const parts = report.repos.length > 1 ? [sweepTable(report, o, s).join('\n'), ...sections] : sections;
   return parts.join('\n\n');
 }
 
