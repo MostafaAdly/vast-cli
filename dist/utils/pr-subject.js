@@ -24,11 +24,12 @@ export function isBumpBranch(branch) {
 }
 /**
  * PRs that carry other PRs rather than work of their own: release and hotfix
- * PRs into production, and the CI's bumps. Listing them would count every
- * change twice.
+ * PRs into production, the CI's bumps, and branch syncs ("Develop into
+ * Staging"), whose head is a whole environment branch. Listing them would
+ * count every change twice.
  */
 export function isVehicleBranch(branch) {
-    return isBumpBranch(branch) || /^(release|hotfix)\//.test(branch);
+    return isBumpBranch(branch) || /^(release|hotfix)\//.test(branch) || /^(develop|staging|production|main|master)$/.test(branch);
 }
 /**
  * Deploy bookkeeping the CI writes on every release, and merge subjects, which

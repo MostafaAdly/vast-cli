@@ -242,16 +242,24 @@ vast pending --all --short              # every repo, one summary table, titles 
 
 It compares **by PR, not by commit**: PR numbers are read from the
 `Merge pull request #N` subjects on each side, so a PR cherry-picked into a hotfix
-counts as present. Release, hotfix and bump PRs are left out, as are version bumps
-and Helm-values-only commits. PRs already inside an open release/hotfix PR are
-listed as **In flight**; anything waiting more than 14 days is marked **stale**.
+counts as present. Release, hotfix and bump PRs are left out, and so are branch-sync
+PRs whose head is a whole branch (`develop` into `staging` and back), since they
+only carry other PRs. Version bumps and Helm-values-only or package.json-version-only
+commits are left out too. PRs already inside an open release/hotfix PR are listed as
+**In flight**. A direct commit whose change an open release/hotfix branch already
+carries stays under Direct commits, marked `in flight · <branch> (#N)`. Anything
+else waiting more than 14 days is marked **stale**.
 
 `--parity` adds the other direction: on production but not staging (fixes that went
 straight to production), or with `--to staging`, on staging but not develop.
-Anything found on one side only is also checked by code content. **`ported (same
-code)`** means the same change is on the other side under another commit.
-**`not found on <branch>`** is not proof it is missing: a port-back that needed
-conflict fixes has different code, so check it by hand.
+Anything found on one side only is also checked by code. There are three checks: a
+matching patch on the other side, a matching patch anywhere in the other branch's
+history (a duplicate of a change both branches already have), and whether the
+item's diff is already in the other branch's tree. The last check catches a PR that
+was ported commit by commit. **`ported (same code)`** means one of the three
+matched. **`not found on <branch>`** is not proof it is missing. A port that needed
+conflict fixes has different code, and so does a change the other branch later
+modified further. Check those by hand.
 
 Each PR shows a 2-3 word phrase from your local `claude` plus its title; `--short`
 shows titles only and skips the model (so does a machine without `claude`).

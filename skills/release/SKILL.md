@@ -108,13 +108,19 @@ rather than treating it as nine separate failures.
 
 **Reading `vast pending`.** `vast pending <repo>` (or `--all`, `--frontend`, `--backend`)
 is read-only and is the right way to answer "what goes in the next release?" or "what
-is waiting?". Use `--json` when you need to reason over it. It compares by PR:
-**In flight** means the PR is already inside an open release/hotfix PR, so do not
-pick it again; **stale** means it has waited more than 14 days. With `--parity`, a
-production-only item marked `ported (same code)` is fine, and one marked `not found
-on staging` needs a human check, not a claim that it is missing: a port-back that
-needed conflict fixes has different code. `--to staging` does the same for develop
-vs staging. Never add `--slack` unless the user asked for it to be posted.
+is waiting?". Use `--json` when you need to reason over it. It compares by PR, and
+leaves out release, hotfix, bump and branch-sync PRs (`develop` into `staging` and
+back), which only carry other PRs. **In flight** means the PR is already inside an
+open release/hotfix PR, so do not pick it again. A direct commit marked `in flight ·
+<branch> (#N)` is already carried by that branch, so do not pick it either.
+**stale** means it has waited more than 14 days. Items left on one side are checked
+by code: a matching patch on the other side or in its history, or the item's diff
+already present in the other branch's tree (a PR ported commit by commit). With
+`--parity`, a production-only item marked `ported (same code)` is fine. One marked
+`not found on staging` needs a human check, not a claim that it is missing. A port
+that needed conflict fixes has different code, and so does a change staging later
+modified further. `--to staging` does the same for develop vs staging. Never add
+`--slack` unless the user asked for it to be posted.
 
 ---
 

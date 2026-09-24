@@ -50,27 +50,35 @@ export function buildDirection(input) {
     })
         .sort((a, b) => a.number - b.number);
     // A PR already inside an open release/hotfix PR is on its way; listing it
-    // as merely waiting would invite someone to pick it twice.
+    // as merely waiting would invite someone to pick it twice. One carried by
+    // several open PRs belongs to the newest: the older one is usually superseded.
+    const newestFirst = [...input.openReleases].sort((a, b) => b.number - a.number);
     const claimed = new Set();
     const inFlight = [];
-    for (const release of [...input.openReleases].sort((a, b) => a.number - b.number)) {
+    for (const release of newestFirst) {
         const carried = prs.filter((p) => release.prNumbers.includes(p.number) && !claimed.has(p.number));
         for (const p of carried)
             claimed.add(p.number);
         if (carried.length > 0)
             inFlight.push({ number: release.number, url: release.url, branch: release.branch, prs: carried });
     }
+    inFlight.sort((a, b) => a.number - b.number);
     return {
         source: input.source,
         target: input.target,
         inFlight,
         waiting: prs.filter((p) => !claimed.has(p.number)),
-        direct: input.side.direct.map((c) => ({
-            sha: c.sha,
-            subject: c.subject,
-            landedAt: c.landedAt,
-            ported: input.side.ported.has(c.sha),
-        })),
+        direct: input.side.direct.map((c) => {
+            const ported = input.side.ported.has(c.sha);
+            const carrier = ported ? undefined : newestFirst.find((r) => r.commits.includes(c.sha));
+            return {
+                sha: c.sha,
+                subject: c.subject,
+                landedAt: c.landedAt,
+                ported,
+                inFlight: carrier ? { number: carrier.number, branch: carrier.branch } : null,
+            };
+        }),
     };
 }
 /** Tickets in first-seen order, then an Untracked group; a PR with two tickets appears under both. */
@@ -97,6 +105,9 @@ function markers(item, age, r) {
     // different code, so the wording stays "not found".
     else if (r.role === 'reverse')
         out.push(`⚠ not found on ${r.other}`);
+    // Already on its way: how long it waited is no longer the question.
+    else if ('inFlight' in item && item.inFlight)
+        out.push(`in flight · ${item.inFlight.branch} (#${item.inFlight.number})`);
     else if (age > STALE_DAYS)
         out.push('⚠ stale');
     if ('detailsUnavailable' in item && item.detailsUnavailable)
@@ -168,7 +179,10 @@ function terminalRepo(r, o) {
     }
     return lines;
 }
-/** WAITING counts PRs and direct commits alike: both are work the target lacks. */
+/**
+ * WAITING counts PRs and direct commits alike: both are work the target lacks.
+ * A direct commit an open release branch already carries counts as IN FLIGHT.
+ */
 function sweepTable(report, o) {
     const header = ['REPO', 'WAITING', 'IN FLIGHT', ...(report.parity ? [`${report.to.toUpperCase()} ONLY`] : []), 'OLDEST'];
     const rows = report.repos.map((r) => {
@@ -176,10 +190,11 @@ function sweepTable(report, o) {
             return [r.repo, r.problem?.message ?? ''];
         const f = r.forward;
         const oldest = oldestDays(f, o.now);
+        const directInFlight = f.direct.filter((c) => c.inFlight).length;
         return [
             r.repo,
-            String(f.waiting.length + f.direct.length),
-            String(f.inFlight.reduce((n, g) => n + g.prs.length, 0)),
+            String(f.waiting.length + f.direct.length - directInFlight),
+            String(f.inFlight.reduce((n, g) => n + g.prs.length, 0) + directInFlight),
             ...(report.parity ? [String(r.reverse ? itemCount(r.reverse) : 0)] : []),
             oldest === null ? '—' : `${oldest}d`,
         ];
@@ -196,9 +211,17 @@ export function renderTerminal(report, o) {
     const parts = report.repos.length > 1 ? [sweepTable(report, o).join('\n'), ...sections] : sections;
     return parts.join('\n\n');
 }
+/**
+ * Text written by whoever opened a PR or typed a commit, made literal: a title
+ * like "Fix <PaymentSheet>" would otherwise vanish as an HTML tag when pasted
+ * into GitHub, and "*overlap*" turn italic.
+ */
+function mdEscape(text) {
+    return text.replace(/[\\*_`<>[\]]/g, (c) => `\\${c}`);
+}
 function mdPr(p, o, r, indent = '') {
     const age = ageDays(p.landedAt, o.now);
-    const text = !o.short && p.phrase ? `**${p.phrase}** — ${p.title}` : p.title;
+    const text = !o.short && p.phrase ? `**${mdEscape(p.phrase)}** — ${mdEscape(p.title)}` : mdEscape(p.title);
     const parts = [`[#${p.number}](${p.url}) ${text}`];
     if (p.contributors.length > 0)
         parts.push(p.contributors.map(personName).join(', '));
@@ -209,7 +232,7 @@ function mdPr(p, o, r, indent = '') {
 }
 function mdCommit(c, o, r) {
     const age = ageDays(c.landedAt, o.now);
-    return `- \`${c.sha.slice(0, 7)}\` ${c.subject} · ${[`${age}d`, ...markers(c, age, r)].join(' · ')}`;
+    return `- \`${c.sha.slice(0, 7)}\` ${mdEscape(c.subject)} · ${[`${age}d`, ...markers(c, age, r)].join(' · ')}`;
 }
 function mdPrList(prs, o, r) {
     if (!o.byTicket)

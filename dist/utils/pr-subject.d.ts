@@ -20,8 +20,9 @@ export declare function parsePrSubject(subject: string): PrSubject | null;
 export declare function isBumpBranch(branch: string): boolean;
 /**
  * PRs that carry other PRs rather than work of their own: release and hotfix
- * PRs into production, and the CI's bumps. Listing them would count every
- * change twice.
+ * PRs into production, the CI's bumps, and branch syncs ("Develop into
+ * Staging"), whose head is a whole environment branch. Listing them would
+ * count every change twice.
  */
 export declare function isVehicleBranch(branch: string): boolean;
 /**

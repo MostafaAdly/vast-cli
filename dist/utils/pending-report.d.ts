@@ -28,6 +28,11 @@ export interface PendingCommit {
     subject: string;
     landedAt: Date;
     ported: boolean;
+    /** The open release/hotfix PR whose branch already carries this change. */
+    inFlight: {
+        number: number;
+        branch: string;
+    } | null;
 }
 export interface InFlightGroup {
     number: number;
@@ -75,6 +80,8 @@ export interface OpenReleasePr {
     url: string;
     branch: string;
     prNumbers: number[];
+    /** SHAs of direct commits whose change its branch already carries. */
+    commits: string[];
 }
 export interface RenderOptions {
     now: Date;

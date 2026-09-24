@@ -9,7 +9,7 @@
 import { Command } from 'commander';
 import type { RepoConfig } from '../config/repos.js';
 import { type Parity } from '../utils/parity.js';
-import { type PrLookup } from '../utils/shipped.js';
+import { type PrBatchLookup } from '../utils/shipped.js';
 import { type OpenReleasePr } from '../utils/pending-report.js';
 export interface PendingOptions {
     to: string;
@@ -24,15 +24,18 @@ export interface PendingOptions {
     json: boolean;
     dir?: string;
 }
-type ReleaseHead = Omit<OpenReleasePr, 'prNumbers'>;
+type ReleaseHead = Omit<OpenReleasePr, 'prNumbers' | 'commits'>;
 /** Everything that touches the world, so the whole command runs in tests. */
 export interface PendingDeps {
     repoDir: (repo: RepoConfig, override?: string) => string | null;
     isCheckout: (dir: string) => boolean;
+    /** One fetch of exactly these branches: true only if all of them fetched. */
     fetchBranches: (dir: string, branches: string[]) => Promise<boolean>;
-    compareBranches: (dir: string, source: string, target: string) => Parity;
+    compareBranches: (dir: string, source: string, target: string) => Promise<Parity>;
+    /** Which of these commits' changes `ref`'s tree already holds. */
+    containedIn: (dir: string, ref: string, shas: string[]) => Promise<Set<string>>;
     prNumbersInRange: (dir: string, base: string, head: string) => number[];
-    lookupPr: PrLookup;
+    lookupPrs: PrBatchLookup;
     openReleasePrs: (repo: string) => Promise<ReleaseHead[]>;
     modelPhrases: (prs: Array<{
         number: number;
