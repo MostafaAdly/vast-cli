@@ -158,12 +158,32 @@ in `Vast-deployments`:
   skipped under `--to staging`.
 - Compared **by PR number** from `Merge pull request #N` subjects on every commit
   (`src/utils/parity.ts`), never by commit: a `--pick` hotfix carries PRs as
-  cherry-picked merges. Vehicles (`release/*`, `hotfix/*`, `bump-*`) and
-  bookkeeping (version bumps, Helm-values-only commits) are dropped; the rules
-  live in `src/utils/pr-subject.ts`, shared with the release announcement.
-- Items left on one side are checked by patch-id: `ported (same code)`. The
-  limit is deliberate wording: a conflict-resolved port-back reads `not found
-  on <branch>`, never "missing".
+  cherry-picked merges. Vehicles (`release/*`, `hotfix/*`, `bump-stage-*`/
+  `bump-prod-*`, and branch syncs whose head is exactly `develop`/`staging`/
+  `production`/`main`/`master`) and bookkeeping (version bumps, Helm-values-only
+  and package.json-version-only commits) are dropped. The rules live in
+  `src/utils/pr-subject.ts`, shared with the release announcement.
+- Items left on one side get three code checks, all reading `ported (same
+  code)`: patch-id against the other side's leftovers; patch-id against the
+  other branch's history (only commits sharing an author time, which
+  cherry-picks keep; `--binary` like the item patch-ids); and containment (the
+  item's diff reverse-applies with `git apply --cached --check -R` to a temp
+  index of the other branch's tip). Containment is what catches a multi-commit
+  PR ported commit by commit. Limits, in the wording on purpose: a history match
+  proves the change was applied once, not that it survives (a later revert still
+  reads ported); a conflict-resolved port, or a change the other branch modified
+  further, reads `not found on <branch>`, never "missing".
+- PRs inside an open release/hotfix PR are **In flight** and never `stale`. A
+  forward direct commit whose change an open release/hotfix branch carries (the
+  same containment test against `origin/<head>`) is marked `in flight ·
+  <branch> (#N)` instead of stale. A PR or commit in several open release PRs is
+  claimed by the newest.
+- Source and target are fetched strictly (both or the repo errors); open release
+  heads are best effort, and a head that fails only drops out of In flight.
+- Speed matters here: PR details come from one `gh api graphql` call per 50 PRs
+  (`ghPrLookupMany`, same contributor rules as `parseGhPrView`), and the model
+  runs async, 40 PRs per call, with `MAX_THINKING_TOKENS=0`. Do not reintroduce a
+  per-PR `gh pr view`, or a synchronous gh/claude call, in this path.
 - `--slack` posts the forward direction only, one bullet per repo in the
   announcement's shape (`src/utils/slack-rich-text.ts`), and exits 1 if it
   cannot post. Never run it live while developing: `~/.vast-cli/slack.json`
