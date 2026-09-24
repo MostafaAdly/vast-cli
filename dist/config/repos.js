@@ -16,14 +16,20 @@
  * now deliberately exceeds that manifest.
  *
  * Workflow names and Vast-deployments paths below were read from GitHub on
- * 2026-09-17, not assumed. Staging is GitOps: `build-deploy` builds the image
+ * 2026-09-17, not assumed. Staging is GitOps: `build-deploy.yml` builds the image
  * and commits the tag into Vast-deployments, which ArgoCD watches. Production
  * paths are the same shape but are assumptions until DevOps migrates it.
  */
 export const RELEASE_TEAMS = ['frontend', 'backend'];
 export const DEPLOY_ENVS = ['staging', 'production'];
-/** Every releasable repo builds and commits its tag through the same workflow. */
-const BUILD_DEPLOY = { staging: 'build-deploy', production: 'build-deploy' };
+/**
+ * Every releasable repo builds and commits its tag through the same workflow,
+ * dispatched by its FILE. DevOps renamed each one to "<Repo> Pipeline" on
+ * 2026-09-24 (e.g. "VastPayPwaV2 Pipeline") and the old name "build-deploy"
+ * stopped resolving; the file build-deploy.yml did not move, and gh accepts a
+ * file wherever it accepts a name, so the next rename cannot break deploys.
+ */
+const BUILD_DEPLOY = { staging: 'build-deploy.yml', production: 'build-deploy.yml' };
 const NO_DEPLOY = { staging: null, production: null };
 /**
  * Staging folder names are ArgoCD app names hand-written in Vast-deployments,

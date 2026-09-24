@@ -16,7 +16,7 @@
  * now deliberately exceeds that manifest.
  *
  * Workflow names and Vast-deployments paths below were read from GitHub on
- * 2026-09-17, not assumed. Staging is GitOps: `build-deploy` builds the image
+ * 2026-09-17, not assumed. Staging is GitOps: `build-deploy.yml` builds the image
  * and commits the tag into Vast-deployments, which ArgoCD watches. Production
  * paths are the same shape but are assumptions until DevOps migrates it.
  */

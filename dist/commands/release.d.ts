@@ -3,8 +3,8 @@
  *
  * The whole staging ritual in one line: promote develop → staging, derive the
  * next release candidate from the tag Vast-deployments says is live, dispatch
- * build-deploy, watch the run, and watch ArgoCD until the new tag is actually
- * running. There is no version-bump PR any more — staging is GitOps.
+ * the repo's "<Repo> Pipeline" workflow (build-deploy.yml), watch the run, and
+ * watch ArgoCD until the new tag is actually running. There is no version-bump PR any more — staging is GitOps.
  *
  * Several repos at once behave like one terminal per repo: each is promoted in
  * turn — seconds of local git — and then every deploy runs concurrently, so the

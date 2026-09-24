@@ -4,7 +4,7 @@
  * Dispatches a version to an environment and follows it all the way to the
  * cluster.
  *
- * Staging is GitOps now: `build-deploy` builds the image and commits the tag
+ * Staging is GitOps now: `build-deploy.yml` builds the image and commits the tag
  * into Vast-deployments, ArgoCD notices and rolls it out. There is no bump PR
  * to merge any more — merging one was the old definition of "released", and
  * after the migration it would have meant merging into a file nothing watches.

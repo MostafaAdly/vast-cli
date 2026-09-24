@@ -19,7 +19,7 @@ const STAGE_YAML = `deployment:
 /** A repo whose staging file exists and whose production file does not. */
 const repo = (overrides: Partial<RepoConfig> = {}): RepoConfig => ({
   name: 'VastPay-DashBoard',
-  workflow: { staging: 'build-deploy', production: 'build-deploy' },
+  workflow: { staging: 'build-deploy.yml', production: 'build-deploy.yml' },
   deployments: {
     staging: 'deployments/helm/staging/vastpay-dasaboard/stage.yaml',
     production: null,

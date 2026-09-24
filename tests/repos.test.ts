@@ -54,10 +54,13 @@ test('Vast-Finance is configured as unreleasable', () => {
 // never meant to be releasable: no deployments file, no deploy workflow.
 const KNOWN_UNRELEASABLE = ['Vast-Finance', 'vastpay-payment-odoo', 'Terraform'];
 
-test('every other repo has a build-deploy workflow and a staging deployments file', () => {
+// Dispatched by file, not by display name: DevOps renamed every workflow to
+// "<Repo> Pipeline" on 2026-09-24 and the old name "build-deploy" stopped
+// resolving, while the file build-deploy.yml stayed put in every repo.
+test('every other repo dispatches build-deploy.yml and has a staging deployments file', () => {
   for (const repo of REPOS.filter((r) => !KNOWN_UNRELEASABLE.includes(r.name))) {
-    assert.equal(repo.workflow.staging, 'build-deploy', `${repo.name} staging workflow`);
-    assert.equal(repo.workflow.production, 'build-deploy', `${repo.name} production workflow`);
+    assert.equal(repo.workflow.staging, 'build-deploy.yml', `${repo.name} staging workflow`);
+    assert.equal(repo.workflow.production, 'build-deploy.yml', `${repo.name} production workflow`);
     assert.ok(repo.deployments.staging, `${repo.name} is missing a staging deployments file`);
   }
 });

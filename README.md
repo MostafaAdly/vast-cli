@@ -171,7 +171,8 @@ develop  ──▶  staging  ──▶  production
 ```
 
 Staging is GitOps. There are no bump PRs any more. `vast release` promotes the branch,
-derives the version, and dispatches the repo's `build-deploy` workflow. That workflow
+derives the version, and dispatches the repo's `<Repo> Pipeline` workflow (file
+`.github/workflows/build-deploy.yml`, e.g. `VastPayPwaV2 Pipeline`). That workflow
 builds the image and commits the new tag to `Vast-deployments`; ArgoCD notices the commit
 and syncs the cluster. The CLI asks ArgoCD to refresh the app the moment the run is green, so ArgoCD's usual three-minute git poll is skipped and the wait is the rollout itself, typically under a minute.
 
@@ -530,7 +531,7 @@ in step with the CLI it drives.
 ## Repositories
 
 Twelve repos are configured. Nine are **releasable** — a repo is releasable when it has
-both a `build-deploy` workflow and a staging values file in `Vast-deployments`, which is
+both a `build-deploy.yml` workflow and a staging values file in `Vast-deployments`, which is
 derived, not declared:
 
 | Repo | Team | Releasable | Release train |
