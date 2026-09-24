@@ -286,3 +286,70 @@ test('json round-trips the model with ISO dates', () => {
   assert.equal(parsed.repos[0].forward.waiting[1].number, 313);
   assert.equal(parsed.repos[0].forward.waiting[1].landedAt, daysAgo(9).toISOString());
 });
+
+/**
+ * A style that records what it was asked to do, as bracketed markup, so the
+ * test pins every colour and every link without depending on escape codes.
+ */
+const MARKUP = {
+  paint: (tone: string, text: string): string => `<${tone}>${text}</${tone}>`,
+  link: (text: string, url: string): string => `[${text}](${url})`,
+};
+
+test('terminal: a style colours every part and links PRs, commits, branches, tickets and the repo', () => {
+  const out = renderTerminal(fixtureReport(), { ...OPTS, style: MARKUP });
+  const line = (needle: string): string => out.split('\n').find((l) => l.includes(needle)) ?? '';
+
+  assert.equal(
+    line('staging → production'),
+    `  [<repo>VastPayPwaV2</repo>](${REPO_URL}) <muted>|</muted> [<muted>staging → production</muted>](${REPO_URL}/compare/production...staging)`,
+  );
+  assert.equal(
+    line('In flight'),
+    `  <inFlight>In flight · </inFlight>[<inFlight>hotfix/2.1.15</inFlight>](${REPO_URL}/tree/hotfix/2.1.15) [<inFlight>(#334, open)</inFlight>](${REPO_URL}/pull/334)`,
+  );
+  assert.equal(
+    line('#313'),
+    `    [<pr>#313</pr>](${REPO_URL}/pull/313)  <phrase>guest token reuse</phrase><muted> — </muted>Reuse guest tokens without overriding customer sessions`,
+  );
+  assert.equal(
+    line('VA-13091'),
+    `          <muted>Osama Elshimy · </muted>[<ticket>VA-13091</ticket>](https://app.clickup.com/t/90121402342/VA-13091)<muted> · 9d</muted>`,
+  );
+  assert.match(line('21d'), /<stale>⚠ stale<\/stale>$/);
+  assert.equal(
+    line('46d26d9'),
+    `    [<sha>46d26d9</sha>](${REPO_URL}/commit/46d26d9${'a'.repeat(33)})  fix(pwa): preserve disabled plugin lifecycle<muted> · 3d</muted>`,
+  );
+  assert.match(line('Waiting'), /^ {2}<waiting>Waiting \(2\)<\/waiting>$/);
+  assert.match(line('On production'), /^ {2}<reverse>On production, not on staging \(2\)<\/reverse>$/);
+  assert.match(line('30d'), /<ported>ported \(same code\)<\/ported>$/);
+  assert.match(line('5d'), /<notFound>⚠ not found on staging<\/notFound>$/);
+  assert.match(line('3 PRs'), /^ {2}<muted>3 PRs · 1 direct commit · 1 ticket · oldest 21 days<\/muted>$/);
+});
+
+test('terminal: a direct commit in flight links its release PR and branch', () => {
+  const repo = fixtureRepo();
+  repo.forward!.direct[0].inFlight = { number: 303, branch: 'hotfix/2.1.12' };
+  const out = renderTerminal(fixtureReport([repo], false), { ...OPTS, style: MARKUP });
+  assert.match(
+    out,
+    new RegExp(
+      `<inFlight>in flight · </inFlight>\\[<inFlight>hotfix/2\\.1\\.12</inFlight>\\]\\(${REPO_URL}/tree/hotfix/2\\.1\\.12\\) \\[<inFlight>\\(#303\\)</inFlight>\\]\\(${REPO_URL}/pull/303\\)`,
+    ),
+  );
+});
+
+test('terminal: the sweep table keeps its columns aligned when styled', () => {
+  const skipped: RepoPending = { ...fixtureRepo(), repo: 'VastPay-BackEnd', forward: null, reverse: null, problem: { kind: 'skipped', message: 'no develop branch' } };
+  const plain = renderTerminal(fixtureReport([fixtureRepo(), skipped]), OPTS).split('\n\n')[0];
+  const styled = renderTerminal(fixtureReport([fixtureRepo(), skipped]), { ...OPTS, style: MARKUP }).split('\n\n')[0];
+  const strip = (s: string): string => s.replace(/<\/?[a-zA-Z]+>/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  assert.equal(strip(styled), plain);
+  assert.match(styled, /\[<repo>VastPayPwaV2<\/repo>\]\(https:\/\/github\.com\/Vast-menu\/VastPayPwaV2\)/);
+  assert.match(styled, /<muted>no develop branch<\/muted>/);
+});
+
+test('terminal: without a style the output is plain text, byte for byte as before', () => {
+  assert.doesNotMatch(renderTerminal(fixtureReport(), OPTS), /\u001B/);
+});

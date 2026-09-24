@@ -32,6 +32,7 @@ export function fixtureRepo(): RepoPending {
   return {
     repo: 'VastPayPwaV2',
     displayName: 'Vastpay Pwa V2',
+    repoUrl: REPO_URL,
     compareUrl: `${REPO_URL}/compare/production...staging`,
     problem: null,
     notes: [],

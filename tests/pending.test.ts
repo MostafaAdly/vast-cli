@@ -63,6 +63,7 @@ function fake(over: Partial<Deps> = {}) {
       return {};
     },
     now: () => new Date('2026-09-24T00:00:00Z'),
+    terminalStyle: () => ({ paint: (_tone, text) => text, link: (text) => text }),
     out: (t) => out.push(t),
     err: (t) => err.push(t),
     ...over,
@@ -308,4 +309,26 @@ test('parseOpenReleasePrs keeps release and hotfix heads, by number', () => {
     { number: 334, url: 'u334', branch: 'hotfix/2.1.15' },
     { number: 340, url: 'u340', branch: 'release/2.2.0' },
   ]);
+});
+
+test('the terminal report is styled, the markdown never is', async () => {
+  const f = fake({
+    terminalStyle: () => ({ paint: (tone, text) => `<${tone}>${text}</${tone}>`, link: (text, url) => `[${text}](${url})` }),
+  });
+  await runPending(['VastPayPwaV2'], { ...OPTS, json: false, markdown: true }, f.deps);
+  const all = f.out.join('\n');
+  const [terminal, markdown] = all.split('──── markdown ────');
+  assert.match(terminal, /\[<pr>#313<\/pr>\]\(https:\/\/github\.com\/Vast-menu\/VastPayPwaV2\/pull\/313\)/);
+  assert.match(terminal, /\[<repo>VastPayPwaV2<\/repo>\]\(https:\/\/github\.com\/Vast-menu\/VastPayPwaV2\)/);
+  assert.doesNotMatch(markdown, /<pr>|<repo>|<muted>/);
+});
+
+test('--json output carries the repo URL and no styling', async () => {
+  const f = fake({
+    terminalStyle: () => ({ paint: (tone, text) => `<${tone}>${text}</${tone}>`, link: (text) => text }),
+  });
+  await runPending(['VastPayPwaV2'], OPTS, f.deps);
+  assert.equal(f.out.length, 1);
+  assert.doesNotMatch(f.out[0], /<pr>/);
+  assert.equal(JSON.parse(f.out[0]).repos[0].repoUrl, 'https://github.com/Vast-menu/VastPayPwaV2');
 });

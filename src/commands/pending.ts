@@ -33,7 +33,9 @@ import {
   type PendingTo,
   type PrDetails,
   type RepoPending,
+  type TerminalStyle,
 } from '../utils/pending-report.js';
+import { terminalStyle } from '../utils/pending-style.js';
 import { buildPendingSlack, pendingContributors } from '../utils/pending-slack.js';
 
 const execFileAsync = promisify(execFile);
@@ -73,6 +75,8 @@ export interface PendingDeps {
   lookupUserByEmail: (token: string, email: string) => Promise<string | null>;
   postMessage: (token: string, channel: string, text: string, blocks: unknown[]) => Promise<unknown>;
   now: () => Date;
+  /** Colours and links when stdout is a terminal; plain otherwise. */
+  terminalStyle: () => TerminalStyle;
   out: (text: string) => void;
   err: (text: string) => void;
 }
@@ -110,6 +114,7 @@ export const defaultPendingDeps: PendingDeps = {
   lookupUserByEmail: (token, email) => lookupUserByEmail(token, email),
   postMessage: (token, channel, text, blocks) => postMessage(token, channel, text, fetch, blocks),
   now: () => new Date(),
+  terminalStyle: () => terminalStyle(),
   out: (text) => console.log(text),
   err: (text) => console.error(text),
 };
@@ -156,6 +161,7 @@ async function collectOne(
   const base = {
     repo: repo.name,
     displayName: repo.displayName,
+    repoUrl,
     compareUrl: source ? `${repoUrl}/compare/${target}...${source}` : '',
     forward: null,
     reverse: null,
@@ -313,7 +319,7 @@ export async function runPending(
   if (opts.json) {
     deps.out(renderJson(report));
   } else {
-    deps.out(renderTerminal(report, render));
+    deps.out(renderTerminal(report, { ...render, style: deps.terminalStyle() }));
     if (opts.markdown) deps.out(['', MARKDOWN_START, renderMarkdown(report, render), MARKDOWN_END].join('\n'));
   }
   for (const r of report.repos) for (const note of r.notes) say(`  ${r.repo}: ${note}`);
@@ -372,6 +378,9 @@ How items are matched:
   "In flight" lists PRs already inside an open release/hotfix PR; a direct
   commit whose change that PR's branch carries is marked "in flight" too.
   "stale" marks work waiting more than 14 days.
+
+In a terminal the report is coloured and PRs, commits, branches, tickets and
+repos are clickable links; piped output, --markdown and --json stay plain.
 `,
     )
     .action(async (names: string[], opts: PendingOptions) => {

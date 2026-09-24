@@ -54,6 +54,8 @@ export interface RepoProblem {
 export interface RepoPending {
     repo: string;
     displayName: string;
+    /** The repo on GitHub, for commit, branch and PR links. */
+    repoUrl: string;
     /** GitHub's compare view, target...source. */
     compareUrl: string;
     forward: PendingDirection | null;
@@ -87,7 +89,22 @@ export interface RenderOptions {
     now: Date;
     byTicket: boolean;
     short: boolean;
+    /** Colours and links for a real terminal; plain text when omitted. */
+    style?: TerminalStyle;
 }
+/** What a piece of the terminal report is, so a style can colour it. */
+export type Tone = 'repo' | 'muted' | 'inFlight' | 'waiting' | 'direct' | 'reverse' | 'pr' | 'phrase' | 'ticket' | 'sha' | 'stale' | 'ported' | 'notFound' | 'error' | 'ok';
+/**
+ * How the terminal report is dressed. Kept as an interface so this file stays
+ * free of escape codes: the command hands in chalk and OSC 8 links when it is
+ * writing to a terminal, and everything else — tests, pipes, --markdown — gets
+ * the plain text.
+ */
+export interface TerminalStyle {
+    paint(tone: Tone, text: string): string;
+    link(text: string, url: string): string;
+}
+export declare const PLAIN_STYLE: TerminalStyle;
 /** Over two weeks on staging without reaching production is worth a nudge. */
 export declare const STALE_DAYS = 14;
 export declare function ageDays(landedAt: Date, now: Date): number;
