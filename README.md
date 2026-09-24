@@ -257,9 +257,11 @@ matching patch on the other side, a matching patch anywhere in the other branch'
 history (a duplicate of a change both branches already have), and whether the
 item's diff is already in the other branch's tree. The last check catches a PR that
 was ported commit by commit. **`ported (same code)`** means one of the three
-matched. **`not found on <branch>`** is not proof it is missing. A port that needed
-conflict fixes has different code, and so does a change the other branch later
-modified further. Check those by hand.
+matched. A history match proves the change was applied there once, not that it is
+still there: a pick later reverted on the other branch can still read `ported
+(same code)`. **`not found on <branch>`** is not proof it is missing. A port that
+needed conflict fixes has different code, and so does a change the other branch
+later modified further. Check those by hand.
 
 Each PR shows a 2-3 word phrase from your local `claude` plus its title; `--short`
 shows titles only and skips the model (so does a machine without `claude`).
