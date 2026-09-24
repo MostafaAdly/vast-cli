@@ -151,8 +151,8 @@ commits is reported and left alone.
 vast release <repo>
 ```
 
-Staging is GitOps, so this has two halves and both matter. The `build-deploy`
-workflow builds the image and commits the new tag to `Vast-deployments`; ArgoCD
+Staging is GitOps, so this has two halves and both matter. The repo's
+`<Repo> Pipeline` workflow (`build-deploy.yml`) builds the image and commits the new tag to `Vast-deployments`; ArgoCD
 then syncs the cluster. `vast` asks ArgoCD to refresh the app the moment the run is green, so the usual three-minute poll is skipped, and waits for
 that second half and reports the repo's ArgoCD line as it goes — `waiting for
 <tag>`, then ArgoCD's own sync/health pair.
@@ -373,7 +373,7 @@ themselves — never handle their credentials — then run the deploy again.
 **`dispatched, but its run could not be identified`.** The build was triggered but
 `vast` could not match it to a run id and so cannot watch it. Do not re-dispatch.
 Check the repo's Actions page first (`gh run list --repo Vast-menu/<Repo>
---workflow build-deploy --limit 5`) and report what is actually running; a blind
+--workflow build-deploy.yml --limit 5`) and report what is actually running; a blind
 re-run starts a second build of the same version.
 
 ---

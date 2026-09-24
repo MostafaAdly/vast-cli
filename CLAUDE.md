@@ -109,8 +109,11 @@ in `Vast-deployments`:
   match the repo name: `VastPayPwa → vastpay-pwa`, `VastMenuPwa → pwa`,
   `VastMenuPwaV2 → pwav2`, `VastPay-DashBoard → vastpay-dasaboard` (their typo,
   upstream — never "fix" it).
-- Each repo dispatches its own `build-deploy` workflow, one `version` input, on
-  the env branch. It builds the image and commits the tag to `Vast-deployments`;
+- Each repo dispatches its own `<Repo> Pipeline` workflow, one `version` input, on
+  the env branch. It is dispatched **by file**, `build-deploy.yml`: DevOps
+  renamed every workflow from `build-deploy` to `<Repo> Pipeline` on 2026-09-24
+  and the old name stopped resolving, which broke every deploy until 2.6.1.
+  Never dispatch by display name. It builds the image and commits the tag to `Vast-deployments`;
   ArgoCD syncs from there. The CLI asks ArgoCD to refresh the app as soon as the run is green, so the usual ~3 minute git poll is skipped and the wait is the rollout itself. There are no bump PRs.
 - The concurrent sweep is proven, not theoretical: a full six-repo
   `vast release --frontend` on 2026-09-17 (2.0.1) shipped every repo through
