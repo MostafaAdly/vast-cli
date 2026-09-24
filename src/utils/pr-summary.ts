@@ -4,8 +4,8 @@
  * customer sessions".
  *
  * The local `claude` CLI does this well and a regex does it badly, so the
- * model is asked first, once for the whole release, and a deterministic
- * heuristic covers every PR it did not answer usably. Nothing here throws: a
+ * model is asked first — one call per 40 PRs, run side by side — and a
+ * deterministic heuristic covers every PR it did not answer usably. Nothing here throws: a
  * clumsy phrase costs the announcement some polish, never the announcement.
  *
  * SECURITY: PR titles and branch names are untrusted — anyone who can open a
@@ -14,12 +14,11 @@
  * returns is screened before use.
  */
 
-import { execFileSync } from 'child_process';
-import { isClaudeAvailable } from './summarize.js';
+import { execFile } from 'child_process';
 
 export interface SummaryDeps {
-  available: () => boolean;
-  run: (prompt: string) => string;
+  available: () => boolean | Promise<boolean>;
+  run: (prompt: string) => Promise<string>;
 }
 
 export interface PrForSummary {
@@ -28,8 +27,33 @@ export interface PrForSummary {
   branch: string;
 }
 
-/** One call for a handful of PRs; well past this, something is stuck. */
+/** One call for up to PRS_PER_CALL PRs; well past this, something is stuck. */
 const TIMEOUT_MS = 60_000;
+
+/**
+ * PRs per model call. A release fits in one; a backlog of 150 is split, and
+ * the calls run side by side instead of one long answer nearing the timeout.
+ */
+const PRS_PER_CALL = 40;
+
+/** Model calls in flight across the process: a sweep asks once per repo. */
+const MAX_CALLS = 8;
+let callsInFlight = 0;
+const waitingCalls: Array<() => void> = [];
+
+async function withCallSlot<T>(fn: () => Promise<T>): Promise<T> {
+  // A freed slot is handed straight to the next waiter, so the count never
+  // dips and lets a newcomer jump the queue.
+  if (callsInFlight >= MAX_CALLS) await new Promise<void>((resolve) => waitingCalls.push(resolve));
+  else callsInFlight++;
+  try {
+    return await fn();
+  } finally {
+    const next = waitingCalls.shift();
+    if (next) next();
+    else callsInFlight--;
+  }
+}
 
 /** Longest usable phrase: two 3-word phrases and a little slack. */
 const MAX_WORDS = 8;
@@ -236,25 +260,54 @@ function parseAnswer(output: string): Record<string, unknown> | null {
   }
 }
 
-function runClaude(prompt: string): string {
-  // Read at call time, like a flag, so a one-off override needs no restart.
-  const model = process.env.VAST_SUMMARY_MODEL ?? 'haiku';
-  return execFileSync('claude', ['-p', '--model', model, '--output-format', 'text'], {
-    input: prompt,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: TIMEOUT_MS,
-    maxBuffer: 1024 * 1024,
+/**
+ * `file args` with `input` on stdin, without blocking the event loop: a sweep
+ * runs one model call per repo, and they must overlap with each other and
+ * with the gh lookups rather than queue behind them.
+ */
+function execWithInput(
+  file: string,
+  args: string[],
+  input: string,
+  timeout: number,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, { encoding: 'utf-8', timeout, maxBuffer: 1024 * 1024, env }, (error, stdout) =>
+      error ? reject(error) : resolve(String(stdout)),
+    );
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end(input);
   });
 }
 
-const defaultDeps: SummaryDeps = { available: isClaudeAvailable, run: runClaude };
+function runClaude(prompt: string): Promise<string> {
+  // Read at call time, like a flag, so a one-off override needs no restart.
+  const model = process.env.VAST_SUMMARY_MODEL ?? 'haiku';
+  // Naming a PR needs no extended thinking. With a user's thinking setting
+  // on, the call spent ~10k thinking tokens and over a minute on 22 PRs —
+  // past the timeout, so every phrase was lost; with it off, ~8 seconds.
+  const env = { ...process.env, MAX_THINKING_TOKENS: '0' };
+  return execWithInput('claude', ['-p', '--model', model, '--output-format', 'text'], prompt, TIMEOUT_MS, env);
+}
+
+/** Asked once per process: a sweep's repos all share the answer. */
+let claudeAvailable: Promise<boolean> | null = null;
+
+function isClaudeAvailableAsync(): Promise<boolean> {
+  claudeAvailable ??= new Promise((resolve) => {
+    execFile('claude', ['--version'], { timeout: 15_000 }, (error) => resolve(!error));
+  });
+  return claudeAvailable;
+}
+
+const defaultDeps: SummaryDeps = { available: isClaudeAvailableAsync, run: runClaude };
 
 /**
  * The model's phrases alone, screened, with no fallback. A PR the model
- * skipped or answered badly is absent, and an empty result means no model
- * answered at all — which is how `vast pending` knows to show titles instead
- * of the weaker rule-based phrase.
+ * skipped or answered badly is absent, and an empty result means no usable
+ * model phrase — which is how `vast pending` knows to show titles instead of
+ * the weaker rule-based phrase.
  */
 export async function modelPhrases(
   prs: PrForSummary[],
@@ -262,20 +315,30 @@ export async function modelPhrases(
 ): Promise<Record<number, string>> {
   const out: Record<number, string> = {};
   if (prs.length === 0) return out;
-
-  let answer: Record<string, unknown> | null = null;
   try {
-    if (deps.available()) answer = parseAnswer(deps.run(buildSummaryPrompt(prs)));
+    if (!(await deps.available())) return out;
   } catch {
-    // No model, a timeout, a crash: no phrases, and the caller decides.
-    answer = null;
+    return out;
   }
 
-  for (const pr of prs) {
-    const phrase = answer?.[String(pr.number)];
-    const screened = typeof phrase === 'string' ? screenSummary(phrase) : null;
-    if (screened) out[pr.number] = screened;
-  }
+  const chunks: PrForSummary[][] = [];
+  for (let i = 0; i < prs.length; i += PRS_PER_CALL) chunks.push(prs.slice(i, i + PRS_PER_CALL));
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      let answer: Record<string, unknown> | null = null;
+      try {
+        answer = parseAnswer(await withCallSlot(() => deps.run(buildSummaryPrompt(chunk))));
+      } catch {
+        // A timeout or a crash: no phrases for this chunk, and the caller decides.
+        answer = null;
+      }
+      for (const pr of chunk) {
+        const phrase = answer?.[String(pr.number)];
+        const screened = typeof phrase === 'string' ? screenSummary(phrase) : null;
+        if (screened) out[pr.number] = screened;
+      }
+    }),
+  );
   return out;
 }
 

@@ -14,7 +14,8 @@
  * must never cost the release its announcement.
  */
 
-import { execFileSync } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import { ORG } from './remote.js';
 import type { ResolvedPick } from './picks.js';
 import {
@@ -24,6 +25,8 @@ import {
   type Contributor,
 } from './contributors.js';
 import { isBumpBranch, parsePrSubject } from './pr-subject.js';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * A PR as the announcement uses it. Defined here, next to the code that fills
@@ -175,7 +178,10 @@ export function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null {
     return null;
   }
   if (!view || typeof view !== 'object') return null;
+  return prFromView(view);
+}
 
+function prFromView(view: GhPrView): Omit<ShippedPr, 'number'> {
   const authorLogin = view.author?.login ?? '';
   const authorName = view.author?.name ?? '';
   const authors = commitAuthors(view);
@@ -207,6 +213,113 @@ export function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null {
     contributors: mergeContributors([prAuthor, others]),
   };
 }
+
+/** One PR as the GraphQL query below returns it. */
+interface GraphqlPr {
+  title?: string;
+  url?: string;
+  headRefName?: string;
+  author?: { __typename?: string; login?: string; name?: string | null } | null;
+  commits?: {
+    nodes?: Array<{
+      commit?: { authors?: { nodes?: Array<{ name?: string | null; email?: string | null; user?: { login?: string } | null }> } };
+    } | null>;
+  };
+}
+
+/**
+ * A GraphQL PR in `gh pr view`'s shape, so both go through one parser and the
+ * contributor rules cannot drift apart. `gh pr view` itself maps it the same
+ * way: an app author becomes `app/<login>`, a commit author's login is their
+ * GitHub user's, and a missing name is empty.
+ */
+function viewOfGraphql(pr: GraphqlPr): GhPrView {
+  const author = pr.author ?? undefined;
+  return {
+    title: pr.title,
+    url: pr.url,
+    headRefName: pr.headRefName,
+    author: author
+      ? { login: author.__typename === 'Bot' ? `app/${author.login ?? ''}` : (author.login ?? ''), name: author.name ?? '' }
+      : undefined,
+    commits: (pr.commits?.nodes ?? []).map((n) => ({
+      authors: (n?.commit?.authors?.nodes ?? []).map((a) => ({
+        name: a.name ?? '',
+        email: a.email ?? '',
+        login: a.user?.login ?? '',
+      })),
+    })),
+  };
+}
+
+/**
+ * PRs per GraphQL query: few round trips, and inside GitHub's 500,000-node
+ * limit — 50 PRs x 100 commits x 20 authors each is 100,000.
+ */
+const PRS_PER_QUERY = 50;
+
+const PR_FIELDS =
+  'title url headRefName author { __typename login ... on User { name } } ' +
+  'commits(first: 100) { nodes { commit { authors(first: 20) { nodes { name email user { login } } } } } }';
+
+export function buildPrQuery(numbers: number[]): string {
+  const fields = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${PR_FIELDS} }`).join(' ');
+  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields} } }`;
+}
+
+/**
+ * `gh api graphql` output for `buildPrQuery` -> each PR it could read. A PR
+ * GitHub could not resolve comes back null next to the others, and is absent.
+ */
+export function parseGhPrGraphql(json: string): Map<number, Omit<ShippedPr, 'number'>> {
+  const out = new Map<number, Omit<ShippedPr, 'number'>>();
+  let body: { data?: { repository?: Record<string, GraphqlPr | null> | null } };
+  try {
+    body = JSON.parse(json);
+  } catch {
+    return out;
+  }
+  for (const [alias, pr] of Object.entries(body?.data?.repository ?? {})) {
+    const m = /^pr(\d+)$/.exec(alias);
+    if (m && pr && typeof pr === 'object') out.set(Number(m[1]), prFromView(viewOfGraphql(pr)));
+  }
+  return out;
+}
+
+/** Look several PRs up at once. Injectable so tests never touch gh. */
+export interface PrBatchLookup {
+  (repo: string, numbers: number[]): Promise<Map<number, Omit<ShippedPr, 'number'>>>;
+}
+
+/**
+ * The batched lookup: one `gh api graphql` call per 50 PRs, all at once. A
+ * repo with 150 PRs costs three round trips instead of 150 `gh pr view`s.
+ * A PR that cannot be read is absent; a failed call costs only its batch.
+ */
+export const ghPrLookupMany: PrBatchLookup = async (repo, numbers) => {
+  const out = new Map<number, Omit<ShippedPr, 'number'>>();
+  const unique = [...new Set(numbers)];
+  const batches: number[][] = [];
+  for (let i = 0; i < unique.length; i += PRS_PER_QUERY) batches.push(unique.slice(i, i + PRS_PER_QUERY));
+  await Promise.all(
+    batches.map(async (batch) => {
+      let stdout = '';
+      try {
+        ({ stdout } = await execFileAsync(
+          'gh',
+          ['api', 'graphql', '-f', `query=${buildPrQuery(batch)}`, '-F', `owner=${ORG}`, '-F', `name=${repo}`],
+          { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 },
+        ));
+      } catch (error) {
+        // gh exits non-zero when any PR in the batch is missing, yet still
+        // prints the others.
+        stdout = String((error as { stdout?: unknown }).stdout ?? '');
+      }
+      for (const [n, pr] of parseGhPrGraphql(stdout)) out.set(n, pr);
+    }),
+  );
+  return out;
+};
 
 /** The real lookup: `gh pr view`. Returns null on any failure. */
 export const ghPrLookup: PrLookup = async (repo, number) => {
