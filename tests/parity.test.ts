@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compareBranches } from '../src/utils/parity.js';
+import { compareBranches, containedIn } from '../src/utils/parity.js';
 
 /**
  * Real repos with real merges: PR membership, cherry-picked merges and
@@ -60,7 +60,7 @@ function commit(r: ReturnType<typeof repo>, on: string, file: string, content: s
 const numbers = (prs: { number: number }[]): number[] => prs.map((p) => p.number);
 const subjects = (cs: { subject: string }[]): string[] => cs.map((c) => c.subject).sort();
 
-test('staging vs production: PRs by number, vehicles and noise dropped, ports found by code', () => {
+test('staging vs production: PRs by number, vehicles and noise dropped, ports found by code', async () => {
   const r = repo();
   try {
     r.git('checkout', '-qb', 'staging');
@@ -91,7 +91,7 @@ test('staging vs production: PRs by number, vehicles and noise dropped, ports fo
     r.git('cherry-pick', cTip);
     commit(r, 'staging', 'e.txt', 'e2\n', 'fix: port e by hand');
 
-    const p = compareBranches(r.dir, 'staging', 'production');
+    const p = await compareBranches(r.dir, 'staging', 'production');
 
     assert.deepEqual(p.sharedPrs, [11]);
     assert.deepEqual(numbers(p.onlySource.prs), [10]);
@@ -112,7 +112,7 @@ test('staging vs production: PRs by number, vehicles and noise dropped, ports fo
   }
 });
 
-test('develop vs staging: a promote merge carries PRs, and their commits are not direct commits', () => {
+test('develop vs staging: a promote merge carries PRs, and their commits are not direct commits', async () => {
   const r = repo();
   try {
     r.git('checkout', '-qb', 'staging');
@@ -123,13 +123,13 @@ test('develop vs staging: a promote merge carries PRs, and their commits are not
     mergePr(r, 'develop', 41, 'feat/q', 'q.txt');
     commit(r, 'staging', 's.txt', 's\n', 'fix: hotfix on staging');
 
-    const promote = compareBranches(r.dir, 'develop', 'staging');
+    const promote = await compareBranches(r.dir, 'develop', 'staging');
     assert.deepEqual(numbers(promote.onlySource.prs), [41]);
     assert.deepEqual(promote.onlySource.direct, []);
     assert.deepEqual(numbers(promote.onlyTarget.prs), []);
     assert.deepEqual(subjects(promote.onlyTarget.direct), ['fix: hotfix on staging']);
 
-    const release = compareBranches(r.dir, 'staging', 'production');
+    const release = await compareBranches(r.dir, 'staging', 'production');
     assert.deepEqual(numbers(release.onlySource.prs), [40]);
     assert.deepEqual(subjects(release.onlySource.direct), ['fix: hotfix on staging']);
   } finally {
@@ -137,7 +137,7 @@ test('develop vs staging: a promote merge carries PRs, and their commits are not
   }
 });
 
-test('a PR lands when its merge was committed', () => {
+test('a PR lands when its merge was committed', async () => {
   const r = repo();
   try {
     r.git('checkout', '-qb', 'staging');
@@ -151,14 +151,14 @@ test('a PR lands when its merge was committed', () => {
       stdio: 'pipe',
       env: { ...process.env, GIT_COMMITTER_DATE: '2026-09-01T00:00:00Z' },
     });
-    const p = compareBranches(r.dir, 'staging', 'production');
+    const p = await compareBranches(r.dir, 'staging', 'production');
     assert.equal(p.onlySource.prs[0].landedAt.toISOString(), '2026-09-01T00:00:00.000Z');
   } finally {
     r.cleanup();
   }
 });
 
-test('ports are still found under a user git config that reshapes log and diff output', () => {
+test('ports are still found under a user git config that reshapes log and diff output', async () => {
   const r = repo();
   try {
     r.git('checkout', '-qb', 'staging');
@@ -175,7 +175,7 @@ test('ports are still found under a user git config that reshapes log and diff o
     r.git('config', 'format.pretty', '%h %s');
     r.git('config', 'diff.external', 'false');
 
-    const p = compareBranches(r.dir, 'staging', 'production');
+    const p = await compareBranches(r.dir, 'staging', 'production');
     const port = p.onlySource.direct.find((c) => c.subject === 'feat: c.txt')!;
     const pr30 = p.onlyTarget.prs.find((u) => u.number === 30)!;
     assert.equal(p.onlySource.ported.has(port.sha), true);
@@ -185,11 +185,11 @@ test('ports are still found under a user git config that reshapes log and diff o
   }
 });
 
-test('identical branches compare empty', () => {
+test('identical branches compare empty', async () => {
   const r = repo();
   try {
     r.git('checkout', '-qb', 'staging');
-    const p = compareBranches(r.dir, 'staging', 'production');
+    const p = await compareBranches(r.dir, 'staging', 'production');
     assert.deepEqual(p.onlySource.prs, []);
     assert.deepEqual(p.onlySource.direct, []);
     assert.deepEqual(p.onlyTarget.prs, []);
@@ -199,10 +199,119 @@ test('identical branches compare empty', () => {
   }
 });
 
-test('an unknown ref throws rather than reporting an empty difference', () => {
+test('an unknown ref throws rather than reporting an empty difference', async () => {
   const r = repo();
   try {
-    assert.throws(() => compareBranches(r.dir, 'origin/nope', 'production'));
+    await assert.rejects(() => compareBranches(r.dir, 'origin/nope', 'production'));
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('a multi-commit PR ported commit by commit is ported both ways', async () => {
+  const r = repo();
+  try {
+    r.git('checkout', '-qb', 'staging');
+    r.git('checkout', '-qb', 'feat/arabic');
+    write(r.dir, 'input.ts', 'export const digits = "0-9";\n');
+    r.git('add', '.');
+    r.git('commit', '-qm', 'feat: arabic numerals');
+    const one = r.git('rev-parse', 'HEAD');
+    write(r.dir, 'input.test.ts', 'test("digits");\n');
+    r.git('add', '.');
+    r.git('commit', '-qm', 'test: cover arabic numerals');
+    const two = r.git('rev-parse', 'HEAD');
+    r.git('checkout', '-q', 'staging');
+    r.git('merge', '-q', '--no-ff', '-m', 'Merge pull request #327 from Vast-Menu/feat/arabic', 'feat/arabic');
+
+    // The hotfix carried the PR's commits one by one, not its merge, onto a
+    // production that had moved on.
+    commit(r, 'production', 'p.txt', 'p\n', 'fix: production only');
+    r.git('cherry-pick', one, two);
+
+    const p = await compareBranches(r.dir, 'staging', 'production');
+    const pr327 = p.onlySource.prs.find((u) => u.number === 327)!;
+    assert.equal(p.onlySource.ported.has(pr327.sha), true);
+    const ported = p.onlyTarget.direct.filter((c) => p.onlyTarget.ported.has(c.sha));
+    assert.deepEqual(subjects(ported), ['feat: arabic numerals', 'test: cover arabic numerals']);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('a duplicate of a change both branches already have is ported, even after the other side moved on', async () => {
+  const r = repo();
+  try {
+    write(r.dir, 'merchant.txt', 'cert v1\n');
+    r.git('add', '.');
+    r.git('commit', '-qm', 'add merchant file');
+    // The same change made twice, as two commits with one author time.
+    r.git('checkout', '-qb', 'cert-a');
+    write(r.dir, 'merchant.txt', 'cert v2\n');
+    r.git('commit', '-qam', 'fix: update merchant file');
+    const a = r.git('rev-parse', 'HEAD');
+    commit(r, 'production', 'other.txt', 'other\n', 'chore: other');
+    r.git('checkout', '-qb', 'cert-b');
+    r.git('cherry-pick', a);
+    // Both branches get the first copy: shared history.
+    r.git('checkout', '-q', 'production');
+    r.git('merge', '-q', '--no-ff', '-m', "Merge branch 'cert-a'", 'cert-a');
+    r.git('checkout', '-qb', 'staging');
+    // Production also gets the second copy; staging then changes the file again.
+    r.git('checkout', '-q', 'production');
+    r.git('merge', '-q', '--no-ff', '-m', "Merge branch 'cert-b'", 'cert-b');
+    commit(r, 'staging', 'merchant.txt', 'cert v3\n', 'fix: new certificate');
+
+    const p = await compareBranches(r.dir, 'staging', 'production');
+    assert.deepEqual(subjects(p.onlyTarget.direct), ['fix: update merchant file']);
+    assert.equal(p.onlyTarget.ported.has(p.onlyTarget.direct[0].sha), true);
+    assert.equal(p.onlySource.ported.has(p.onlySource.direct[0].sha), false);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('a port whose conflict resolution changed the final content is still not found', async () => {
+  const r = repo();
+  try {
+    write(r.dir, 'pay.ts', 'const a = 1;\nconst b = 2;\nconst c = 3;\n');
+    r.git('add', '.');
+    r.git('commit', '-qm', 'add pay');
+    r.git('checkout', '-qb', 'staging');
+    commit(r, 'staging', 'pay.ts', 'const a = 1;\nconst b = 20;\nconst c = 3;\n', 'fix: b is twenty');
+    const fix = r.git('rev-parse', 'HEAD');
+    // Production had moved the same line on, so the port was resolved by hand.
+    commit(r, 'production', 'pay.ts', 'const a = 1;\nconst b = 5;\nconst c = 3;\n', 'fix: b is five');
+    r.git('checkout', '-q', 'production');
+    assert.throws(() => r.git('cherry-pick', fix));
+    write(r.dir, 'pay.ts', 'const a = 1;\nconst b = 25;\nconst c = 3;\n');
+    r.git('add', '.');
+    r.git('-c', 'core.editor=true', 'cherry-pick', '--continue');
+
+    const p = await compareBranches(r.dir, 'staging', 'production');
+    const staged = p.onlySource.direct.find((c) => c.subject === 'fix: b is twenty')!;
+    assert.equal(p.onlySource.ported.has(staged.sha), false);
+    for (const c of p.onlyTarget.direct) assert.equal(p.onlyTarget.ported.has(c.sha), false, c.subject);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('containedIn finds the plain commits whose change a branch carries', async () => {
+  const r = repo();
+  try {
+    r.git('checkout', '-qb', 'staging');
+    commit(r, 'staging', 'x.txt', 'x\n', 'fix: x');
+    const x = r.git('rev-parse', 'HEAD');
+    commit(r, 'staging', 'y.txt', 'y\n', 'fix: y');
+    const y = r.git('rev-parse', 'HEAD');
+    r.git('checkout', '-q', 'production');
+    r.git('checkout', '-qb', 'hotfix/1.0.1');
+    r.git('cherry-pick', x);
+
+    assert.deepEqual([...(await containedIn(r.dir, 'hotfix/1.0.1', [x, y]))], [x]);
+    assert.deepEqual([...(await containedIn(r.dir, 'production', [x, y]))], []);
+    assert.equal(r.git('status', '--porcelain'), '');
   } finally {
     r.cleanup();
   }

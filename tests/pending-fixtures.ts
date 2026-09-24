@@ -56,7 +56,7 @@ export function fixtureRepo(): RepoPending {
         }),
       ],
       direct: [
-        { sha: '46d26d9' + 'a'.repeat(33), subject: 'fix(pwa): preserve disabled plugin lifecycle', landedAt: daysAgo(3), ported: false },
+        { sha: '46d26d9' + 'a'.repeat(33), subject: 'fix(pwa): preserve disabled plugin lifecycle', landedAt: daysAgo(3), ported: false, inFlight: null },
       ],
     },
     reverse: {

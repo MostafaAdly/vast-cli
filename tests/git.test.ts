@@ -14,6 +14,7 @@ import {
   isClean,
   mergeAndPush,
   refspecsFor,
+  fetchExactly,
   NEVER_PUSH,
 } from '../src/utils/git.js';
 
@@ -180,4 +181,20 @@ test('mergeSequence merges a clean ref and reports a conflicting one', () => {
     assert.equal(git('rev-parse', 'HEAD'), before, 'failed merge must not move HEAD');
     assert.equal(isClean(dir), true);
   });
+});
+
+test('fetchExactly fetches every branch or reports failure, with no partial fallback', async () => {
+  const origin = fixture();
+  execFileSync('git', ['branch', 'staging'], { cwd: origin, stdio: 'pipe' });
+  const clone = mkdtempSync(join(tmpdir(), 'vast-git-clone-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'scratch'], { cwd: clone, stdio: 'pipe' });
+    execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: clone, stdio: 'pipe' });
+    assert.equal(await fetchExactly(clone, ['main', 'staging']), true);
+    assert.equal(refExists(clone, 'origin/staging'), true);
+    assert.equal(await fetchExactly(clone, ['main', 'no-such-branch']), false);
+  } finally {
+    rmSync(origin, { recursive: true, force: true });
+    rmSync(clone, { recursive: true, force: true });
+  }
 });

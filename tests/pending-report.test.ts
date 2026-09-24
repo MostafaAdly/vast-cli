@@ -23,7 +23,7 @@ test('buildDirection turns a comparison into PRs, moving those in an open releas
       [313, { title: 'fix: reuse guest tokens', url: `${REPO_URL}/pull/313`, branch: 'Osama/VA-13091', contributors: [OSAMA] }],
     ]),
     phrases: { 313: 'guest token reuse' },
-    openReleases: [{ number: 334, url: `${REPO_URL}/pull/334`, branch: 'hotfix/2.1.15', prNumbers: [301] }],
+    openReleases: [{ number: 334, url: `${REPO_URL}/pull/334`, branch: 'hotfix/2.1.15', prNumbers: [301], commits: [] }],
     repoUrl: REPO_URL,
   });
 
@@ -39,6 +39,88 @@ test('buildDirection turns a comparison into PRs, moving those in an open releas
   assert.equal(p400.title, 'fix/unknown');
   assert.equal(p400.url, `${REPO_URL}/pull/400`);
   assert.deepEqual(d.direct.map((c) => c.subject), ['fix: direct']);
+});
+
+test('a PR inside two open release PRs is claimed by the newest; groups stay in number order', () => {
+  const d = buildDirection({
+    source: 'staging',
+    target: 'production',
+    side: {
+      prs: [
+        { number: 298, branch: 'fix/sentry', sha: 's298', landedAt: daysAgo(22), patchId: null },
+        { number: 301, branch: 'fix/elm', sha: 's301', landedAt: daysAgo(21), patchId: null },
+      ],
+      direct: [],
+      ported: new Set(),
+    },
+    details: new Map(),
+    phrases: {},
+    openReleases: [
+      { number: 302, url: `${REPO_URL}/pull/302`, branch: 'hotfix/2.1.11', prNumbers: [298], commits: [] },
+      { number: 334, url: `${REPO_URL}/pull/334`, branch: 'hotfix/2.1.15', prNumbers: [301], commits: [] },
+      { number: 305, url: `${REPO_URL}/pull/305`, branch: 'hotfix/2.1.13', prNumbers: [301], commits: [] },
+    ],
+    repoUrl: REPO_URL,
+  });
+  assert.deepEqual(d.inFlight.map((g) => [g.number, g.prs.map((p) => p.number)]), [[302, [298]], [334, [301]]]);
+});
+
+test('a direct commit carried by an open release branch is in flight, newest release first', () => {
+  const d = buildDirection({
+    source: 'staging',
+    target: 'production',
+    side: {
+      prs: [],
+      direct: [
+        { sha: 'c571971', subject: 'Update merchant files', landedAt: daysAgo(23), patchId: null },
+        { sha: 'c1204bc', subject: 'chore(env): pusher key', landedAt: daysAgo(7), patchId: null },
+      ],
+      ported: new Set(),
+    },
+    details: new Map(),
+    phrases: {},
+    openReleases: [
+      { number: 303, url: `${REPO_URL}/pull/303`, branch: 'hotfix/2.1.12', prNumbers: [], commits: ['c571971'] },
+      { number: 305, url: `${REPO_URL}/pull/305`, branch: 'hotfix/2.1.13', prNumbers: [], commits: ['c571971'] },
+    ],
+    repoUrl: REPO_URL,
+  });
+  assert.deepEqual(
+    d.direct.map((c) => [c.sha, c.inFlight]),
+    [
+      ['c571971', { number: 305, branch: 'hotfix/2.1.13' }],
+      ['c1204bc', null],
+    ],
+  );
+});
+
+test('an in-flight direct commit shows where it is instead of stale, in every renderer', () => {
+  const repo = fixtureRepo();
+  repo.forward!.direct = [
+    { sha: '571971c' + 'b'.repeat(33), subject: 'Update merchant files', landedAt: daysAgo(23), ported: false, inFlight: { number: 303, branch: 'hotfix/2.1.12' } },
+  ];
+  const term = renderTerminal(fixtureReport([repo], false), OPTS);
+  assert.match(term, /^ {4}571971c {2}Update merchant files · 23d {2}in flight · hotfix\/2\.1\.12 \(#303\)$/m);
+  assert.doesNotMatch(term, /571971c[^\n]*stale/);
+  const md = renderMarkdown(fixtureReport([repo], false), OPTS);
+  assert.match(md, /^- `571971c` Update merchant files · 23d · in flight · hotfix\/2\.1\.12 \(#303\)$/m);
+  const json = JSON.parse(renderJson(fixtureReport([repo], false)));
+  assert.deepEqual(json.repos[0].forward.direct[0].inFlight, { number: 303, branch: 'hotfix/2.1.12' });
+  // In a sweep it counts as in flight, not waiting.
+  const table = renderTerminal(fixtureReport([repo, fixtureRepo()], false), OPTS).split('\n\n')[0].split('\n');
+  assert.match(table[1], /^ {2}VastPayPwaV2 +2 +2 +23d$/);
+});
+
+test('markdown escapes what a title, phrase or subject could otherwise turn into formatting', () => {
+  const repo = fixtureRepo();
+  repo.forward!.inFlight = [];
+  repo.forward!.waiting = [pr(340, { title: 'Fix <PaymentSheet> *overlap*', phrase: 'sheet_overlap', landedAt: daysAgo(1) })];
+  repo.forward!.direct = [
+    { sha: 'abcdef1' + 'c'.repeat(33), subject: 'chore: `pnpm` [skip] \\ path_x', landedAt: daysAgo(1), ported: false, inFlight: null },
+  ];
+  const md = renderMarkdown(fixtureReport([repo], false), OPTS);
+  assert.match(md, /^- \[#340\]\(https:\/\/github\.com\/Vast-menu\/VastPayPwaV2\/pull\/340\) \*\*sheet\\_overlap\*\* — Fix \\<PaymentSheet\\> \\\*overlap\\\* · /m);
+  assert.ok(md.includes('- `abcdef1` chore: \\`pnpm\\` \\[skip\\] \\\\ path\\_x · 1d'), md);
 });
 
 test('terminal: one repo with both directions', () => {

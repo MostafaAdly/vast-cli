@@ -117,6 +117,23 @@ export async function fetchBranches(dir: string, branches: string[]): Promise<bo
   }
 }
 
+/**
+ * Fetch exactly these branches, all or nothing, in one call.
+ *
+ * Unlike `fetchBranches`, there is no per-branch fallback: a report that
+ * compares two branches must not quietly compare a fresh one against a stale
+ * one. True only when the fetch succeeded and every `origin/<branch>` now
+ * resolves.
+ */
+export async function fetchExactly(dir: string, branches: string[]): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['fetch', '--no-tags', 'origin', ...refspecsFor(branches)], { cwd: dir, encoding: 'utf-8' });
+  } catch {
+    return false;
+  }
+  return branches.every((b) => refExists(dir, `origin/${b}`));
+}
+
 /** Commits `a` has that `b` lacks, and vice versa. */
 export function aheadBehind(dir: string, a: string, b: string): { ahead: number; behind: number } {
   const out = git(dir, ['rev-list', '--left-right', '--count', `${b}...${a}`]).trim();

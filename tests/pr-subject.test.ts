@@ -32,6 +32,15 @@ test('release, hotfix and bump PRs are vehicles; work branches are not', () => {
   assert.equal(isVehicleBranch('fix/release-notes'), false);
 });
 
+test('a PR whose head is a whole environment branch is a branch sync, so a vehicle', () => {
+  for (const branch of ['develop', 'staging', 'production', 'main', 'master']) {
+    assert.equal(isVehicleBranch(branch), true, branch);
+  }
+  assert.equal(isVehicleBranch('feat/develop'), false);
+  assert.equal(isVehicleBranch('develop-fix'), false);
+  assert.equal(isVehicleBranch('staging/x'), false);
+});
+
 test('CI bookkeeping and merge subjects are pipeline noise', () => {
   assert.equal(isPipelineNoise('chore: bump version to 2.1.14'), true);
   assert.equal(isPipelineNoise('chore: align package.json version'), true);

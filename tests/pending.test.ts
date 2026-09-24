@@ -19,6 +19,13 @@ const unit = (number: number): PrUnit => ({
   patchId: null,
 });
 
+const details = (n: number) => ({
+  title: `fix: change ${n}`,
+  url: `https://github.com/Vast-menu/VastPayPwaV2/pull/${n}`,
+  branch: `fix/change-${n}`,
+  contributors: [{ name: 'Osama Elshimy', login: null, emails: ['o@e.com'] }],
+});
+
 const parityOf = (src: number[], tgt: number[] = []): Parity => ({
   source: 'origin/staging',
   target: 'origin/production',
@@ -31,19 +38,15 @@ function fake(over: Partial<Deps> = {}) {
   const out: string[] = [];
   const err: string[] = [];
   const posted: unknown[][] = [];
-  const calls = { phrases: 0 };
+  const calls = { phrases: 0, fetch: 0, contained: [] as Array<[string, string[]]> };
   const deps: Deps = {
     repoDir: () => '/checkout',
     isCheckout: () => true,
-    fetchBranches: async () => true,
-    compareBranches: () => parityOf([301, 313]),
+    fetchBranches: async () => (calls.fetch++, true),
+    compareBranches: async () => parityOf([301, 313]),
+    containedIn: async (_dir, ref, shas) => (calls.contained.push([ref, shas]), new Set()),
     prNumbersInRange: () => [301],
-    lookupPr: async (_repo, n) => ({
-      title: `fix: change ${n}`,
-      url: `https://github.com/Vast-menu/VastPayPwaV2/pull/${n}`,
-      branch: `fix/change-${n}`,
-      contributors: [{ name: 'Osama Elshimy', login: null, emails: ['o@e.com'] }],
-    }),
+    lookupPrs: async (_repo, numbers) => new Map(numbers.map((n) => [n, details(n)])),
     openReleasePrs: async () => [
       { number: 334, url: 'https://github.com/Vast-menu/VastPayPwaV2/pull/334', branch: 'hotfix/2.1.15' },
     ],
@@ -142,10 +145,11 @@ test('open release PRs that cannot be listed cost only the In flight section', a
   assert.deepEqual(r.forward.inFlight, []);
   assert.deepEqual(r.forward.waiting.map((p: { number: number }) => p.number), [301, 313]);
   assert.equal(r.notes.length, 1);
+  assert.ok(f.err.includes('  VastPayPwaV2: could not list open release PRs — nothing shown as in flight'));
 });
 
 test('a PR gh cannot read is still listed', async () => {
-  const f = fake({ lookupPr: async (_r, n) => (n === 313 ? null : fake().deps.lookupPr('x', n)) });
+  const f = fake({ lookupPrs: async (_r, numbers) => new Map(numbers.filter((n) => n !== 313).map((n) => [n, details(n)])) });
   await runPending(['VastPayPwaV2'], OPTS, f.deps);
   const p313 = report(f.out).repos[0].forward.waiting[0];
   assert.equal(p313.detailsUnavailable, true);
@@ -153,7 +157,7 @@ test('a PR gh cannot read is still listed', async () => {
 });
 
 test('--parity adds the reverse direction', async () => {
-  const f = fake({ compareBranches: () => parityOf([313], [270]) });
+  const f = fake({ compareBranches: async () => parityOf([313], [270]) });
   await runPending(['VastPayPwaV2'], { ...OPTS, parity: true }, f.deps);
   const r = report(f.out).repos[0];
   assert.equal(r.reverse.source, 'production');
@@ -197,7 +201,7 @@ test('a failed Slack post still prints the report and fails', async () => {
 
 test('nothing pending posts nothing and succeeds', async () => {
   const f = fake({
-    compareBranches: () => parityOf([]),
+    compareBranches: async () => parityOf([]),
     readSlackToken: () => 'xoxb-test',
     readSlackChannel: () => 'C123',
   });
@@ -210,6 +214,85 @@ test('an unknown repository or a bad --to fails before any work', async () => {
   assert.equal(await runPending(['Nope'], OPTS, f.deps), 1);
   assert.equal(await runPending(['VastPayPwaV2'], { ...OPTS, to: 'qa' }, f.deps), 1);
   assert.equal(f.out.length, 0);
+  assert.deepEqual(f.err, ['Unknown repository: Nope', '--to must be production or staging, not "qa"']);
+  assert.equal(f.calls.fetch, 0);
+});
+
+test('--dir with several repos, or names with a sweep flag, is refused as vast deploy refuses it', async () => {
+  const f = fake();
+  assert.equal(await runPending(['VastPayPwaV2', 'VastPayPwa'], { ...OPTS, dir: '/x' }, f.deps), 1);
+  assert.equal(await runPending([], { ...OPTS, frontend: true, dir: '/x' }, f.deps), 1);
+  assert.equal(await runPending(['VastPayPwaV2'], { ...OPTS, all: true }, f.deps), 1);
+  assert.deepEqual(f.err, [
+    '--dir names one checkout, so it cannot be used with a sweep flag or more than one repository.',
+    '--dir names one checkout, so it cannot be used with a sweep flag or more than one repository.',
+    'Pass repository names or a sweep flag (--all, --frontend, --backend), not both.',
+  ]);
+  assert.equal(f.out.length, 0);
+  assert.equal(f.calls.fetch, 0);
+});
+
+test('a named repo with no staging → production flow is skipped, not failed', async () => {
+  const f = fake();
+  assert.equal(await runPending(['Terraform'], OPTS, f.deps), 0);
+  assert.deepEqual(report(f.out).repos[0].problem, { kind: 'skipped', message: 'no staging → production flow' });
+  assert.equal(f.calls.fetch, 0);
+});
+
+test('source and target must both fetch; a release head that will not fetch only leaves In flight', async () => {
+  const fetches: string[][] = [];
+  const f = fake({
+    fetchBranches: async (_d, b) => (fetches.push(b), !b.includes('hotfix/2.1.15')),
+  });
+  assert.equal(await runPending(['VastPayPwaV2'], OPTS, f.deps), 0);
+  assert.deepEqual(fetches, [['staging', 'production', 'hotfix/2.1.15'], ['staging', 'production'], ['hotfix/2.1.15']]);
+  const r = report(f.out).repos[0];
+  assert.deepEqual(r.forward.inFlight, []);
+  assert.deepEqual(r.notes, ['could not fetch hotfix/2.1.15 (#334) — its PRs are not shown as in flight']);
+
+  const broken = fake({ fetchBranches: async (_d, b) => b.length === 1 });
+  assert.equal(await runPending(['VastPayPwaV2'], OPTS, broken.deps), 1);
+  assert.deepEqual(report(broken.out).repos[0].problem, { kind: 'error', message: 'fetch failed' });
+});
+
+test('a direct commit an open hotfix branch carries is in flight', async () => {
+  const parity = parityOf([313]);
+  parity.onlySource.direct = [
+    { sha: 'aaa571971c', subject: 'Update merchant files', landedAt: new Date('2026-09-01T00:00:00Z'), patchId: null },
+    { sha: 'bbbfc83305', subject: 'Add build-deploy caller', landedAt: new Date('2026-09-17T00:00:00Z'), patchId: null },
+  ];
+  parity.onlySource.ported = new Set(['bbbfc83305']);
+  const f = fake({
+    compareBranches: async () => parity,
+    containedIn: async (_d, ref, shas) => (f.calls.contained.push([ref, shas]), new Set(['aaa571971c'])),
+  });
+  assert.equal(await runPending(['VastPayPwaV2'], OPTS, f.deps), 0);
+  // Only the commits production lacks are checked, against the head's branch.
+  assert.deepEqual(f.calls.contained, [['origin/hotfix/2.1.15', ['aaa571971c']]]);
+  const direct = report(f.out).repos[0].forward.direct;
+  assert.deepEqual(direct[0].inFlight, { number: 334, branch: 'hotfix/2.1.15' });
+  assert.equal(direct[1].inFlight, null);
+});
+
+test('a single repo is named in the header; a sweep counts repos and names the direction', async () => {
+  const one = fake();
+  await runPending(['VastPayPwaV2'], { ...OPTS, json: false }, one.deps);
+  assert.match(one.out[0], /Pending/);
+  assert.match(one.out[0], /VastPayPwaV2/);
+  assert.doesNotMatch(one.out[0], /repo\(s\)|→/);
+
+  const sweep = fake();
+  await runPending([], { ...OPTS, json: false, backend: true }, sweep.deps);
+  assert.match(sweep.out[0], /2 repo\(s\) \| staging → production/);
+});
+
+test('--json with --slack keeps stdout one JSON document and sends Slack lines to stderr', async () => {
+  const f = fake();
+  assert.equal(await runPending(['VastPayPwaV2'], { ...OPTS, slack: true }, f.deps), 1);
+  assert.equal(f.out.length, 1);
+  assert.doesNotThrow(() => JSON.parse(f.out[0]));
+  assert.ok(f.err.includes('Slack not configured — run vast slack setup'));
+  assert.ok(f.err.some((l) => l.startsWith('*Pending for production*')));
 });
 
 test('parseOpenReleasePrs keeps release and hotfix heads, by number', () => {
