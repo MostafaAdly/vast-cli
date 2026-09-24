@@ -205,7 +205,8 @@ export function groupByTicket(prs: PendingPr[]): Array<{ ticket: string | null; 
   return out;
 }
 
-type Role = { role: 'forward' | 'reverse'; other: string };
+/** `inFlight`: the list sits under an open release PR, so age is no longer the question. */
+type Role = { role: 'forward' | 'reverse'; other: string; inFlight?: boolean };
 
 function markers(item: PendingPr | PendingCommit, age: number, r: Role): string[] {
   const out: string[] = [];
@@ -215,7 +216,7 @@ function markers(item: PendingPr | PendingCommit, age: number, r: Role): string[
   else if (r.role === 'reverse') out.push(`⚠ not found on ${r.other}`);
   // Already on its way: how long it waited is no longer the question.
   else if ('inFlight' in item && item.inFlight) out.push(`in flight · ${item.inFlight.branch} (#${item.inFlight.number})`);
-  else if (age > STALE_DAYS) out.push('⚠ stale');
+  else if (age > STALE_DAYS && !r.inFlight) out.push('⚠ stale');
   if ('detailsUnavailable' in item && item.detailsUnavailable) out.push('details unavailable');
   return out;
 }
@@ -267,7 +268,8 @@ function terminalRepo(r: RepoPending, o: RenderOptions): string[] {
     if (body.length > 0) lines.push('', `  ${title}`, ...body);
   };
   const fwd: Role = { role: 'forward', other: f.target };
-  for (const g of f.inFlight) section(`In flight · ${g.branch} (#${g.number}, open)`, terminalPrList(g.prs, o, fwd));
+  const carried: Role = { ...fwd, inFlight: true };
+  for (const g of f.inFlight) section(`In flight · ${g.branch} (#${g.number}, open)`, terminalPrList(g.prs, o, carried));
   section(`Waiting (${f.waiting.length})`, terminalPrList(f.waiting, o, fwd));
   section(`Direct commits (${f.direct.length})`, f.direct.map((c) => terminalCommit(c, o, fwd)));
   lines.push('', itemCount(f) > 0 ? `  ${footer(f, o.now)}` : `  Nothing on ${f.source} that ${f.target} lacks.`);
@@ -362,7 +364,8 @@ function mdRepo(r: RepoPending, o: RenderOptions): string[] {
     if (body.length > 0) lines.push('', `### ${heading}`, '', ...body);
   };
   const fwd: Role = { role: 'forward', other: f.target };
-  for (const g of f.inFlight) section(`In flight · [${g.branch} (#${g.number})](${g.url})`, mdPrList(g.prs, o, fwd));
+  const carried: Role = { ...fwd, inFlight: true };
+  for (const g of f.inFlight) section(`In flight · [${g.branch} (#${g.number})](${g.url})`, mdPrList(g.prs, o, carried));
   section(`Waiting (${f.waiting.length})`, mdPrList(f.waiting, o, fwd));
   section(`Direct commits (${f.direct.length})`, f.direct.map((c) => mdCommit(c, o, fwd)));
   if (itemCount(f) === 0) lines.push('', `Nothing on ${f.source} that ${f.target} lacks.`);

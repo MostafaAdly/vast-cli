@@ -21,7 +21,7 @@ import { registerReleaseCommand } from './commands/release.js';
 import { registerProductionCommand } from './commands/production.js';
 import { registerArgocdCommand } from './commands/argocd.js';
 import { registerSlackCommand } from './commands/slack.js';
-import { log } from './utils/ui.js';
+import { colors, log } from './utils/ui.js';
 /**
  * CLI version, generated from package.json by scripts/sync-version.mjs.
  *
@@ -111,9 +111,11 @@ export class VastCli {
      */
     maybeCheckForUpdates() {
         try {
+            // stderr, not log.warn's stdout: a hint is a side note, and on stdout it
+            // broke every `--json` (pending, status…) the moment an update was cached.
             const hint = pendingHint(VERSION);
             if (hint)
-                log.warn(hint);
+                console.error(colors.warning(`⚠ ${hint}`));
             if (isDue(readState(), Date.now())) {
                 const child = spawn(process.execPath, [process.argv[1], '__update-check'], {
                     detached: true,

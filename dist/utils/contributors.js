@@ -25,6 +25,16 @@ export const EXCLUDED_CONTRIBUTORS = [
 ];
 /** Automation accounts that commit or open PRs but are nobody to thank. */
 const BOT_KEYS = ['githubactions', 'dependabot'];
+/**
+ * Emails that mark an author as automation whatever name it gives. GitHub's
+ * commit authors include Co-Authored-By trailers, so an AI co-author such as
+ * "Claude Opus 5 <noreply@anthropic.com>" arrives looking like a person.
+ */
+const BOT_EMAILS = ['noreply@anthropic.com'];
+/** True for an email that marks its author as automation (case-insensitive). */
+export function isBotEmail(email) {
+    return BOT_EMAILS.includes((email ?? '').trim().toLowerCase());
+}
 export function normalizeName(s) {
     return (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -48,6 +58,8 @@ function isBot(value) {
 export function isExcludedContributor(c) {
     const login = c.login ?? '';
     if (isBot(login) || isBot(c.name))
+        return true;
+    if (c.emails.some(isBotEmail))
         return true;
     const candidates = [contributorKey(c), normalizeName(login), normalizeName(c.name)];
     return candidates.some((k) => k !== '' && EXCLUDED_CONTRIBUTORS.includes(k));

@@ -111,6 +111,19 @@ test('an in-flight direct commit shows where it is instead of stale, in every re
   assert.match(table[1], /^ {2}VastPayPwaV2 +2 +2 +23d$/);
 });
 
+// A PR already in an open release PR is on its way: its age is no longer the
+// question, as for an in-flight direct commit.
+test('a PR under In flight is never marked stale, in every renderer', () => {
+  const repo = fixtureRepo();
+  repo.forward!.inFlight[0].prs = [pr(301, { title: 'One create-charge per sheet', landedAt: daysAgo(30) })];
+  const term = renderTerminal(fixtureReport([repo], false), OPTS);
+  assert.match(term, /^ {10}Osama Elshimy · 30d$/m);
+  const md = renderMarkdown(fixtureReport([repo], false), OPTS);
+  assert.match(md, /^- \[#301\]\([^)]+\) One create-charge per sheet · Osama Elshimy · 30d$/m);
+  // A waiting PR of the same age still is.
+  assert.match(term, /Osama Elshimy · 21d {2}⚠ stale/);
+});
+
 test('markdown escapes what a title, phrase or subject could otherwise turn into formatting', () => {
   const repo = fixtureRepo();
   repo.forward!.inFlight = [];

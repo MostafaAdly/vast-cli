@@ -361,7 +361,8 @@ async function duplicatesInHistory(
     .filter(([sha, at]) => sha && !own.has(sha) && times.has(Number(at)))
     .map(([sha]) => ({ sha }));
   if (candidates.length === 0) return found;
-  const ids = new Set((await patchIdsOf(dir, await patchesOf(dir, candidates))).values());
+  // --binary, as the items' own patch-ids: without it a binary duplicate never matches.
+  const ids = new Set((await patchIdsOf(dir, await patchesOf(dir, candidates, ['--binary']))).values());
   for (const i of items) if (ids.has(i.patchId)) found.add(i.sha);
   return found;
 }

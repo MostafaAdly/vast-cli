@@ -12,6 +12,7 @@ import {
   parseGhPrView,
   parseGhPrGraphql,
   buildPrQuery,
+  prQueryArgs,
   type PrLookup,
   type ShippedPr,
 } from '../src/utils/shipped.js';
@@ -523,4 +524,35 @@ test('the batch query aliases each PR by number', () => {
   assert.match(q, /pr7: pullRequest\(number: 7\)/);
   assert.match(q, /pr12: pullRequest\(number: 12\)/);
   assert.match(q, /repository\(owner: \$owner, name: \$name\)/);
+});
+
+// `-F` would type a variable: a repo or owner named "123", "true" or "@x" would
+// reach GitHub as a number, a boolean or a file's contents instead of a name.
+test('the GraphQL call passes owner and repo name as strings', () => {
+  const args = prQueryArgs('123', [7]);
+  assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);
+  assert.ok(args.includes('owner=Vast-menu') && args[args.indexOf('owner=Vast-menu') - 1] === '-f', args.join(' '));
+  assert.equal(args[args.indexOf('name=123') - 1], '-f');
+  assert.equal(args.includes('-F'), false);
+  assert.equal(args[args.indexOf(`query=${buildPrQuery([7])}`) - 1], '-f');
+});
+
+// Live, VastPayPwaV2 #306: GitHub lists the Co-Authored-By trailer as a commit
+// author ("Claude Opus 5", noreply@anthropic.com, login "claude"). The email
+// must be seen before the no-reply filter throws it away.
+test('an AI co-author from a commit trailer is not a contributor, via view or GraphQL', () => {
+  const view = {
+    ...realView,
+    author: { id: 'U_2', is_bot: false, login: 'MostafaAdly', name: '' },
+    commits: [
+      ghCommit([
+        { name: 'MostafaAdly', email: 'adly@e.vastgroupsa.com', login: 'MostafaAdly' },
+        { name: 'Claude Opus 5', email: 'noreply@anthropic.com', login: 'claude' },
+      ]),
+    ],
+  };
+  const names = (c: { name: string }[] | undefined) => (c ?? []).map((p) => p.name);
+  assert.deepEqual(names(parseGhPrView(JSON.stringify(view))?.contributors), ['MostafaAdly']);
+  const body = { data: { repository: { pr306: graphqlOf(view) } } };
+  assert.deepEqual(names(parseGhPrGraphql(JSON.stringify(body)).get(306)?.contributors), ['MostafaAdly']);
 });

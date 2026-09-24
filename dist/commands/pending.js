@@ -210,9 +210,10 @@ export async function runPending(names, opts, deps = defaultPendingDeps) {
     // With --json, stdout carries the JSON and nothing else.
     const say = opts.json ? deps.err : deps.out;
     if (!opts.json) {
-        // One repo's own line already names the direction; a sweep's table does not.
+        // One repo's own line already names it and the direction, so its header
+        // carries no subtitle; a sweep's table names neither.
         const direction = to === 'production' ? 'staging → production' : 'develop → staging';
-        deps.out(createHeader('Pending', repos.length === 1 ? repos[0].name : `${repos.length} repo(s) | ${direction}`));
+        deps.out(createHeader('Pending', repos.length === 1 ? undefined : `${repos.length} repo(s) | ${direction}`));
     }
     const sweep = isSweep(opts);
     const report = {

@@ -271,6 +271,39 @@ test('a duplicate of a change both branches already have is ported, even after t
   }
 });
 
+// A certificate is binary: the history check must hash its content, as the
+// item patch-ids do, or no binary duplicate can ever match.
+test('a duplicate of a binary change is found in history too', async () => {
+  const r = repo();
+  const bin = (v: number): Buffer => Buffer.from([0, 1, 2, v, 0, 255, 0, v]);
+  try {
+    writeFileSync(join(r.dir, 'merchant.p12'), bin(1));
+    r.git('add', '.');
+    r.git('commit', '-qm', 'add merchant certificate');
+    r.git('checkout', '-qb', 'cert-a');
+    writeFileSync(join(r.dir, 'merchant.p12'), bin(2));
+    r.git('commit', '-qam', 'fix: update merchant certificate');
+    const a = r.git('rev-parse', 'HEAD');
+    commit(r, 'production', 'other.txt', 'other\n', 'chore: other');
+    r.git('checkout', '-qb', 'cert-b');
+    r.git('cherry-pick', a);
+    r.git('checkout', '-q', 'production');
+    r.git('merge', '-q', '--no-ff', '-m', "Merge branch 'cert-a'", 'cert-a');
+    r.git('checkout', '-qb', 'staging');
+    r.git('checkout', '-q', 'production');
+    r.git('merge', '-q', '--no-ff', '-m', "Merge branch 'cert-b'", 'cert-b');
+    r.git('checkout', '-q', 'staging');
+    writeFileSync(join(r.dir, 'merchant.p12'), bin(3));
+    r.git('commit', '-qam', 'fix: new certificate');
+
+    const p = await compareBranches(r.dir, 'staging', 'production');
+    assert.deepEqual(subjects(p.onlyTarget.direct), ['fix: update merchant certificate']);
+    assert.equal(p.onlyTarget.ported.has(p.onlyTarget.direct[0].sha), true);
+  } finally {
+    r.cleanup();
+  }
+});
+
 test('a port whose conflict resolution changed the final content is still not found', async () => {
   const r = repo();
   try {

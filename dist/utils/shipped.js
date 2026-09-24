@@ -16,7 +16,7 @@
 import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import { ORG } from './remote.js';
-import { contributorKey, isExcludedContributor, mergeContributors, } from './contributors.js';
+import { contributorKey, isBotEmail, isExcludedContributor, mergeContributors, } from './contributors.js';
 import { isBumpBranch, parsePrSubject } from './pr-subject.js';
 const execFileAsync = promisify(execFile);
 function prNumberOfSubject(subject) {
@@ -86,6 +86,10 @@ function commitAuthors(view) {
     const byKey = new Map();
     for (const commit of view.commits ?? []) {
         for (const a of commit.authors ?? []) {
+            // Before usableEmail drops it: a no-reply address is also how an AI
+            // co-author (a Co-Authored-By trailer GitHub lists as an author) is told apart.
+            if (isBotEmail(a.email))
+                continue;
             const person = { name: a.name ?? '', login: a.login || null, emails: [] };
             const key = contributorKey(person);
             if (!key)
@@ -207,6 +211,14 @@ export function buildPrQuery(numbers) {
     return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields} } }`;
 }
 /**
+ * `gh api graphql` arguments for one batch. Every variable goes with `-f`, a
+ * raw string: `-F` would turn a name like "123" or "true" into a number or a
+ * boolean, and "@x" into a file's contents.
+ */
+export function prQueryArgs(repo, numbers) {
+    return ['api', 'graphql', '-f', `query=${buildPrQuery(numbers)}`, '-f', `owner=${ORG}`, '-f', `name=${repo}`];
+}
+/**
  * `gh api graphql` output for `buildPrQuery` -> each PR it could read. A PR
  * GitHub could not resolve comes back null next to the others, and is absent.
  */
@@ -240,7 +252,7 @@ export const ghPrLookupMany = async (repo, numbers) => {
     await Promise.all(batches.map(async (batch) => {
         let stdout = '';
         try {
-            ({ stdout } = await execFileAsync('gh', ['api', 'graphql', '-f', `query=${buildPrQuery(batch)}`, '-F', `owner=${ORG}`, '-F', `name=${repo}`], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }));
+            ({ stdout } = await execFileAsync('gh', prQueryArgs(repo, batch), { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }));
         }
         catch (error) {
             // gh exits non-zero when any PR in the batch is missing, yet still

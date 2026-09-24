@@ -57,6 +57,12 @@ export declare function prNumbersOfPicks(picks: ResolvedPick[]): number[];
 export declare function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null;
 export declare function buildPrQuery(numbers: number[]): string;
 /**
+ * `gh api graphql` arguments for one batch. Every variable goes with `-f`, a
+ * raw string: `-F` would turn a name like "123" or "true" into a number or a
+ * boolean, and "@x" into a file's contents.
+ */
+export declare function prQueryArgs(repo: string, numbers: number[]): string[];
+/**
  * `gh api graphql` output for `buildPrQuery` -> each PR it could read. A PR
  * GitHub could not resolve comes back null next to the others, and is absent.
  */

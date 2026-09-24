@@ -20,6 +20,7 @@ import { ORG } from './remote.js';
 import type { ResolvedPick } from './picks.js';
 import {
   contributorKey,
+  isBotEmail,
   isExcludedContributor,
   mergeContributors,
   type Contributor,
@@ -129,6 +130,9 @@ function commitAuthors(view: GhPrView): CommitAuthor[] {
   const byKey = new Map<string, CommitAuthor>();
   for (const commit of view.commits ?? []) {
     for (const a of commit.authors ?? []) {
+      // Before usableEmail drops it: a no-reply address is also how an AI
+      // co-author (a Co-Authored-By trailer GitHub lists as an author) is told apart.
+      if (isBotEmail(a.email)) continue;
       const person: Contributor = { name: a.name ?? '', login: a.login || null, emails: [] };
       const key = contributorKey(person);
       if (!key) continue;
@@ -268,6 +272,15 @@ export function buildPrQuery(numbers: number[]): string {
 }
 
 /**
+ * `gh api graphql` arguments for one batch. Every variable goes with `-f`, a
+ * raw string: `-F` would turn a name like "123" or "true" into a number or a
+ * boolean, and "@x" into a file's contents.
+ */
+export function prQueryArgs(repo: string, numbers: number[]): string[] {
+  return ['api', 'graphql', '-f', `query=${buildPrQuery(numbers)}`, '-f', `owner=${ORG}`, '-f', `name=${repo}`];
+}
+
+/**
  * `gh api graphql` output for `buildPrQuery` -> each PR it could read. A PR
  * GitHub could not resolve comes back null next to the others, and is absent.
  */
@@ -307,7 +320,7 @@ export const ghPrLookupMany: PrBatchLookup = async (repo, numbers) => {
       try {
         ({ stdout } = await execFileAsync(
           'gh',
-          ['api', 'graphql', '-f', `query=${buildPrQuery(batch)}`, '-F', `owner=${ORG}`, '-F', `name=${repo}`],
+          prQueryArgs(repo, batch),
           { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 },
         ));
       } catch (error) {

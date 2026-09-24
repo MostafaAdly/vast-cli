@@ -274,16 +274,17 @@ test('a direct commit an open hotfix branch carries is in flight', async () => {
   assert.equal(direct[1].inFlight, null);
 });
 
-test('a single repo is named in the header; a sweep counts repos and names the direction', async () => {
+// Observed live: "Pending", then "VastPayPwaV2", then "VastPayPwaV2 | staging
+// → production". One repo's own line already names it and the direction.
+test('one repo: the header does not repeat the repo line; a sweep header names the direction', async () => {
+  const plainText = (t: string): string => t.replace(/\x1b\[[0-9;]*m/g, '');
   const one = fake();
   await runPending(['VastPayPwaV2'], { ...OPTS, json: false }, one.deps);
-  assert.match(one.out[0], /Pending/);
-  assert.match(one.out[0], /VastPayPwaV2/);
-  assert.doesNotMatch(one.out[0], /repo\(s\)|→/);
-
+  assert.equal(plainText(one.out[0]).trim(), 'Pending');
+  assert.equal(plainText(one.out.join('\n')).match(/VastPayPwaV2/g)?.length, 1);
   const sweep = fake();
   await runPending([], { ...OPTS, json: false, backend: true }, sweep.deps);
-  assert.match(sweep.out[0], /2 repo\(s\) \| staging → production/);
+  assert.match(plainText(sweep.out[0]), /2 repo\(s\) \| staging → production/);
 });
 
 test('--json with --slack keeps stdout one JSON document and sends Slack lines to stderr', async () => {

@@ -108,7 +108,7 @@ function markers(item, age, r) {
     // Already on its way: how long it waited is no longer the question.
     else if ('inFlight' in item && item.inFlight)
         out.push(`in flight · ${item.inFlight.branch} (#${item.inFlight.number})`);
-    else if (age > STALE_DAYS)
+    else if (age > STALE_DAYS && !r.inFlight)
         out.push('⚠ stale');
     if ('detailsUnavailable' in item && item.detailsUnavailable)
         out.push('details unavailable');
@@ -162,8 +162,9 @@ function terminalRepo(r, o) {
             lines.push('', `  ${title}`, ...body);
     };
     const fwd = { role: 'forward', other: f.target };
+    const carried = { ...fwd, inFlight: true };
     for (const g of f.inFlight)
-        section(`In flight · ${g.branch} (#${g.number}, open)`, terminalPrList(g.prs, o, fwd));
+        section(`In flight · ${g.branch} (#${g.number}, open)`, terminalPrList(g.prs, o, carried));
     section(`Waiting (${f.waiting.length})`, terminalPrList(f.waiting, o, fwd));
     section(`Direct commits (${f.direct.length})`, f.direct.map((c) => terminalCommit(c, o, fwd)));
     lines.push('', itemCount(f) > 0 ? `  ${footer(f, o.now)}` : `  Nothing on ${f.source} that ${f.target} lacks.`);
@@ -256,8 +257,9 @@ function mdRepo(r, o) {
             lines.push('', `### ${heading}`, '', ...body);
     };
     const fwd = { role: 'forward', other: f.target };
+    const carried = { ...fwd, inFlight: true };
     for (const g of f.inFlight)
-        section(`In flight · [${g.branch} (#${g.number})](${g.url})`, mdPrList(g.prs, o, fwd));
+        section(`In flight · [${g.branch} (#${g.number})](${g.url})`, mdPrList(g.prs, o, carried));
     section(`Waiting (${f.waiting.length})`, mdPrList(f.waiting, o, fwd));
     section(`Direct commits (${f.direct.length})`, f.direct.map((c) => mdCommit(c, o, fwd)));
     if (itemCount(f) === 0)
