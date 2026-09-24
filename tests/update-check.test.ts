@@ -98,3 +98,26 @@ test('a shorter version string still compares correctly', async () => {
   assert.equal(isNewer('1.3', '1.2.9'), true);
   assert.equal(isNewer('1.2', '1.2.0'), false);
 });
+
+// Observed in the final review: with an update cached, `vast pending --json`
+// began with "⚠ A newer Vast CLI is available…" and no longer parsed. The run
+// uses a --dir that is not a checkout, so it reports a problem without network.
+test('the update hint stays off stdout, so --json output still parses', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+  const home = mkdtempSync(join(tmpdir(), 'vast-upd-cli-'));
+  try {
+    // checkedAt now: no refresh is due, so nothing is spawned at GitHub.
+    writeFileSync(join(home, 'update-check.json'), JSON.stringify({ checkedAt: Date.now(), latest: '99.0.0' }));
+    const run = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', join(root, 'src/cli-entry.ts'), 'pending', 'VastPayPwaV2', '--json', '--dir', join(home, 'missing')],
+      { cwd: root, encoding: 'utf-8', env: { ...process.env, VAST_CLI_HOME: home, FORCE_COLOR: '0' } },
+    );
+    assert.doesNotThrow(() => JSON.parse(run.stdout), `stdout is not JSON:\n${run.stdout}`);
+    assert.match(run.stderr, /A newer Vast CLI is available \(99\.0\.0/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

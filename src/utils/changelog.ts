@@ -12,6 +12,7 @@
 
 import { execFileSync } from 'child_process';
 import { summarizeDiff } from './summarize.js';
+import { isPipelineNoise } from './pr-subject.js';
 
 /** Conventional-commit type -> the section it lands in. */
 const SECTIONS: Array<{ title: string; types: string[] }> = [
@@ -26,18 +27,6 @@ const OTHER = 'Other changes';
 
 /** Most bullets to show per section before collapsing the tail into a count. */
 const MAX_PER_SECTION = 15;
-
-/**
- * Deploy bookkeeping the CI writes on every release. It describes the pipeline,
- * not the product, so it is noise in a release description.
- */
-function isPipelineNoise(subject: string): boolean {
-  return (
-    /^chore:\s*bump version to /i.test(subject) ||
-    /^chore:\s*align package\.json version/i.test(subject) ||
-    /^Merge (branch|remote-tracking branch|pull request)/i.test(subject)
-  );
-}
 
 interface Parsed {
   type: string | null;

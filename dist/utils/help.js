@@ -24,6 +24,7 @@ const SETUP = [
 ];
 const INSPECT = [
     { left: 'status', right: 'Deployed versions and branch drift, all repos' },
+    { left: 'pending', right: 'What staging has that production lacks, by PR' },
 ];
 const SHIP = [
     { left: 'release', right: 'Promote develop→staging, derive version, deploy, wait for ArgoCD' },

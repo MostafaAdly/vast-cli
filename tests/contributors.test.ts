@@ -60,6 +60,21 @@ test('bots are excluded', () => {
   assert.ok(isExcludedContributor(person('', 'app/dependabot')));
 });
 
+// GitHub's commit.authors includes Co-Authored-By trailers: "Claude Opus 5
+// <noreply@anthropic.com>" showed up on VastPayPwaV2 #306 and would have been
+// @-named in both announcements.
+test('an AI co-author is a bot, by its email, whatever name it carries', () => {
+  assert.ok(isExcludedContributor(person('Claude Opus 5', null, ['noreply@anthropic.com'])));
+  assert.ok(isExcludedContributor(person('Claude', null, ['NoReply@Anthropic.com'])));
+  assert.ok(!isExcludedContributor(person('Sara Ali', null, ['sara@anthropic.com'])));
+  assert.deepEqual(
+    mergeContributors([[person('Osama Elshimy', null, ['o@vast.com'])], [person('Claude Opus 5', null, ['noreply@anthropic.com'])]]).map(
+      (c) => c.name,
+    ),
+    ['Osama Elshimy'],
+  );
+});
+
 test('ordinary people are not excluded', () => {
   assert.ok(!isExcludedContributor(person('Osama Elshimy', 'osama-elshimy1')));
   assert.ok(!isExcludedContributor(person('Mahmoud Adly', 'mahmoud-adly')));

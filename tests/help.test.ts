@@ -71,7 +71,7 @@ test('the pipeline block outranks the lock, however the lock stands', () => {
 
 test('help lists every command', () => {
   const out = plain(renderRootHelp('1.0.0'));
-  for (const cmd of ['init', 'clone', 'upgrade', 'status', 'promote', 'release', 'deploy', 'argocd', 'workflow', 'production']) {
+  for (const cmd of ['init', 'clone', 'upgrade', 'status', 'pending', 'promote', 'release', 'deploy', 'argocd', 'workflow', 'production']) {
     assert.ok(new RegExp(`\\b${cmd}\\b`).test(out), `${cmd} missing from help`);
   }
 });

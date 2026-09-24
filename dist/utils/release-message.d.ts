@@ -16,6 +16,7 @@
  * GitHub, Slack, git or a model, which is why the exact wording can be pinned in
  * tests.
  */
+import { type Person } from './slack-rich-text.js';
 import type { ShippedPr } from './shipped.js';
 import { type Contributor } from './contributors.js';
 export interface ReleaseMessageInput {
@@ -50,5 +51,11 @@ export declare function extractTickets(texts: string[]): string[];
 export declare function describe(prs: ShippedPr[], summaries: Record<number, string>, fallbackSubjects: string[]): string;
 /** Everyone who worked on the release — authors and committers — once each, in PR order. */
 export declare function releaseContributors(prs: ShippedPr[]): Contributor[];
+/**
+ * A resolved Slack id becomes a real mention; anyone Slack could not match is
+ * named in plain text instead, because a release note that silently drops a
+ * person is worse than one that cannot ping them.
+ */
+export declare function namedPeople(prs: ShippedPr[], mentions: Record<string, string | null>): Person[];
 export declare function buildReleaseMessage(input: ReleaseMessageInput): ReleaseMessage;
 //# sourceMappingURL=release-message.d.ts.map

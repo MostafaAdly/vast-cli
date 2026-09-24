@@ -106,6 +106,24 @@ lookup failed. If **every** repo's columns read `not migrated` or `?`, the user'
 account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
 rather than treating it as nine separate failures.
 
+**Reading `vast pending`.** `vast pending <repo>` (or `--all`, `--frontend`, `--backend`)
+is read-only and is the right way to answer "what goes in the next release?" or "what
+is waiting?". Use `--json --short` when you need to reason over it: the model
+phrases are for people, and `--short` skips a nested `claude` call. It compares by PR, and
+leaves out release, hotfix, bump and branch-sync PRs (`develop` into `staging` and
+back), which only carry other PRs. **In flight** means the PR is already inside an
+open release/hotfix PR, so do not pick it again. A direct commit marked `in flight ·
+<branch> (#N)` is already carried by that branch, so do not pick it either.
+**stale** means it has waited more than 14 days. Items left on one side are checked
+by code: a matching patch on the other side or in its history, or the item's diff
+already present in the other branch's tree (a PR ported commit by commit). With
+`--parity`, a production-only item marked `ported (same code)` is fine (unless it
+was later reverted: a history match proves it was applied once). One marked
+`not found on staging` needs a human check, not a claim that it is missing. A port
+that needed conflict fixes has different code, and so does a change staging later
+modified further. `--to staging` does the same for develop vs staging. Never add
+`--slack` unless the user asked for it to be posted.
+
 ---
 
 ## 1. Staging release — the default path
@@ -370,6 +388,9 @@ route.
 
 `vast promote --to production` still works and is unaffected: it cuts the branch
 and opens the PR in the app repo, and ships nothing.
+
+Before cutting a release or hotfix PR, run `vast pending <repo> --json --short` and tell the
+user what is waiting and what is already in flight, so nothing is picked twice.
 
 Production is two commands with a human review gate between them, and
 `/release <repo> --to production` covers only the first:

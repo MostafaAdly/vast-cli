@@ -55,6 +55,15 @@ export declare function refspecsFor(branches: string[]): string[];
  * @returns true if at least one branch was updated.
  */
 export declare function fetchBranches(dir: string, branches: string[]): Promise<boolean>;
+/**
+ * Fetch exactly these branches, all or nothing, in one call.
+ *
+ * Unlike `fetchBranches`, there is no per-branch fallback: a report that
+ * compares two branches must not quietly compare a fresh one against a stale
+ * one. True only when the fetch succeeded and every `origin/<branch>` now
+ * resolves.
+ */
+export declare function fetchExactly(dir: string, branches: string[]): Promise<boolean>;
 /** Commits `a` has that `b` lacks, and vice versa. */
 export declare function aheadBehind(dir: string, a: string, b: string): {
     ahead: number;

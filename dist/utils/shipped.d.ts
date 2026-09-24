@@ -55,6 +55,28 @@ export declare function prNumbersOfPicks(picks: ResolvedPick[]): number[];
  * the PR as the announcement needs it. Null when the output is not a PR.
  */
 export declare function parseGhPrView(json: string): Omit<ShippedPr, 'number'> | null;
+export declare function buildPrQuery(numbers: number[]): string;
+/**
+ * `gh api graphql` arguments for one batch. Every variable goes with `-f`, a
+ * raw string: `-F` would turn a name like "123" or "true" into a number or a
+ * boolean, and "@x" into a file's contents.
+ */
+export declare function prQueryArgs(repo: string, numbers: number[]): string[];
+/**
+ * `gh api graphql` output for `buildPrQuery` -> each PR it could read. A PR
+ * GitHub could not resolve comes back null next to the others, and is absent.
+ */
+export declare function parseGhPrGraphql(json: string): Map<number, Omit<ShippedPr, 'number'>>;
+/** Look several PRs up at once. Injectable so tests never touch gh. */
+export interface PrBatchLookup {
+    (repo: string, numbers: number[]): Promise<Map<number, Omit<ShippedPr, 'number'>>>;
+}
+/**
+ * The batched lookup: one `gh api graphql` call per 50 PRs, all at once. A
+ * repo with 150 PRs costs three round trips instead of 150 `gh pr view`s.
+ * A PR that cannot be read is absent; a failed call costs only its batch.
+ */
+export declare const ghPrLookupMany: PrBatchLookup;
 /** The real lookup: `gh pr view`. Returns null on any failure. */
 export declare const ghPrLookup: PrLookup;
 /**

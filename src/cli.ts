@@ -15,13 +15,14 @@ import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerCloneCommand } from './commands/clone.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
 import { registerStatusCommand } from './commands/status.js';
+import { registerPendingCommand } from './commands/pending.js';
 import { registerPromoteCommand } from './commands/promote.js';
 import { registerDeployCommand } from './commands/deploy.js';
 import { registerReleaseCommand } from './commands/release.js';
 import { registerProductionCommand } from './commands/production.js';
 import { registerArgocdCommand } from './commands/argocd.js';
 import { registerSlackCommand } from './commands/slack.js';
-import { log } from './utils/ui.js';
+import { colors, log } from './utils/ui.js';
 
 /**
  * CLI version, generated from package.json by scripts/sync-version.mjs.
@@ -93,6 +94,7 @@ export class VastCli {
     registerInitCommand(this.program);
     registerCloneCommand(this.program);
     registerStatusCommand(this.program);
+    registerPendingCommand(this.program);
     registerPromoteCommand(this.program);
     registerReleaseCommand(this.program);
     registerDeployCommand(this.program);
@@ -122,8 +124,10 @@ export class VastCli {
    */
   private maybeCheckForUpdates(): void {
     try {
+      // stderr, not log.warn's stdout: a hint is a side note, and on stdout it
+      // broke every `--json` (pending, status…) the moment an update was cached.
       const hint = pendingHint(VERSION);
-      if (hint) log.warn(hint);
+      if (hint) console.error(colors.warning(`⚠ ${hint}`));
 
       if (isDue(readState(), Date.now())) {
         const child = spawn(process.execPath, [process.argv[1], '__update-check'], {

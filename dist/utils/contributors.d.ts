@@ -23,6 +23,8 @@ export interface Contributor {
  * that machine was configured with and nobody normalizes it for us.
  */
 export declare const EXCLUDED_CONTRIBUTORS: string[];
+/** True for an email that marks its author as automation (case-insensitive). */
+export declare function isBotEmail(email: string | null | undefined): boolean;
 export declare function normalizeName(s: string): string;
 export declare function contributorKey(c: Contributor): string;
 export declare function isExcludedContributor(c: Contributor): boolean;

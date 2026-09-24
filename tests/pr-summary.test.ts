@@ -5,6 +5,7 @@ import {
   buildSummaryPrompt,
   screenSummary,
   summarizePrs,
+  modelPhrases,
   type SummaryDeps,
 } from '../src/utils/pr-summary.js';
 
@@ -123,7 +124,7 @@ const fakeDeps = (reply: string | (() => string), available = true): SummaryDeps
   return {
     prompts,
     available: () => available,
-    run: (prompt) => {
+    run: async (prompt) => {
       prompts.push(prompt);
       return typeof reply === 'function' ? reply() : reply;
     },
@@ -178,7 +179,7 @@ test('an availability check that throws means every PR falls back', async () => 
     available: () => {
       throw new Error('spawn failed');
     },
-    run: () => '{"313": "guest token reuse"}',
+    run: async () => '{"313": "guest token reuse"}',
   };
   assert.deepEqual(await summarizePrs([REAL[1]], deps), { 313: 'guest tokens' });
 });
@@ -187,4 +188,63 @@ test('no PRs means no model call', async () => {
   const deps = fakeDeps('{}');
   assert.deepEqual(await summarizePrs([], deps), {});
   assert.equal(deps.prompts.length, 0);
+});
+
+test('modelPhrases returns only the screened model phrases, no fallback', async () => {
+  const phrases = await modelPhrases(
+    [
+      { number: 1, title: 'fix: reuse guest tokens', branch: 'a' },
+      { number: 2, title: 'feat: order dialog', branch: 'b' },
+    ],
+    { available: () => true, run: async () => '{"1": "guest token reuse", "2": "see https://example.com"}' },
+  );
+  assert.deepEqual(phrases, { 1: 'guest token reuse' });
+});
+
+test('modelPhrases is empty when no model is available', async () => {
+  const phrases = await modelPhrases([{ number: 1, title: 'fix: x', branch: 'a' }], {
+    available: () => false,
+    run: async () => {
+      throw new Error('must not be called');
+    },
+  });
+  assert.deepEqual(phrases, {});
+});
+
+test('modelPhrases is empty when the model call throws', async () => {
+  const phrases = await modelPhrases([{ number: 1, title: 'fix: x', branch: 'a' }], {
+    available: () => true,
+    run: async () => {
+      throw new Error('timeout');
+    },
+  });
+  assert.deepEqual(phrases, {});
+});
+
+test('modelPhrases waits for an asynchronous availability check and model call', async () => {
+  const phrases = await modelPhrases([{ number: 1, title: 'fix: reuse guest tokens', branch: 'a' }], {
+    available: async () => true,
+    run: () => new Promise((resolve) => setTimeout(() => resolve('{"1": "guest token reuse"}'), 10)),
+  });
+  assert.deepEqual(phrases, { 1: 'guest token reuse' });
+});
+
+test('a long list is named in several calls of at most 40 PRs; a failed call costs only its own PRs', async () => {
+  const prs = Array.from({ length: 90 }, (_, i) => ({ number: i + 1, title: `fix: thing ${i + 1}`, branch: `fix/t${i + 1}` }));
+  const prompts: string[] = [];
+  const phrases = await modelPhrases(prs, {
+    available: () => true,
+    run: async (prompt) => {
+      prompts.push(prompt);
+      const numbers = [...prompt.matchAll(/\{"number":(\d+),/g)].map((m) => Number(m[1]));
+      if (numbers.includes(45)) throw new Error('timeout');
+      return JSON.stringify(Object.fromEntries(numbers.map((n) => [n, `thing ${n}`])));
+    },
+  });
+  assert.equal(prompts.length, 3);
+  for (const prompt of prompts) assert.ok([...prompt.matchAll(/\{"number":/g)].length <= 40);
+  assert.equal(phrases[1], 'thing 1');
+  assert.equal(phrases[90], 'thing 90');
+  assert.equal(phrases[45], undefined);
+  assert.equal(Object.keys(phrases).length, 50);
 });

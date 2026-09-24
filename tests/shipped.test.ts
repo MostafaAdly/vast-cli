@@ -10,6 +10,9 @@ import {
   shippedPrs,
   resolveMentions,
   parseGhPrView,
+  parseGhPrGraphql,
+  buildPrQuery,
+  prQueryArgs,
   type PrLookup,
   type ShippedPr,
 } from '../src/utils/shipped.js';
@@ -467,4 +470,89 @@ test('excluded contributors are never looked up', async () => {
   );
   assert.deepEqual(mentions, {});
   assert.equal(looked, 0);
+});
+
+/** `realView` as `gh api graphql` returns it for `buildPrQuery`. */
+const graphqlOf = (view: typeof realView, typename = 'User') => ({
+  title: view.title,
+  url: view.url,
+  headRefName: view.headRefName,
+  author: { __typename: typename, login: view.author.login, ...(typename === 'User' ? { name: view.author.name || null } : {}) },
+  commits: {
+    nodes: view.commits.map((c) => ({
+      commit: {
+        authors: { nodes: c.authors.map((a) => ({ name: a.name, email: a.email, user: a.login ? { login: a.login } : null })) },
+      },
+    })),
+  },
+});
+
+test('a batched GraphQL lookup yields exactly what gh pr view does', () => {
+  const variants = [
+    realView,
+    { ...realView, author: { ...realView.author, name: 'Osama E.' } },
+    { ...realView, commits: [] },
+    {
+      ...realView,
+      author: { ...realView.author, login: 'mahmoudelzahaby' },
+      commits: [
+        ghCommit([{ name: 'MahmoudElzahaby', email: 'm@vastgroupsa.com', login: '' }]),
+        ghCommit([{ name: 'Osama Elshimy', email: 'o.elshemey@e.vastgroupsa.com', login: '' }]),
+      ],
+    },
+  ];
+  const body = { data: { repository: Object.fromEntries(variants.map((v, i) => [`pr${i + 1}`, graphqlOf(v)])) } };
+  const got = parseGhPrGraphql(JSON.stringify(body));
+  variants.forEach((v, i) => assert.deepEqual(got.get(i + 1), parseGhPrView(JSON.stringify(v)), `variant ${i + 1}`));
+});
+
+test('a GraphQL app author is a bot, as gh pr view reports it', () => {
+  const view = { ...realView, author: { ...realView.author, login: 'github-actions' }, commits: [] };
+  const got = parseGhPrGraphql(JSON.stringify({ data: { repository: { pr9: graphqlOf(view, 'Bot') } } }));
+  assert.deepEqual(got.get(9)?.contributors, []);
+});
+
+test('a PR GitHub cannot resolve is absent; the rest of its batch is kept', () => {
+  const body = { data: { repository: { pr1: graphqlOf(realView), pr2: null } }, errors: [{ type: 'NOT_FOUND' }] };
+  const got = parseGhPrGraphql(JSON.stringify(body));
+  assert.deepEqual([...got.keys()], [1]);
+  assert.equal(parseGhPrGraphql('not json').size, 0);
+});
+
+test('the batch query aliases each PR by number', () => {
+  const q = buildPrQuery([7, 12]);
+  assert.match(q, /pr7: pullRequest\(number: 7\)/);
+  assert.match(q, /pr12: pullRequest\(number: 12\)/);
+  assert.match(q, /repository\(owner: \$owner, name: \$name\)/);
+});
+
+// `-F` would type a variable: a repo or owner named "123", "true" or "@x" would
+// reach GitHub as a number, a boolean or a file's contents instead of a name.
+test('the GraphQL call passes owner and repo name as strings', () => {
+  const args = prQueryArgs('123', [7]);
+  assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);
+  assert.ok(args.includes('owner=Vast-menu') && args[args.indexOf('owner=Vast-menu') - 1] === '-f', args.join(' '));
+  assert.equal(args[args.indexOf('name=123') - 1], '-f');
+  assert.equal(args.includes('-F'), false);
+  assert.equal(args[args.indexOf(`query=${buildPrQuery([7])}`) - 1], '-f');
+});
+
+// Live, VastPayPwaV2 #306: GitHub lists the Co-Authored-By trailer as a commit
+// author ("Claude Opus 5", noreply@anthropic.com, login "claude"). The email
+// must be seen before the no-reply filter throws it away.
+test('an AI co-author from a commit trailer is not a contributor, via view or GraphQL', () => {
+  const view = {
+    ...realView,
+    author: { id: 'U_2', is_bot: false, login: 'MostafaAdly', name: '' },
+    commits: [
+      ghCommit([
+        { name: 'MostafaAdly', email: 'adly@e.vastgroupsa.com', login: 'MostafaAdly' },
+        { name: 'Claude Opus 5', email: 'noreply@anthropic.com', login: 'claude' },
+      ]),
+    ],
+  };
+  const names = (c: { name: string }[] | undefined) => (c ?? []).map((p) => p.name);
+  assert.deepEqual(names(parseGhPrView(JSON.stringify(view))?.contributors), ['MostafaAdly']);
+  const body = { data: { repository: { pr306: graphqlOf(view) } } };
+  assert.deepEqual(names(parseGhPrGraphql(JSON.stringify(body)).get(306)?.contributors), ['MostafaAdly']);
 });

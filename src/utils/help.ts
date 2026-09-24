@@ -36,6 +36,7 @@ const SETUP: Row[] = [
 
 const INSPECT: Row[] = [
   { left: 'status', right: 'Deployed versions and branch drift, all repos' },
+  { left: 'pending', right: 'What staging has that production lacks, by PR' },
 ];
 
 const SHIP: Row[] = [
