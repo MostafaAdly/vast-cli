@@ -152,6 +152,19 @@ test('normalizeAlbCookie accepts a bare value and names it', () => {
   assert.equal(normalizeAlbCookie('  abc123  '), 'AWSELBAuthSessionCookie-0=abc123');
 });
 
+test('normalizeAlbCookie accepts a bare base64 value with = padding', () => {
+  // The real value is base64: +, / and trailing = padding. The padding is not a name=value separator.
+  assert.equal(normalizeAlbCookie('7ZSe+P2F/taH=='), 'AWSELBAuthSessionCookie-0=7ZSe+P2F/taH==');
+  assert.equal(normalizeAlbCookie('7ZSedEh0UHse='), 'AWSELBAuthSessionCookie-0=7ZSedEh0UHse=');
+});
+
+test('normalizeAlbCookie keeps = padding inside a named pair', () => {
+  assert.equal(
+    normalizeAlbCookie('AWSELBAuthSessionCookie-0=7ZSe+P2F/taH=='),
+    'AWSELBAuthSessionCookie-0=7ZSe+P2F/taH==',
+  );
+});
+
 test('normalizeAlbCookie keeps only the ALB session pairs out of a whole Cookie line', () => {
   const line = '_ga=GA1.1; AWSALBAuthNonce=nonce; AWSELBAuthSessionCookie-0=part0; AWSELBAuthSessionCookie-1=part1; argocd.token=';
   assert.equal(

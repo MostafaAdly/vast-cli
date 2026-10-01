@@ -82,12 +82,15 @@ const ALB_COOKIE_PREFIX = 'AWSELBAuthSessionCookie';
  * and only the `AWSELBAuthSessionCookie-*` pairs are kept — the ALB splits long
  * sessions into `-0`, `-1`, ... so several may be needed, while `_ga`,
  * `AWSALBAuthNonce` and `argocd.token` must never be stored or sent.
+ *
+ * The value is base64, so a bare value often ends in `=` padding. Only an `=`
+ * with something other than `=` after it marks a `name=value` pair.
  */
 export function normalizeAlbCookie(input) {
     const text = input.trim().replace(/^cookie:\s*/i, '');
     if (!text)
         return null;
-    if (!text.includes('='))
+    if (!text.replace(/=+$/, '').includes('='))
         return `${ALB_COOKIE_PREFIX}-0=${text}`;
     const pairs = text
         .split(';')
