@@ -542,19 +542,19 @@ derived, not declared:
 
 Each releasable repo has its own folder under `deployments/helm/staging/` in
 `Vast-deployments`, and the folder name is also its ArgoCD application name. They do not
-match the repo names, so this is the map:
+match the repo names, and two production folders differ from staging's, so this is the map:
 
-| Repo | ArgoCD app / folder |
-|---|---|
-| VastPayPwa | `vastpay-pwa` |
-| VastPayPwaV2 | `vastpay-pwa-v2` |
-| VastPay-DashBoard | `vastpay-dasaboard` (spelling is theirs — do not "fix" it) |
-| VastMenuPwa | `pwa` |
-| VastMenuPwaV2 | `pwav2` |
-| VastMenu-DashBoard | `vastmenu-dashboard` |
-| vast-menu-payments | `vastmenu-payments` |
-| VastPay-BackEnd | `vastpay-backend` |
-| VastMenu-BackEnd | `vastmenu-backend` |
+| Repo | Staging app / folder | Production folder |
+|---|---|---|
+| VastPayPwa | `vastpay-pwa` | `vastpay-pwa` |
+| VastPayPwaV2 | `vastpay-pwa-v2` | `vastpay-pwa-v2` |
+| VastPay-DashBoard | `vastpay-dasaboard` (spelling is theirs — do not "fix" it) | `vastpay-dashboard` |
+| VastMenuPwa | `pwa` | `pwa` |
+| VastMenuPwaV2 | `pwav2` | `pwa-v2` |
+| VastMenu-DashBoard | `vastmenu-dashboard` | `vastmenu-dashboard` |
+| vast-menu-payments | `vastmenu-payments` | `vastmenu-payments` |
+| VastPay-BackEnd | `vastpay-backend` | `vastpay-backend` |
+| VastMenu-BackEnd | `vastmenu-backend` | `vastmenu-backend` |
 
 Unreleasable repos can be cloned but never appear in `status --all`, and cannot be
 promoted or deployed.
