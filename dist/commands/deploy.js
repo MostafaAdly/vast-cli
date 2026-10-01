@@ -24,6 +24,7 @@ import { nextRc, stripRc } from '../utils/version.js';
 import { guardStagingVersion } from '../utils/version-guard.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
+import { announceDone } from '../utils/done-notify.js';
 import { failedStepName, getRunStatus, runUrl, runWorkflow } from '../utils/github.js';
 import { ORG } from '../utils/remote.js';
 import { DEFAULT_TIMING, formatElapsed, pollRun } from '../utils/run-poll.js';
@@ -379,7 +380,7 @@ export async function deployOne(repo, env, version, dryRun, slot, timing = DEFAU
     say(`  ${label}  argocd ${app}  Synced/Healthy  ${rolledFor}  ${appUrl}`, 'success');
     return outcome('released', `${version} live on ${app} — ${appUrl}`);
 }
-export function printSummary(outcomes, env) {
+export function printSummary(outcomes, env, run) {
     log.newline();
     console.log(createHeader('Summary', ''));
     const width = Math.max(...outcomes.map((o) => o.repo.length), 4);
@@ -394,6 +395,8 @@ export function printSummary(outcomes, env) {
             released.map((o) => `✓ ${o.repo} ${o.version}`).join('\n') +
             (failed.length ? `\n${failed.map((o) => `✗ ${o.repo} — ${o.detail}`).join('\n')}` : ''));
     }
+    if (run)
+        announceDone(outcomes, env, run);
 }
 /**
  * How often to ask GitHub for each run's status, given how many are being
@@ -479,6 +482,7 @@ export async function deployMany(planned, env, dryRun, deps = {}) {
     return planned.map((p) => (isOutcome(p) ? p : finished[next++]));
 }
 async function executeDeploy(repoNames, options) {
+    const startedAt = Date.now();
     const problem = validateDeployOptions(repoNames, options);
     if (problem) {
         log.error(problem);
@@ -557,7 +561,7 @@ async function executeDeploy(repoNames, options) {
         planned.push({ repo, version });
     }
     const outcomes = await deployMany(planned, options.to, options.dryRun);
-    printSummary(outcomes, options.to);
+    printSummary(outcomes, options.to, { dryRun: options.dryRun, startedAt });
     if (outcomes.some((o) => o.status === 'failed'))
         process.exit(1);
 }

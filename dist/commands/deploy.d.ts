@@ -143,7 +143,10 @@ export declare const DEFAULT_DEPLOY_DEPS: DeployDeps;
  * dispatch is quiet — the spinner would do exactly that.
  */
 export declare function deployOne(repo: RepoConfig, env: DeployEnv, version: string, dryRun: boolean, slot: DeploySlot, timing?: PollTiming, deps?: DeployDeps): Promise<DeployOutcome>;
-export declare function printSummary(outcomes: DeployOutcome[], env: string): void;
+export declare function printSummary(outcomes: DeployOutcome[], env: string, run?: {
+    dryRun: boolean;
+    startedAt: number;
+}): void;
 /**
  * How often to ask GitHub for each run's status, given how many are being
  * watched. One second per run keeps a big sweep from hammering the API with one

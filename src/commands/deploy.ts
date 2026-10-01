@@ -45,6 +45,7 @@ import { nextRc, stripRc } from '../utils/version.js';
 import { guardStagingVersion, type ReadProduction } from '../utils/version-guard.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
+import { announceDone } from '../utils/done-notify.js';
 import { failedStepName, getRunStatus, runUrl, runWorkflow } from '../utils/github.js';
 import { ORG } from '../utils/remote.js';
 import { DEFAULT_TIMING, formatElapsed, pollRun, type PollTiming } from '../utils/run-poll.js';
@@ -502,7 +503,11 @@ export async function deployOne(
   return outcome('released', `${version} live on ${app} — ${appUrl}`);
 }
 
-export function printSummary(outcomes: DeployOutcome[], env: string): void {
+export function printSummary(
+  outcomes: DeployOutcome[],
+  env: string,
+  run?: { dryRun: boolean; startedAt: number },
+): void {
   log.newline();
   console.log(createHeader('Summary', ''));
   const width = Math.max(...outcomes.map((o) => o.repo.length), 4);
@@ -520,6 +525,7 @@ export function printSummary(outcomes: DeployOutcome[], env: string): void {
         (failed.length ? `\n${failed.map((o) => `✗ ${o.repo} — ${o.detail}`).join('\n')}` : ''),
     );
   }
+  if (run) announceDone(outcomes, env, run);
 }
 
 /**
@@ -656,6 +662,7 @@ interface DeployOptions extends Sweep {
 }
 
 async function executeDeploy(repoNames: string[], options: DeployOptions): Promise<void> {
+  const startedAt = Date.now();
   const problem = validateDeployOptions(repoNames, options);
   if (problem) {
     log.error(problem);
@@ -743,7 +750,7 @@ async function executeDeploy(repoNames: string[], options: DeployOptions): Promi
   }
 
   const outcomes = await deployMany(planned, options.to, options.dryRun);
-  printSummary(outcomes, options.to);
+  printSummary(outcomes, options.to, { dryRun: options.dryRun, startedAt });
   if (outcomes.some((o) => o.status === 'failed')) process.exit(1);
 }
 

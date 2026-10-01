@@ -141,6 +141,7 @@ export async function releaseMany(targets, options, deps = {}) {
     return deployMany(planned, 'staging', options.dryRun, deps);
 }
 async function executeRelease(repoNames, options) {
+    const startedAt = Date.now();
     const problem = validateReleaseOptions(repoNames, options);
     if (problem) {
         log.error(problem);
@@ -168,7 +169,7 @@ async function executeRelease(repoNames, options) {
     }
     console.log(createHeader('Release', `${targets.length} repo(s) | → staging`));
     const outcomes = await releaseMany(targets, options);
-    printSummary(outcomes, 'staging');
+    printSummary(outcomes, 'staging', { dryRun: options.dryRun, startedAt });
     if (outcomes.some((o) => o.status === 'failed'))
         process.exit(1);
 }

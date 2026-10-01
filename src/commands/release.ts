@@ -219,6 +219,7 @@ export async function releaseMany(
 }
 
 async function executeRelease(repoNames: string[], options: ReleaseOptions): Promise<void> {
+  const startedAt = Date.now();
   const problem = validateReleaseOptions(repoNames, options);
   if (problem) {
     log.error(problem);
@@ -256,7 +257,7 @@ async function executeRelease(repoNames: string[], options: ReleaseOptions): Pro
 
   const outcomes = await releaseMany(targets, options);
 
-  printSummary(outcomes, 'staging');
+  printSummary(outcomes, 'staging', { dryRun: options.dryRun, startedAt });
   if (outcomes.some((o) => o.status === 'failed')) process.exit(1);
 }
 

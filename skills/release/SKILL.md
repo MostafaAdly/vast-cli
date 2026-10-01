@@ -180,6 +180,11 @@ the corrected one it names, and ask the user before rerunning that repo with
 `--fix-version` — it changes the version series, which is their call. When the
 rerun prints `auto-corrected <old> → <new> (production is <tag>)`, relay that too.
 
+`vast` shows a desktop notification and rings the bell when a real run that took
+over a minute finishes, so the user may already know the outcome; still report the
+summary yourself. A run you start in the background should not set `VAST_NOTIFY=0`
+unless the user asked for silence.
+
 **Several repos at once.** Pass them all to one command, in one dry run and one
 real run:
 
