@@ -108,7 +108,7 @@ in `Vast-deployments`:
   Vast-deployments has no production file or no tag in it. Never ask the Helm
   file first: it stopped moving when the pipelines took over (on 2026-10-01
   VastMenuPwaV2's said 2.0.11 while Vast-deployments said 2.0.19), and until
-  2.6.3 the CLI read it first and also looked for production under the repo
+  2.7.0 the CLI read it first and also looked for production under the repo
   name, so every production read was stale. Delete all three when
   `PRODUCTION_PIPELINE_READY` flips.
 - The folder basename is also the ArgoCD application name, and it does **not**
