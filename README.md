@@ -540,7 +540,7 @@ derived, not declared:
 | vastpay-payment-odoo | backend | ❌ | — |
 | Terraform | infra | ❌ | — |
 
-Each releasable repo has its own folder under `deployments/helm/staging/` in
+Each releasable repo has its own folder under `deployments/helm/staging/` and `deployments/helm/production/` in
 `Vast-deployments`, and the folder name is also its ArgoCD application name. They do not
 match the repo names, and two production folders differ from staging's, so this is the map:
 
