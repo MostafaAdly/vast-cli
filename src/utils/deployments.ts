@@ -13,7 +13,7 @@ import { promisify } from 'util';
 
 import { deploymentsFile } from '../config/repos.js';
 import type { DeployEnv, RepoConfig } from '../config/repos.js';
-import { extractTag, readTagAtRef, PRE_MIGRATION_PRODUCTION_HELM } from './helm.js';
+import { extractTag } from './helm.js';
 import { ORG } from './remote.js';
 
 const execFileAsync = promisify(execFile);
@@ -56,62 +56,4 @@ export async function deployedTag(
   const path = deploymentsFile(repo, env);
   if (!path) throw new Error(`${repo.name} has no ${env} deployments file`);
   return extractTag(await fetchFile(path));
-}
-
-/** Where a production tag was actually read from. */
-export interface ProductionTagSource {
-  tag: string;
-  source: 'vast-deployments' | 'app-repo';
-}
-
-/** The reader's own wording for "that file is not in Vast-deployments". */
-const MISSING_IN_DEPLOYMENTS = new RegExp(`^no .* in ${DEPLOYMENTS_REPO}$`);
-
-/**
- * Production's deployed tag: Vast-deployments, like staging's.
- *
- * DevOps created every releasable repo's production file on 2026-09-23 and the
- * pipelines have committed to them since 2026-09-28, so that file is what
- * ArgoCD deploys. The app repo's `Helm/values-prod.yaml` stopped moving at the
- * same time — on 2026-10-01 VastMenuPwaV2's still said 2.0.11 while
- * Vast-deployments said 2.0.19 — and is only asked when the file is missing or
- * carries no tag.
- *
- * Only those two states fall back. A network or auth failure propagates
- * unchanged: guessing from a possibly-stale checkout because GitHub was down
- * would be a quieter, worse lie.
- *
- * The fallback goes away with `PRE_MIGRATION_PRODUCTION_HELM`.
- */
-export async function productionTag(
-  repo: RepoConfig,
-  dir: string | null,
-  fetchFile: FetchFile = fetchDeploymentsFile,
-  readAtRef: typeof readTagAtRef = readTagAtRef,
-): Promise<ProductionTagSource> {
-  try {
-    return { tag: await deployedTag(repo, 'production', fetchFile), source: 'vast-deployments' };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const unmigrated = MISSING_IN_DEPLOYMENTS.test(message) || message.includes('No `tag:` found');
-    if (!unmigrated) throw error;
-
-    if (dir) {
-      try {
-        return {
-          tag: readAtRef(dir, 'origin/production', PRE_MIGRATION_PRODUCTION_HELM),
-          source: 'app-repo',
-        };
-      } catch {
-        // Fall through to the error naming both places — reporting only the
-        // git failure would hide that Vast-deployments was tried first.
-      }
-    }
-
-    const path = deploymentsFile(repo, 'production') ?? `a production file for ${repo.name}`;
-    const where = dir
-      ? `${PRE_MIGRATION_PRODUCTION_HELM} at origin/production in ${dir}`
-      : `${PRE_MIGRATION_PRODUCTION_HELM} at origin/production (${repo.name} is not cloned)`;
-    throw new Error(`no ${path} in ${DEPLOYMENTS_REPO}, and no ${where}`);
-  }
 }

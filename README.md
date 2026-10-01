@@ -213,10 +213,9 @@ vast status VastPayPwa    # one repo
 ```
 
 **STAGING** and **PRODUCTION** are the tags in that repo's `Vast-deployments` values
-files — the images ArgoCD is actually running. Only a repo with no production file
-there falls back to the app repo's own `Helm/values-prod.yaml` on `origin/production`,
-marked with `*` and a footnote under the table. When neither is readable the cell
-reads `not migrated`. `n/a` means the repo is not deployed to that environment at all,
+files — the images ArgoCD is actually running. Nothing is read from an app repo's own
+`Helm/` directory. A repo with no file in `Vast-deployments` for that environment reads
+`not migrated`. `n/a` means the repo is not deployed to that environment at all,
 and `?` means the lookup itself failed.
 
 **DRIFT** is how many commits are waiting on `develop` that `staging` does not
@@ -469,10 +468,8 @@ before anything happens.
 
 Rules that keep this safe: every pick must already be on `staging` (production only ever
 receives staging-baked changes) and must not already be on `production`. The version
-advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's — read
-from `Vast-deployments` when a production file is there and otherwise from the app repo's
-`Helm/values-prod.yaml` on `origin/production`, and `promote` prints which of the two it
-used, so a surprising version number can always be traced to its source. Deploying
+advances production's own tag (`2.2.2 → 2.2.3`) rather than borrowing staging's, read
+from the repo's production file in `Vast-deployments`. Deploying
 afterwards is explicit:
 
 ```bash

@@ -101,10 +101,8 @@ first (see the newer-release bullet below). What each finding means:
 
 **Reading `vast status`.** `vast status <repo>` (or `--all`) is read-only and is the
 right way to answer "what is live?". STAGING and PRODUCTION are both the tag in
-`Vast-deployments`, the image ArgoCD is running. A production value marked with `*` plus
-a footnote came from the app repo's `Helm/values-prod.yaml` on `origin/production`
-instead, because `Vast-deployments` has no production file for that repo — relay the
-footnote when you quote it. `not migrated` means neither could be read, `n/a` that the
+`Vast-deployments`, the image ArgoCD is running; nothing is read from an app repo's
+`Helm/` directory. `not migrated` means `Vast-deployments` has no file for it, `n/a` that the
 repo is not deployed there, `?` that the lookup failed. If **every** repo's columns read `not migrated` or `?`, the user's GitHub
 account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
 rather than treating it as nine separate failures.
@@ -419,9 +417,8 @@ it, and afterwards relay the reminder to port the fix back to develop/staging); 
 landed on staging → resolved to its landing merge commit; floating off develop/staging →
 refused, and the fix is to land it on staging first. Every pick must already be on staging; `vast` refuses
 otherwise, and refuses picks already on production. The version advances production's
-own tag (`2.2.2 → 2.2.3`), read from `Vast-deployments` when a production file exists
-there and otherwise from the app repo's `Helm/values-prod.yaml` on `origin/production` —
-`vast` prints which source it used, so relay that line along with the version. The deploy
+own tag (`2.2.2 → 2.2.3`), read from the repo's production file in `Vast-deployments`;
+relay the version line `vast` prints. The deploy
 after the PR merges must name it:
 
 ```bash

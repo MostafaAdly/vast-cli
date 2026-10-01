@@ -13,7 +13,7 @@ import { repoDir } from '../config/workspace.js';
 import { argocdHost, isArgocdEnabled, readArgocdToken } from '../config/argocd.js';
 import { readSlackChannel, readSlackToken } from '../config/slack.js';
 import { userinfo } from '../utils/argocd.js';
-import { deployedTag, productionTag } from '../utils/deployments.js';
+import { deployedTag } from '../utils/deployments.js';
 import { runDoctor, tally } from '../utils/doctor.js';
 import { authTest, channelInfo } from '../utils/slack.js';
 import { ORG } from '../utils/remote.js';
@@ -57,7 +57,7 @@ function liveDeps() {
             return Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8');
         },
         stagingTag: (repo) => deployedTag(repo, 'staging'),
-        productionTag: async (repo, dir) => (await productionTag(repo, dir)).tag,
+        productionTag: (repo) => deployedTag(repo, 'production'),
         argocd: (env) => {
             const token = readArgocdToken(env);
             return {

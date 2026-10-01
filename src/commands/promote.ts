@@ -25,7 +25,7 @@ import {
   mergeAndPush,
   syncLocalBranch,
 } from '../utils/git.js';
-import { deployedTag, productionTag } from '../utils/deployments.js';
+import { deployedTag } from '../utils/deployments.js';
 import {
   cutReleaseBranch,
   cutPickedBranch,
@@ -261,7 +261,6 @@ export async function promote(
       let version: string;
       // The tag comes from Vast-deployments, or from the app repo's own Helm when
       // its production file is missing; the line below says which.
-      let versionNote = '';
       if (targetVersion) {
         version = targetVersion;
       } else {
@@ -277,9 +276,7 @@ export async function promote(
         try {
           // A selective promotion advances production's OWN tag — staging's
           // version would claim content production did not receive.
-          const { tag, source } = await productionTag(repo, dir);
-          version = nextPatch(tag);
-          if (source === 'app-repo') versionNote = ' (from app-repo Helm — no production file in Vast-deployments)';
+          version = nextPatch(await deployedTag(repo, 'production'));
         } catch (error) {
           console.log(
             createErrorBox(
@@ -299,7 +296,7 @@ export async function promote(
       ]
         .filter(Boolean)
         .join(' + ');
-      log.info(`${repo.name}: ${what} → production, ${kind} ${version}${versionNote}`);
+      log.info(`${repo.name}: ${what} → production, ${kind} ${version}`);
       const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
       // A dry run never returns a URL, but it still has a message to show.
       if (slack && (url !== null || dryRun)) {
@@ -541,9 +538,7 @@ The production DEPLOY that follows is currently blocked: production has not
 moved to the new Vast-deployments + ArgoCD pipeline, so \`vast deploy --to
 production\` refuses and the deploy is done by hand. Versions here are derived
 from Vast-deployments (release = staging's tag without its -rc suffix; hotfix =
-production's own tag plus a patch). A repo with no production file in
-Vast-deployments falls back to the checkout's Helm/values-prod.yaml on
-origin/production, and the derived version says so when it does.
+production's own tag plus a patch).
 `,
     )
     .action(executePromote);

@@ -12,7 +12,7 @@
  */
 
 import type { RepoConfig } from '../config/repos.js';
-import { productionTag } from './deployments.js';
+import { deployedTag } from './deployments.js';
 import { nextPatch, parseTag, type ParsedVersion } from './version.js';
 
 export type ProductionVerdict =
@@ -45,10 +45,10 @@ export type GuardResult =
     }
   | { ok: false; detail: string };
 
-export type ReadProduction = (repo: RepoConfig, dir: string | null) => Promise<string>;
+export type ReadProduction = (repo: RepoConfig) => Promise<string>;
 
 /** Production's tag from Vast-deployments, the same reader `vast status` uses. */
-export const readProductionTag: ReadProduction = async (repo, dir) => (await productionTag(repo, dir)).tag;
+export const readProductionTag: ReadProduction = (repo) => deployedTag(repo, 'production');
 
 /**
  * @param explicit the version came from --target-version: warn, never refuse
@@ -63,7 +63,7 @@ export async function guardStagingVersion(
 ): Promise<GuardResult> {
   let verdict: ProductionVerdict;
   try {
-    verdict = checkAgainstProduction(candidate, await readProduction(repo, dir));
+    verdict = checkAgainstProduction(candidate, await readProduction(repo));
   } catch {
     // Missing data never blocks a release that worked before this guard existed.
     return {

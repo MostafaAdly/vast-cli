@@ -43,7 +43,7 @@ export interface DoctorDeps {
     /** build-deploy.yml on the repo's staging branch. */
     fetchWorkflow: (repo: RepoConfig) => Promise<string>;
     stagingTag: (repo: RepoConfig) => Promise<string>;
-    productionTag: (repo: RepoConfig, dir: string | null) => Promise<string>;
+    productionTag: (repo: RepoConfig) => Promise<string>;
     argocd: (env: 'staging') => ArgoState;
     slack: {
         token: string | null;

@@ -10,7 +10,7 @@
  * Only X.Y.Z is compared: that is what production is labelled with once the
  * rc suffix is stripped, so a higher rc never rescues a lower base.
  */
-import { productionTag } from './deployments.js';
+import { deployedTag } from './deployments.js';
 import { nextPatch, parseTag } from './version.js';
 function compareBase(a, b) {
     return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
@@ -22,7 +22,7 @@ export function checkAgainstProduction(candidate, production) {
     return { kind: 'behind', production, corrected: `${nextPatch(production)}-rc1` };
 }
 /** Production's tag from Vast-deployments, the same reader `vast status` uses. */
-export const readProductionTag = async (repo, dir) => (await productionTag(repo, dir)).tag;
+export const readProductionTag = (repo) => deployedTag(repo, 'production');
 /**
  * @param explicit the version came from --target-version: warn, never refuse
  * @param fixVersion --fix-version: replace a behind version with the first one past production
@@ -30,7 +30,7 @@ export const readProductionTag = async (repo, dir) => (await productionTag(repo,
 export async function guardStagingVersion(repo, dir, candidate, options, readProduction = readProductionTag) {
     let verdict;
     try {
-        verdict = checkAgainstProduction(candidate, await readProduction(repo, dir));
+        verdict = checkAgainstProduction(candidate, await readProduction(repo));
     }
     catch {
         // Missing data never blocks a release that worked before this guard existed.

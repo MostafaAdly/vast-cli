@@ -49,7 +49,7 @@ export interface DoctorDeps {
   /** build-deploy.yml on the repo's staging branch. */
   fetchWorkflow: (repo: RepoConfig) => Promise<string>;
   stagingTag: (repo: RepoConfig) => Promise<string>;
-  productionTag: (repo: RepoConfig, dir: string | null) => Promise<string>;
+  productionTag: (repo: RepoConfig) => Promise<string>;
   argocd: (env: 'staging') => ArgoState;
   slack: {
     token: string | null;
@@ -156,7 +156,7 @@ async function repoChecks(deps: DoctorDeps, repo: RepoConfig): Promise<Check[]> 
   const [workflow, staging, production] = await Promise.allSettled([
     deps.fetchWorkflow(repo),
     deps.stagingTag(repo),
-    deps.productionTag(repo, deps.repoDir(repo)),
+    deps.productionTag(repo),
   ]);
 
   if (workflow.status === 'rejected') {

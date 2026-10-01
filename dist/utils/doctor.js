@@ -112,7 +112,7 @@ async function repoChecks(deps, repo) {
     const [workflow, staging, production] = await Promise.allSettled([
         deps.fetchWorkflow(repo),
         deps.stagingTag(repo),
-        deps.productionTag(repo, deps.repoDir(repo)),
+        deps.productionTag(repo),
     ]);
     if (workflow.status === 'rejected') {
         issues.push({ group, label, status: 'fail', detail: `cannot read build-deploy.yml on staging — deploys cannot dispatch (${message(workflow.reason)})` });
