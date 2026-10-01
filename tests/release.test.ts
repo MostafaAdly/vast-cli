@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isSweep,
   pollIntervalFor,
+  prepareOne,
   pollTimingFor,
   releaseMany,
   releaseTargets,
@@ -411,5 +412,67 @@ test('a deploy that throws fails only its own repo', async () => {
       ['VastPay-DashBoard', 'failed', 'promotion refused'],
       ['VastMenu-DashBoard', 'released', '2.0.0-rc1 live on app'],
     ],
+  );
+});
+
+// --- the production version guard, which runs before anything is promoted ---
+
+const DASH = (): RepoConfig => getRepo('VastMenu-DashBoard')!;
+const PREP_OPTIONS: ReleaseOptions = { ...MANY_OPTIONS, dir: '/nonexistent/checkout' };
+
+function prepDeps(staging: string, production: string, promoted: string[]) {
+  return {
+    stagingTag: async () => staging,
+    readProduction: async () => production,
+    promote: async (repo: RepoConfig) => {
+      promoted.push(repo.name);
+      return true;
+    },
+  };
+}
+
+// Shaped like VastMenu-DashBoard on 2026-10-01.
+test('prepareOne refuses a version behind production and never promotes that repo', async () => {
+  const promoted: string[] = [];
+  const out = await prepareOne(DASH(), PREP_OPTIONS, prepDeps('2.1.12-rc30', '2.1.33', promoted));
+  assert.ok('status' in out);
+  assert.equal(out.status, 'failed');
+  assert.match(out.detail, /2\.1\.12-rc31 is not above production 2\.1\.33/);
+  assert.deepEqual(promoted, [], 'a refused repo must be left exactly as it was');
+});
+
+test('prepareOne with --fix-version ships the first version past production, noted', async () => {
+  const promoted: string[] = [];
+  const out = await prepareOne(
+    DASH(),
+    { ...PREP_OPTIONS, fixVersion: true },
+    prepDeps('2.1.12-rc30', '2.1.33', promoted),
+  );
+  assert.ok(!('status' in out));
+  assert.equal(out.version, '2.1.34-rc1');
+  assert.equal(out.note, 'auto-corrected from 2.1.12-rc31 (production 2.1.33)');
+  assert.deepEqual(promoted, ['VastMenu-DashBoard']);
+});
+
+test('prepareOne leaves a version above production alone', async () => {
+  const promoted: string[] = [];
+  const out = await prepareOne(DASH(), PREP_OPTIONS, prepDeps('2.1.34-rc1', '2.1.33', promoted));
+  assert.ok(!('status' in out));
+  assert.equal(out.version, '2.1.34-rc2');
+  assert.equal(out.note, undefined);
+});
+
+test('a guard note reaches the summary line', async () => {
+  const outcomes = await releaseMany([DASH()], MANY_OPTIONS, {
+    prepare: async (repo) => ({ repo, version: '2.1.34-rc1', note: 'auto-corrected from 2.1.12-rc31 (production 2.1.33)' }),
+    deploy: async (repo, _env, version) => released(repo, version),
+  });
+  assert.equal(outcomes[0].detail, '2.1.34-rc1 live on app · auto-corrected from 2.1.12-rc31 (production 2.1.33)');
+});
+
+test('--fix-version cannot be combined with --target-version', () => {
+  assert.match(
+    validateReleaseOptions(['VastPayPwa'], { ...opts({ targetVersion: '1.0.0-rc1' }), fixVersion: true }) ?? '',
+    /mutually exclusive/,
   );
 });

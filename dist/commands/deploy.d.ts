@@ -17,6 +17,7 @@
 import { Command } from 'commander';
 import { type DeployEnv, type RepoConfig } from '../config/repos.js';
 import { getApplication, refreshApplication, waitForRollout, type RolloutTiming } from '../utils/argocd.js';
+import { type ReadProduction } from '../utils/version-guard.js';
 import { getRunStatus, runWorkflow } from '../utils/github.js';
 import { type PollTiming } from '../utils/run-poll.js';
 import { type StatusBoard } from '../utils/status-board.js';
@@ -66,9 +67,17 @@ export declare function perRepoOptionProblem(names: string[], options: Sweep & {
     targetVersion?: string;
     dir?: string;
 }): string | null;
+/** --fix-version replaces a derived version, so it has nothing to do beside an explicit one. */
+export declare function fixVersionProblem(options: {
+    targetVersion?: string;
+    fixVersion?: boolean;
+    to?: string;
+}): string | null;
 export declare function validateDeployOptions(names: string[], options: Sweep & {
     targetVersion?: string;
     dir?: string;
+    fixVersion?: boolean;
+    to?: string;
 }): string | null;
 /**
  * The outcome for a repo that is not on this machine.
@@ -155,8 +164,19 @@ export declare function pollTimingFor(runCount: number, live: boolean): PollTimi
 export interface Deployable {
     repo: RepoConfig;
     version: string;
+    /** Appended to the summary line, e.g. that the version was auto-corrected. */
+    note?: string;
 }
 export declare function isOutcome(x: Deployable | DeployOutcome): x is DeployOutcome;
+/**
+ * A staging candidate checked against production before anything runs: either
+ * ready to deploy (possibly auto-corrected) or refused. Shared by `release` and
+ * `deploy --to staging`, which derive versions the same way.
+ */
+export declare function guardedStaging(repo: RepoConfig, dir: string | null, candidate: string, options: {
+    explicit: boolean;
+    fixVersion: boolean;
+}, readProduction?: ReadProduction): Promise<Deployable | DeployOutcome>;
 /** The pieces of a multi-repo deploy a test replaces; production code passes none. */
 export interface DeployManyDeps {
     /** The per-repo deploy, so `release` can share this orchestration and fake it. */

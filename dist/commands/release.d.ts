@@ -17,6 +17,7 @@
  */
 import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
+import type { ReadProduction } from '../utils/version-guard.js';
 import { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type DeployManyDeps, type DeployOutcome, type Sweep } from './deploy.js';
 export { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type Sweep };
 export interface ReleaseOptions {
@@ -26,6 +27,8 @@ export interface ReleaseOptions {
     targetVersion?: string;
     /** Start a new version series instead of continuing the current rc run. */
     bump?: 'patch' | 'minor' | 'major';
+    /** Replace a version that is not above production's with the first one that is. */
+    fixVersion?: boolean;
     skipPromote: boolean;
     all: boolean;
     frontend: boolean;
@@ -47,6 +50,7 @@ export declare function validateReleaseOptions(names: string[], options: Sweep &
     targetVersion?: string;
     dir?: string;
     bump?: string;
+    fixVersion?: boolean;
 }): string | null;
 /**
  * Repos `vast release` acts on, in the order they were named, deduplicated.
@@ -71,7 +75,13 @@ export declare function releaseTargets(names: string[], sweep: Sweep): {
  * Async because the deployed tag now comes from Vast-deployments over the API,
  * not from a file in the local checkout.
  */
-export declare function prepareOne(repo: RepoConfig, options: ReleaseOptions): Promise<Deployable | DeployOutcome>;
+/** The network and git calls in `prepareOne`, injectable so tests never touch either. */
+export interface PrepareDeps {
+    stagingTag?: (repo: RepoConfig) => Promise<string>;
+    promote?: (repo: RepoConfig, dir: string, dryRun: boolean) => Promise<boolean>;
+    readProduction?: ReadProduction;
+}
+export declare function prepareOne(repo: RepoConfig, options: ReleaseOptions, deps?: PrepareDeps): Promise<Deployable | DeployOutcome>;
 /** The two halves of a release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps extends DeployManyDeps {
     prepare?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;

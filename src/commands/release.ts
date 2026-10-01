@@ -20,10 +20,13 @@ import { Command } from 'commander';
 import { reposForRelease, type ReleaseTeam, type RepoConfig } from '../config/repos.js';
 import { nextRc, bump as bumpVersion } from '../utils/version.js';
 import { deployedTag } from '../utils/deployments.js';
+import type { ReadProduction } from '../utils/version-guard.js';
 import { promote } from './promote.js';
 import { repoDir } from '../config/workspace.js';
 import {
   deployMany,
+  fixVersionProblem,
+  guardedStaging,
   isSweep,
   notClonedOutcome,
   perRepoOptionProblem,
@@ -51,6 +54,8 @@ export interface ReleaseOptions {
   targetVersion?: string;
   /** Start a new version series instead of continuing the current rc run. */
   bump?: 'patch' | 'minor' | 'major';
+  /** Replace a version that is not above production's with the first one that is. */
+  fixVersion?: boolean;
   skipPromote: boolean;
   all: boolean;
   frontend: boolean;
@@ -76,7 +81,7 @@ export function needsPromotion(repo: RepoConfig): boolean {
  */
 export function validateReleaseOptions(
   names: string[],
-  options: Sweep & { targetVersion?: string; dir?: string; bump?: string },
+  options: Sweep & { targetVersion?: string; dir?: string; bump?: string; fixVersion?: boolean },
 ): string | null {
   const both = sweepAndNamesProblem(names, options);
   if (both) return both;
@@ -84,7 +89,7 @@ export function validateReleaseOptions(
   if (options.bump && !BUMP_LEVELS.includes(options.bump)) {
     return `Invalid --bump level: ${options.bump}. Use patch, minor, or major.`;
   }
-  return perRepoOptionProblem(names, options);
+  return perRepoOptionProblem(names, options) ?? fixVersionProblem(options);
 }
 
 /**
@@ -113,9 +118,17 @@ export function releaseTargets(
  * Async because the deployed tag now comes from Vast-deployments over the API,
  * not from a file in the local checkout.
  */
+/** The network and git calls in `prepareOne`, injectable so tests never touch either. */
+export interface PrepareDeps {
+  stagingTag?: (repo: RepoConfig) => Promise<string>;
+  promote?: (repo: RepoConfig, dir: string, dryRun: boolean) => Promise<boolean>;
+  readProduction?: ReadProduction;
+}
+
 export async function prepareOne(
   repo: RepoConfig,
   options: ReleaseOptions,
+  deps: PrepareDeps = {},
 ): Promise<Deployable | DeployOutcome> {
   const dir = repoDir(repo, options.dir);
   // Any sweep, not just --all: a repo the user did not name is skipped when it
@@ -135,28 +148,17 @@ export async function prepareOne(
     };
   }
 
-  if (!options.skipPromote) {
-    if (!needsPromotion(repo)) {
-      // The backend repos have no usable develop — human PRs there target
-      // staging directly. Failing the release for a promotion that cannot
-      // exist made the everyday command unusable for that team and turned
-      // every `release --all` sweep red. Skipping is not a policy change:
-      // there is nothing to promote.
-      log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
-    } else if (!(await promote(repo, dir, 'staging', options.dryRun))) {
-      return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
-    }
-  }
-
-  let version: string;
+  // The version is settled before promoting, so a repo the guard refuses is
+  // left exactly as it was: nothing merged, nothing pushed.
+  let candidate: string;
   if (options.targetVersion) {
-    version = options.targetVersion;
+    candidate = options.targetVersion;
   } else {
     try {
       // Derived from what is DEPLOYED, not from the highest version ever cut.
       // Default continues the current rc series; --bump starts a new one at rc1.
-      const deployed = await deployedTag(repo, 'staging');
-      version = options.bump ? bumpVersion(deployed, options.bump) : nextRc(deployed);
+      const deployed = await (deps.stagingTag ?? ((r) => deployedTag(r, 'staging')))(repo);
+      candidate = options.bump ? bumpVersion(deployed, options.bump) : nextRc(deployed);
     } catch (error) {
       return {
         repo: repo.name,
@@ -167,7 +169,29 @@ export async function prepareOne(
     }
   }
 
-  return { repo, version };
+  const planned = await guardedStaging(
+    repo,
+    dir,
+    candidate,
+    { explicit: Boolean(options.targetVersion), fixVersion: Boolean(options.fixVersion) },
+    deps.readProduction,
+  );
+  if ('status' in planned) return planned;
+
+  if (!options.skipPromote) {
+    if (!needsPromotion(repo)) {
+      // The backend repos have no usable develop — human PRs there target
+      // staging directly. Failing the release for a promotion that cannot
+      // exist made the everyday command unusable for that team and turned
+      // every `release --all` sweep red. Skipping is not a policy change:
+      // there is nothing to promote.
+      log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
+    } else if (!(await (deps.promote ?? ((r, d, n) => promote(r, d, 'staging', n)))(repo, dir, options.dryRun))) {
+      return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
+    }
+  }
+
+  return planned;
 }
 
 /** The two halves of a release, injectable so they can be faked in tests. */
@@ -255,6 +279,7 @@ export function registerReleaseCommand(program: Command): void {
     .option('--dir <path>', 'Override the local checkout path (one repo only)')
     .option('-v, --target-version <version>', 'Override the derived version entirely (one repo only)')
     .option('--bump <level>', 'Start a new series: patch, minor, or major')
+    .option('--fix-version', 'If the derived version is not above production, use the first one that is', false)
     .option('--skip-promote', 'Deploy what is already on the branch', false)
     .option('-n, --dry-run', 'Report what would happen without merging or deploying', false)
     .addHelpText(
@@ -267,11 +292,25 @@ Version derivation (from the tag currently deployed to staging):
   $ vast release VastPayPwa --bump minor     1.5.5-rc15 -> 1.6.0-rc1    new minor series
   $ vast release VastPayPwa --bump major     1.5.5-rc15 -> 2.0.0-rc1    new major series
 
+  $ vast release VastPayPwa --fix-version    if that is not above production, use the
+                                             first version that is, and say so
   $ vast release VastPayPwa --dry-run        show the derived version, deploy nothing
   $ vast release VastPayPwa VastMenuPwa      both at once, one summary
   $ vast release --frontend                  the frontend repos, side by side
   $ vast release --backend                   the backend repos
   $ vast release --all                       frontend and backend, one summary
+
+Every derived version is checked against production before anything is
+promoted. Hotfixes advance production on their own, so a staging series can
+fall behind it; a version whose X.Y.Z is not above production's would make the
+next release take production backwards, and that repo is refused untouched:
+
+  ✗ VastMenu-DashBoard  2.1.12-rc31 is not above production 2.1.36 ...
+    rerun with --fix-version (→ 2.1.37-rc1), or --target-version
+
+--fix-version applies to a sweep too, and only changes the repos that need it.
+An explicit --target-version is warned about, never refused. If production's
+tag cannot be read, the version goes through unchecked with a note.
 
 What a release does (there is no version-bump PR any more — staging is GitOps):
 
@@ -301,7 +340,7 @@ Release trains (--all is both):
   --backend    ${trainNames('backend')}
 vast-menu-payments is in neither train — release it by name.
 
---bump, --skip-promote and --dry-run apply to every repo named; --target-version
+--bump, --fix-version, --skip-promote and --dry-run apply to every repo named; --target-version
 and --dir are per-repo and refused with a sweep flag or more than one repo.
 `,
     )
