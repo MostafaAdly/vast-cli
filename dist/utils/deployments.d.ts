@@ -22,13 +22,14 @@ export interface ProductionTagSource {
     source: 'vast-deployments' | 'app-repo';
 }
 /**
- * Production's deployed tag, from wherever it is actually recorded today.
+ * Production's deployed tag: Vast-deployments, like staging's.
  *
- * Production is not migrated: seven of nine repos have no file in
- * Vast-deployments at all, and the two that do are seeds — one carries no
- * `tag:` line. What is running is still each app repo's `Helm/values-prod.yaml`
- * on `origin/production`, so a missing or placeholder file falls back there
- * rather than failing a hotfix that used to work.
+ * DevOps created every releasable repo's production file on 2026-09-23 and the
+ * pipelines have committed to them since 2026-09-28, so that file is what
+ * ArgoCD deploys. The app repo's `Helm/values-prod.yaml` stopped moving at the
+ * same time — on 2026-10-01 VastMenuPwaV2's still said 2.0.11 while
+ * Vast-deployments said 2.0.19 — and is only asked when the file is missing or
+ * carries no tag.
  *
  * Only those two states fall back. A network or auth failure propagates
  * unchanged: guessing from a possibly-stale checkout because GitHub was down
@@ -36,5 +37,5 @@ export interface ProductionTagSource {
  *
  * The fallback goes away with `PRE_MIGRATION_PRODUCTION_HELM`.
  */
-export declare function productionTag(repo: RepoConfig, dir: string | null, fetchFile?: FetchFile, readAtRef?: typeof readTagAtRef, ready?: boolean): Promise<ProductionTagSource>;
+export declare function productionTag(repo: RepoConfig, dir: string | null, fetchFile?: FetchFile, readAtRef?: typeof readTagAtRef): Promise<ProductionTagSource>;
 //# sourceMappingURL=deployments.d.ts.map

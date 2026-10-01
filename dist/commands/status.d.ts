@@ -11,8 +11,8 @@ import { type ProductionTagSource } from '../utils/deployments.js';
 /**
  * The deployed tag per env, for every repo at once.
  *
- * Staging is one `gh api` call against Vast-deployments; production may fall
- * back to the app repo's Helm while it is unmigrated. Both run concurrently:
+ * Staging is one `gh api` call against Vast-deployments; production likewise,
+ * falling back to the app repo's Helm only when its file is missing. Both run concurrently:
  * serially this is one round trip per repo per env and the command stops
  * feeling instant. A repo that is not deployed to an env reads "n/a"; a read
  * that fails reads "?", because a broken lookup is not the same claim as

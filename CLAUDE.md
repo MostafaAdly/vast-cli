@@ -92,23 +92,31 @@ repo copy, and users re-download to update. Its helper's tests live in
 Nothing reads Helm values out of the app repos any more. The deployed tag lives
 in `Vast-deployments`:
 
-- Staging: `deployments/helm/staging/<app>/stage.yaml`, read at `main` through
-  `gh api .../contents/<path>`. Production (not migrated yet):
-  `deployments/helm/production/<RepoName>/prod.yaml`.
+- Staging: `deployments/helm/staging/<app>/stage.yaml`; production:
+  `deployments/helm/production/<app>/prod.yaml`. Both read at `main` through
+  `gh api .../contents/<path>`. DevOps created every production file on
+  2026-09-23 and the pipelines have committed production tags since 2026-09-28,
+  so production's tag is read from Vast-deployments too — only the production
+  DEPLOY is still blocked (`PRODUCTION_PIPELINE_READY`).
 - The tag is `deployment.containers[0].image.tag` — the first `tag:` line in the
   file. `extractTag` in `src/utils/helm.ts` still parses it; the reader is
   `src/utils/deployments.ts`.
-- **One pre-migration exception, and it is temporary.** `readTagAtRef` and
+- **One pre-migration fallback, and it is temporary.** `readTagAtRef` and
   `PRE_MIGRATION_PRODUCTION_HELM` in `src/utils/helm.ts`, and the `productionTag`
   fallback in `src/utils/deployments.ts`, read production's tag out of the app
-  repo's `Helm/values-prod.yaml` on `origin/production` when Vast-deployments has
-  no production file yet. They exist only because production is unmigrated:
-  delete all three when `PRODUCTION_PIPELINE_READY` flips. Once Vast-deployments
-  is authoritative, reading a local checkout instead is a quiet lie.
+  repo's `Helm/values-prod.yaml` on `origin/production` **only** when
+  Vast-deployments has no production file or no tag in it. Never ask the Helm
+  file first: it stopped moving when the pipelines took over (on 2026-10-01
+  VastMenuPwaV2's said 2.0.11 while Vast-deployments said 2.0.19), and until
+  2.6.3 the CLI read it first and also looked for production under the repo
+  name, so every production read was stale. Delete all three when
+  `PRODUCTION_PIPELINE_READY` flips.
 - The folder basename is also the ArgoCD application name, and it does **not**
   match the repo name: `VastPayPwa → vastpay-pwa`, `VastMenuPwa → pwa`,
   `VastMenuPwaV2 → pwav2`, `VastPay-DashBoard → vastpay-dasaboard` (their typo,
-  upstream — never "fix" it).
+  upstream — never "fix" it). Production's folders mostly match staging's, but
+  two do not: `VastPay-DashBoard → vastpay-dashboard` (spelled right there) and
+  `VastMenuPwaV2 → pwa-v2`. They are listed per repo in `src/config/repos.ts`.
 - Each repo dispatches its own `<Repo> Pipeline` workflow, one `version` input, on
   the env branch. It is dispatched **by file**, `build-deploy.yml`: DevOps
   renamed every workflow from `build-deploy` to `<Repo> Pipeline` on 2026-09-24

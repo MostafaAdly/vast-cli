@@ -60,9 +60,8 @@ const MISSING_FILE = /^no .* in Vast-deployments/;
 export async function readTags(targets, dirs = new Map(), readStaging = deployedTag, readProduction = productionTag) {
     const entries = await Promise.all(targets.map(async (repo) => {
         const tags = { staging: 'n/a', production: 'n/a', productionFromAppRepo: false };
-        // A folder that is not there yet is the normal state while production is
-        // unmigrated — a question mark would read as a failure and send someone
-        // chasing a network problem.
+        // A folder that is not there is a repo nobody has onboarded — a question
+        // mark would read as a failure and send someone chasing a network problem.
         const cell = (error) => {
             const message = error instanceof Error ? error.message : String(error);
             return MISSING_FILE.test(message) ? 'not migrated' : '?';
@@ -172,7 +171,7 @@ async function executeStatus(repoName, options) {
         console.log(`  ${r.name.padEnd(wName)}  ${r.staging.padEnd(wStage)}  ${prodCell(r).padEnd(wProd)}  ${r.drift}`);
     }
     if (rows.some((r) => r.productionFromAppRepo)) {
-        console.log("  * production tag read from the app repo's Helm — production is not migrated yet");
+        console.log("  * production tag read from the app repo's Helm — Vast-deployments has no production file for it");
     }
     log.newline();
 }
@@ -194,11 +193,9 @@ Reads only — it fetches and reports, and changes nothing.
 Columns:
   STAGING / PRODUCTION   the tag ArgoCD deploys from, read from the
                          Vast-deployments values file for that environment
-                         "<tag>*" means production is not migrated and the tag
-                         was read from the app repo's Helm/values-prod.yaml on
-                         origin/production, which is what is running there today;
-                         the seed in Vast-deployments only answers for a repo
-                         that is not cloned here
+                         "<tag>*" means Vast-deployments has no production file
+                         for the repo, so the tag was read from the app repo's
+                         Helm/values-prod.yaml on origin/production instead
                          "n/a" means the repo is not deployed to that env
                          "not migrated" means neither place has the tag
                          "?"   means the file could not be read
@@ -206,9 +203,8 @@ Columns:
                          "no develop" means the repo has no promotion source
                          "not cloned" means the drift cannot be computed here
 
-Staging's tag comes from Vast-deployments over the API, so it is reported even
-for a repo you have not cloned. An unmigrated production tag comes from that
-repo's checkout, so it needs one — as does DRIFT.
+Both tags come from Vast-deployments over the API, so they are reported even
+for a repo you have not cloned. DRIFT, and the Helm fallback, need a checkout.
 `)
         .action(executeStatus);
 }
