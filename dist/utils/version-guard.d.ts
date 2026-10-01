@@ -35,7 +35,7 @@ export type GuardResult = {
     ok: false;
     detail: string;
 };
-export type ReadProduction = (repo: RepoConfig, dir: string | null) => Promise<string>;
+export type ReadProduction = (repo: RepoConfig) => Promise<string>;
 /** Production's tag from Vast-deployments, the same reader `vast status` uses. */
 export declare const readProductionTag: ReadProduction;
 /**

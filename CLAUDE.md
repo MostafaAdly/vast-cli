@@ -101,16 +101,12 @@ in `Vast-deployments`:
 - The tag is `deployment.containers[0].image.tag` — the first `tag:` line in the
   file. `extractTag` in `src/utils/helm.ts` still parses it; the reader is
   `src/utils/deployments.ts`.
-- **One pre-migration fallback, and it is temporary.** `readTagAtRef` and
-  `PRE_MIGRATION_PRODUCTION_HELM` in `src/utils/helm.ts`, and the `productionTag`
-  fallback in `src/utils/deployments.ts`, read production's tag out of the app
-  repo's `Helm/values-prod.yaml` on `origin/production` **only** when
-  Vast-deployments has no production file or no tag in it. Never ask the Helm
-  file first: it stopped moving when the pipelines took over (on 2026-10-01
-  VastMenuPwaV2's said 2.0.11 while Vast-deployments said 2.0.19), and until
-  2.7.0 the CLI read it first and also looked for production under the repo
-  name, so every production read was stale. Delete all three when
-  `PRODUCTION_PIPELINE_READY` flips.
+- **Nothing reads an app repo's `Helm/` directory.** Its values stopped moving
+  when the pipelines took over (on 2026-10-01 VastMenuPwaV2's said 2.0.11 while
+  Vast-deployments said 2.0.19). The last reader, a production fallback to
+  `Helm/values-prod.yaml` on `origin/production`, was removed in 2.8.1 at
+  Mostafa's request: a missing production file now reads `not migrated` in
+  `status` and is an error everywhere else. Do not bring a Helm reader back.
 - The folder basename is also the ArgoCD application name, and it does **not**
   match the repo name: `VastPayPwa → vastpay-pwa`, `VastMenuPwa → pwa`,
   `VastMenuPwaV2 → pwav2`, `VastPay-DashBoard → vastpay-dasaboard` (their typo,
