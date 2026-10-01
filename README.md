@@ -373,6 +373,20 @@ are per-repo and are refused with a sweep flag (`--all`, `--frontend`, `--backen
 with more than one repo — one name repeated in another casing is still a single repo, so
 it is still accepted.
 
+### A ping when it finishes
+
+A release or deploy can take up to 15 minutes, most of it waiting on the build and
+ArgoCD, so you do not have to watch it. When a real run that took longer than a minute
+ends, the CLI rings the terminal bell and shows a desktop notification — `VastPayPwa
+1.5.7-rc14 is live`, `tag committed, rollout not confirmed` when ArgoCD could not
+confirm it, or `1 live, 1 failed: VastMenuPwa` for a sweep. Dry runs and quick runs
+stay quiet.
+
+It uses `osascript` on macOS and `notify-send` on Linux when that is installed, and
+does nothing anywhere else; no notification ever fails a deploy. On macOS the first
+one may ask for notification permission (System Settings → Notifications → Script
+Editor). Set `VAST_NOTIFY=0` to turn it off.
+
 ### Production
 
 **Production deploys are blocked in this version.** Production has not moved to the GitOps
@@ -610,6 +624,9 @@ never prints either value. `vast argocd logout` deletes the file, clearing both.
 call off for that environment; `vast argocd enable` removes it. For CI or
 a throwaway shell, set `VAST_ARGOCD_TOKEN_STAGING` and `VAST_ARGOCD_ALB_COOKIE_STAGING`
 and they win over the file, with nothing written to disk.
+
+`VAST_NOTIFY=0` turns off the desktop notification and bell at the end of a release or
+deploy (see [A ping when it finishes](#a-ping-when-it-finishes)).
 
 `slack.json` is written by `vast slack setup` and holds the bot token, the channel name
 and the workspace it was verified against. `vast slack status` reports the workspace and
