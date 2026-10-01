@@ -95,14 +95,12 @@ vast upgrade --check
   yet. Do not clone it for them without asking — you do not know where they want it.
 
 **Reading `vast status`.** `vast status <repo>` (or `--all`) is read-only and is the
-right way to answer "what is live?". STAGING is the tag in `Vast-deployments`, the image
-ArgoCD is running. PRODUCTION is not migrated yet, so the value comes from the app repo's
-`Helm/values-prod.yaml` on `origin/production` and is marked with `*` plus a footnote;
-the seed files in `Vast-deployments` are stale copies and are only used for a repo that
-is not cloned. Relay that footnote when you quote a production version: it is the
-pre-migration source, not GitOps. `not migrated`
-means neither could be read, `n/a` that the repo is not deployed there, `?` that the
-lookup failed. If **every** repo's columns read `not migrated` or `?`, the user's GitHub
+right way to answer "what is live?". STAGING and PRODUCTION are both the tag in
+`Vast-deployments`, the image ArgoCD is running. A production value marked with `*` plus
+a footnote came from the app repo's `Helm/values-prod.yaml` on `origin/production`
+instead, because `Vast-deployments` has no production file for that repo — relay the
+footnote when you quote it. `not migrated` means neither could be read, `n/a` that the
+repo is not deployed there, `?` that the lookup failed. If **every** repo's columns read `not migrated` or `?`, the user's GitHub
 account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
 rather than treating it as nine separate failures.
 

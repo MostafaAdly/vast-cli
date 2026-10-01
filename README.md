@@ -217,16 +217,12 @@ vast status --all         # every repo, one screen
 vast status VastPayPwa    # one repo
 ```
 
-**STAGING** is the tag in that repo's `Vast-deployments` values file — the image
-ArgoCD is actually running. **PRODUCTION** is not migrated yet, so what is running
-there is still recorded in the app repo's own `Helm/values-prod.yaml` on
-`origin/production`. That is what the column shows, marked with `*` and a footnote
-under the table. The seed files that already exist in `Vast-deployments` for
-production are copies taken at cutover and drift as soon as someone deploys by hand
-(one already had), so they are only used for a repo you have not cloned. When
-neither is readable the cell reads `not migrated`. `n/a` means the repo is not
-deployed to that environment at all, and `?` means the lookup itself failed. Once
-production migrates, the column reads `Vast-deployments` like staging does.
+**STAGING** and **PRODUCTION** are the tags in that repo's `Vast-deployments` values
+files — the images ArgoCD is actually running. Only a repo with no production file
+there falls back to the app repo's own `Helm/values-prod.yaml` on `origin/production`,
+marked with `*` and a footnote under the table. When neither is readable the cell
+reads `not migrated`. `n/a` means the repo is not deployed to that environment at all,
+and `?` means the lookup itself failed.
 
 **DRIFT** is how many commits are waiting on `develop` that `staging` does not
 have. Only DRIFT needs a local checkout — the tags are read over the API, so they
@@ -652,7 +648,7 @@ from the sign-in rule, and the cookie step disappears.
 | `argocd unauthorized` | The stored token expired or was revoked. `vast argocd login` again. **Nothing was built** — the CLI reads the application once before dispatching, so an expired token stops it in front of the build, not after it. Then run the deploy again as you meant to. |
 | `timed out after 15m00s` | The build and the tag commit succeeded; ArgoCD had not reported Synced/Healthy within 15 minutes. Open the app URL in the summary and look there. Do not release a new rc — nothing is wrong with the version. On a **retry of a version that is already live**, this can instead mean the rebuild committed nothing new to `Vast-deployments`, so there was no new sync to wait for; the summary says which of the two it was. |
 | `failed committing the tag — image may already be built` | The workflow built the image but failed writing the tag into `Vast-deployments`. Re-run the deploy with the **same** version; the rebuild is cheap and nothing else has moved. Because that tag may already be running, the retry waits for a **new** ArgoCD sync rather than accepting the rollout that is already there — so it will not report a stale success, and it times out after 15 minutes if the rebuild produces no new commit. |
-| Every `STAGING` and `PRODUCTION` cell reads `not migrated` or `?` | Your GitHub account cannot read `Vast-deployments`. A private repo you cannot see answers 404, which is indistinguishable from a missing file, so every lookup fails the same way. Ask DevOps for access. One repo showing `not migrated` on its own is the ordinary unmigrated case, not this. |
+| Every `STAGING` and `PRODUCTION` cell reads `not migrated` or `?` | Your GitHub account cannot read `Vast-deployments`. A private repo you cannot see answers 404, which is indistinguishable from a missing file, so every lookup fails the same way. Ask DevOps for access. One repo showing `not migrated` on its own is a repo with no file there yet, not this. |
 | `dispatched, but its run could not be identified` | The build was triggered; the CLI could not match it to a run id, so it cannot watch it. Open the repo's Actions page and see whether it is running **before** re-dispatching — re-running blind starts a second build of the same version. |
 | Production deploy refuses: not migrated | Expected. Production has not moved to the GitOps pipeline, so deploys are blocked and `vast production enable` refuses too. `vast promote --to production` still cuts the release PR. |
 | `Slack not configured — run vast slack setup` | You passed `--slack` with no token stored. The PR is unaffected. Run `vast slack setup` once, or set `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` for this shell. |

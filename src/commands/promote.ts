@@ -259,8 +259,8 @@ export async function promote(
       for (const w of warnings) log.warn(w);
 
       let version: string;
-      // Production is not migrated, so the tag may come from the app repo's own
-      // Helm; the line below says which, because the two can disagree.
+      // The tag comes from Vast-deployments, or from the app repo's own Helm when
+      // its production file is missing; the line below says which.
       let versionNote = '';
       if (targetVersion) {
         version = targetVersion;
@@ -279,7 +279,7 @@ export async function promote(
           // version would claim content production did not receive.
           const { tag, source } = await productionTag(repo, dir);
           version = nextPatch(tag);
-          if (source === 'app-repo') versionNote = ' (from app-repo Helm, production not migrated)';
+          if (source === 'app-repo') versionNote = ' (from app-repo Helm — no production file in Vast-deployments)';
         } catch (error) {
           console.log(
             createErrorBox(
@@ -541,9 +541,9 @@ The production DEPLOY that follows is currently blocked: production has not
 moved to the new Vast-deployments + ArgoCD pipeline, so \`vast deploy --to
 production\` refuses and the deploy is done by hand. Versions here are derived
 from Vast-deployments (release = staging's tag without its -rc suffix; hotfix =
-production's own tag plus a patch). Production is not migrated, so its tag is
-usually read from the checkout's Helm/values-prod.yaml on origin/production
-instead — the derived version says so when it is.
+production's own tag plus a patch). A repo with no production file in
+Vast-deployments falls back to the checkout's Helm/values-prod.yaml on
+origin/production, and the derived version says so when it does.
 `,
     )
     .action(executePromote);

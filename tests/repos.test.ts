@@ -116,16 +116,31 @@ test('an unreleasable repo has no argo app', () => {
   assert.equal(argoApp(getRepo('Terraform')!, 'staging'), null);
 });
 
-// Production folders in Vast-deployments are named after the repo, unlike
-// staging's hand-written app names.
-test('production files are keyed by the canonical repo name', () => {
+// Production folders are ArgoCD app names too, hand-written by DevOps on
+// 2026-09-23 — and two differ from staging's: the dashboard is spelled right
+// in production, and the menu PWA v2 is `pwa-v2`, not `pwav2`.
+const PRODUCTION_FOLDERS: Record<string, string> = {
+  VastPayPwaV2: 'vastpay-pwa-v2',
+  'VastPay-DashBoard': 'vastpay-dashboard',
+  VastMenuPwa: 'pwa',
+  VastMenuPwaV2: 'pwa-v2',
+  VastPayPwa: 'vastpay-pwa',
+  'VastMenu-DashBoard': 'vastmenu-dashboard',
+  'vast-menu-payments': 'vastmenu-payments',
+  'VastPay-BackEnd': 'vastpay-backend',
+  'VastMenu-BackEnd': 'vastmenu-backend',
+};
+
+test('production files live under the ArgoCD app folder, not the repo name', () => {
   for (const repo of REPOS.filter(isReleasable)) {
+    const folder = PRODUCTION_FOLDERS[repo.name];
+    assert.ok(folder, `${repo.name} has a known production folder`);
     assert.equal(
       deploymentsFile(repo, 'production'),
-      `deployments/helm/production/${repo.name}/prod.yaml`,
+      `deployments/helm/production/${folder}/prod.yaml`,
       `${repo.name} production file`,
     );
-    assert.equal(argoApp(repo, 'production'), repo.name, `${repo.name} production argo app`);
+    assert.equal(argoApp(repo, 'production'), folder, `${repo.name} production argo app`);
   }
 });
 

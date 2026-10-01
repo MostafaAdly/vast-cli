@@ -82,13 +82,17 @@ const BUILD_DEPLOY = { staging: 'build-deploy.yml', production: 'build-deploy.ym
 const NO_DEPLOY = { staging: null, production: null } as const;
 
 /**
- * Staging folder names are ArgoCD app names hand-written in Vast-deployments,
- * not derived from the repo name — `vastpay-dasaboard` is misspelled upstream
- * and must stay that way here, or the app lookup misses.
+ * Folder names are ArgoCD app names hand-written in Vast-deployments, not
+ * derived from the repo name — `vastpay-dasaboard` is misspelled upstream in
+ * staging and must stay that way here, or the app lookup misses.
+ *
+ * Production's folders (DevOps, 2026-09-23) mostly match staging's, but not
+ * always: the dashboard is spelled right there, and the menu PWA v2 is
+ * `pwa-v2`. So a repo whose production folder differs names it explicitly.
  */
-const deployments = (name: string, stagingFolder: string) => ({
+const deployments = (stagingFolder: string, productionFolder: string = stagingFolder) => ({
   staging: `deployments/helm/staging/${stagingFolder}/stage.yaml`,
-  production: `deployments/helm/production/${name}/prod.yaml`,
+  production: `deployments/helm/production/${productionFolder}/prod.yaml`,
 });
 
 const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' } as const;
@@ -97,14 +101,14 @@ const FRONTEND_PROMOTION = { staging: 'develop', production: 'staging' } as cons
 const fe = (
   name: string,
   displayName: string,
-  stagingFolder: string,
+  folder: string | { staging: string; production: string },
   teams: string[] = ['frontend'],
   releaseTeam: ReleaseTeam | null = 'frontend',
 ): RepoConfig => ({
   name,
   displayName,
   workflow: { ...BUILD_DEPLOY },
-  deployments: deployments(name, stagingFolder),
+  deployments: typeof folder === 'string' ? deployments(folder) : deployments(folder.staging, folder.production),
   promoteFrom: { ...FRONTEND_PROMOTION },
   teams,
   releaseTeam,
@@ -112,9 +116,9 @@ const fe = (
 
 export const REPOS: RepoConfig[] = [
   fe('VastPayPwaV2', 'Vastpay Pwa V2', 'vastpay-pwa-v2'),
-  fe('VastPay-DashBoard', 'Vastpay Dashboard', 'vastpay-dasaboard'),
+  fe('VastPay-DashBoard', 'Vastpay Dashboard', { staging: 'vastpay-dasaboard', production: 'vastpay-dashboard' }),
   fe('VastMenuPwa', 'Vastmenu Pwa', 'pwa'),
-  fe('VastMenuPwaV2', 'Vastmenu Pwa V2', 'pwav2'),
+  fe('VastMenuPwaV2', 'Vastmenu Pwa V2', { staging: 'pwav2', production: 'pwa-v2' }),
   fe('VastPayPwa', 'Vastpay Pwa', 'vastpay-pwa'),
   fe('VastMenu-DashBoard', 'Vastmenu Dashboard', 'vastmenu-dashboard'),
   // Cloned with the frontend but deliberately out of the frontend release
@@ -141,7 +145,7 @@ export const REPOS: RepoConfig[] = [
     name: 'VastPay-BackEnd',
     displayName: 'Vastpay Backend',
     workflow: { ...BUILD_DEPLOY },
-    deployments: deployments('VastPay-BackEnd', 'vastpay-backend'),
+    deployments: deployments('vastpay-backend'),
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
     releaseTeam: 'backend',
@@ -150,7 +154,7 @@ export const REPOS: RepoConfig[] = [
     name: 'VastMenu-BackEnd',
     displayName: 'Vastmenu Backend',
     workflow: { ...BUILD_DEPLOY },
-    deployments: deployments('VastMenu-BackEnd', 'vastmenu-backend'),
+    deployments: deployments('vastmenu-backend'),
     promoteFrom: { staging: null, production: 'staging' },
     teams: ['backend'],
     releaseTeam: 'backend',
