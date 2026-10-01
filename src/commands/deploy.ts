@@ -28,7 +28,7 @@ import {
   type RepoConfig,
 } from '../config/repos.js';
 import { productionRefusal } from '../config/production-lock.js';
-import { argocdAppUrl, argocdHost, isArgocdEnabled, readAlbCookie, readArgocdToken } from '../config/argocd.js';
+import { argocdAppUrl, argocdHost, isArgocdEnabled, readArgocdToken } from '../config/argocd.js';
 import {
   ArgoSsoWallError,
   ArgoUnauthorizedError,
@@ -254,8 +254,6 @@ export interface DeployDeps {
   getApplication: typeof getApplication;
   refreshApplication: typeof refreshApplication;
   readArgocdToken: (env: DeployEnv) => string | null;
-  /** The user-pasted load-balancer cookie that gets past the SSO wall, if any. */
-  readAlbCookie: (env: DeployEnv) => string | null;
   /** `vast argocd disable` turns every ArgoCD call off for that env. */
   argocdEnabled: (env: DeployEnv) => boolean;
   argocdHost: (env: DeployEnv) => string;
@@ -272,7 +270,6 @@ export const DEFAULT_DEPLOY_DEPS: DeployDeps = {
   getApplication,
   refreshApplication,
   readArgocdToken,
-  readAlbCookie,
   argocdEnabled: isArgocdEnabled,
   argocdHost,
   argocdAppUrl,
@@ -329,7 +326,6 @@ export async function deployOne(
   // wait — so an unreachable host can never turn a good build into a failure.
   const argoOn = deps.argocdEnabled(env);
   const token = argoOn ? deps.readArgocdToken(env) : null;
-  const cookie = deps.readAlbCookie(env);
 
   const host = deps.argocdHost(env);
   const appUrl = deps.argocdAppUrl(env, app);
@@ -343,12 +339,12 @@ export async function deployOne(
   // documented retry for a run that failed committing the tag, so this is the
   // common case rather than a corner one.
   let before: ArgoApp | undefined;
-  // A load balancer demanding a browser sign-in in front of the API. Not a
-  // reason to refuse: the build and the tag commit never touch ArgoCD, so this
+  // Something demanding a browser sign-in in front of the API. Not a reason to
+  // refuse: the build and the tag commit never touch ArgoCD, so this
   // costs the confirmation and nothing else — exactly like having no token.
   let ssoWall = false;
   try {
-    if (token) before = await deps.getApplication(host, token, app, undefined, cookie);
+    if (token) before = await deps.getApplication(host, token, app);
   } catch (error) {
     if (error instanceof ArgoSsoWallError) {
       ssoWall = true;
@@ -422,28 +418,22 @@ export async function deployOne(
   // IS committed and ArgoCD will almost certainly pick it up — but "almost
   // certainly" is not "confirmed", and the line says which of the two this is.
   //
-  // The SSO wall lands in the same place for the same reason: whatever is
-  // blocking the API, the tag IS committed, and calling that a failure would be
-  // a lie about a deploy that already shipped.
+  // A sign-in wall in front of the API lands in the same place for the same
+  // reason: whatever is blocking it, the tag IS committed, and calling that a
+  // failure would be a lie about a deploy that already shipped.
   const unconfirmed = (kind: 'token' | 'sso' | 'disabled'): DeployOutcome => {
     const why =
       kind === 'sso'
-        ? 'tag committed — rollout not confirmed (ArgoCD API behind SSO)'
+        ? 'tag committed — rollout not confirmed (ArgoCD API behind a sign-in)'
         : kind === 'disabled'
           ? 'tag committed — rollout not confirmed (ArgoCD disabled)'
           : 'tag committed — rollout not confirmed (no ArgoCD token)';
     say(`  ${label}  run ${runId}  succeeded  ${ranFor}  ${why}`, 'success');
-    // A wall hit WITH a cookie means the cookie aged out (they last about a
-    // week); without one, the user has never bridged it. Different next steps.
-    const ssoDetail = cookie
-      ? `${version} tag committed — rollout not confirmed (ArgoCD session cookie expired — ` +
-        'run `vast argocd login` again)'
-      : `${version} tag committed — rollout not confirmed (ArgoCD's API is behind a ` +
-        'browser sign-in; run `vast argocd login` to paste the session cookie, or ask DevOps to exempt /api/*)';
     return outcome(
       'released',
       kind === 'sso'
-        ? ssoDetail
+        ? `${version} tag committed — rollout not confirmed (ArgoCD's API answered with a ` +
+          'browser sign-in page; ask DevOps to keep /api/* outside any sign-in rule)'
         : kind === 'disabled'
           ? `${version} tag committed — rollout not confirmed (ArgoCD disabled; ` +
             '`vast argocd enable` to confirm rollouts again)'
@@ -460,7 +450,7 @@ export async function deployOne(
   // fails just means the wait below runs on ArgoCD's own timer, and an
   // unauthorized answer will surface from the wait with the login hint.
   try {
-    await deps.refreshApplication(host, token, app, undefined, cookie);
+    await deps.refreshApplication(host, token, app);
   } catch {
     // Deliberately ignored; see above.
   }
@@ -477,7 +467,7 @@ export async function deployOne(
     app,
     version,
     {
-      getApp: () => deps.getApplication(host, token, app, undefined, cookie),
+      getApp: () => deps.getApplication(host, token, app),
       sleep,
       now: Date.now,
       print: (line) => say(line, 'muted'),

@@ -15,14 +15,16 @@ export declare class ArgoUnauthorizedError extends Error {
     constructor(message: string);
 }
 /**
- * The API is not answering as an API: a load balancer is demanding a browser
- * sign-in in front of it.
+ * The API is not answering as an API: something in front of it is demanding a
+ * browser sign-in.
  *
- * Staging's ArgoCD sits behind an AWS ALB `authenticate-oidc` rule, which
- * intercepts EVERY path — `/api/v1/session` included — and answers 302 to
- * Google. No token can get past that, and no amount of retrying will change it,
- * so it is its own error: the CLI reports it once, says who can fix it, and
- * carries on with the work that never needed ArgoCD.
+ * From 2026-09-21 to 2026-10-01 staging's ArgoCD sat behind an AWS ALB
+ * `authenticate-oidc` rule that answered every path — `/api/*` included — with
+ * a 302 to Google. That rule is gone and the CLI no longer carries a way past
+ * it, but if one comes back no token can get through it and no amount of
+ * retrying will change that. So it stays its own error: the CLI reports it
+ * once, says who can fix it, and carries on with the work that never needed
+ * ArgoCD rather than calling a good build a failure.
  */
 export declare class ArgoSsoWallError extends Error {
     constructor(message: string);
@@ -37,26 +39,24 @@ export interface ArgoApp {
     revision: string;
 }
 type FetchFn = typeof fetch;
-/** A user-pasted `AWSELBAuthSessionCookie-*` value; null when the wall is not in the way. */
-type AlbCookie = string | null | undefined;
 /**
  * Exchange a username and password for a session token.
  *
  * The password is only ever a request body field: it is never logged, never
  * echoed back, and never included in a thrown message.
  */
-export declare function login(host: string, username: string, password: string, fetchFn?: FetchFn, cookie?: AlbCookie): Promise<string>;
+export declare function login(host: string, username: string, password: string, fetchFn?: FetchFn): Promise<string>;
 /**
  * Whether a token is still good.
  *
  * A rejected token is an answer, not a failure — `vast argocd status` wants to
  * print "expired", not blow up — so 401/403 returns `{ loggedIn: false }`.
  */
-export declare function userinfo(host: string, token: string, fetchFn?: FetchFn, cookie?: AlbCookie): Promise<{
+export declare function userinfo(host: string, token: string, fetchFn?: FetchFn): Promise<{
     loggedIn: boolean;
     username?: string;
 }>;
-export declare function getApplication(host: string, token: string, app: string, fetchFn?: FetchFn, cookie?: AlbCookie): Promise<ArgoApp>;
+export declare function getApplication(host: string, token: string, app: string, fetchFn?: FetchFn): Promise<ArgoApp>;
 /**
  * Ask ArgoCD to re-read git for this app right now.
  *
@@ -66,7 +66,7 @@ export declare function getApplication(host: string, token: string, app: string,
  * response body is the same application document and is deliberately ignored:
  * the waiter reads the state on its own schedule.
  */
-export declare function refreshApplication(host: string, token: string, app: string, fetchFn?: FetchFn, cookie?: AlbCookie): Promise<void>;
+export declare function refreshApplication(host: string, token: string, app: string, fetchFn?: FetchFn): Promise<void>;
 export interface RolloutDeps {
     getApp: () => Promise<ArgoApp>;
     sleep: (ms: number) => Promise<void>;

@@ -22,14 +22,16 @@ export class ArgoUnauthorizedError extends Error {
 }
 
 /**
- * The API is not answering as an API: a load balancer is demanding a browser
- * sign-in in front of it.
+ * The API is not answering as an API: something in front of it is demanding a
+ * browser sign-in.
  *
- * Staging's ArgoCD sits behind an AWS ALB `authenticate-oidc` rule, which
- * intercepts EVERY path — `/api/v1/session` included — and answers 302 to
- * Google. No token can get past that, and no amount of retrying will change it,
- * so it is its own error: the CLI reports it once, says who can fix it, and
- * carries on with the work that never needed ArgoCD.
+ * From 2026-09-21 to 2026-10-01 staging's ArgoCD sat behind an AWS ALB
+ * `authenticate-oidc` rule that answered every path — `/api/*` included — with
+ * a 302 to Google. That rule is gone and the CLI no longer carries a way past
+ * it, but if one comes back no token can get through it and no amount of
+ * retrying will change that. So it stays its own error: the CLI reports it
+ * once, says who can fix it, and carries on with the work that never needed
+ * ArgoCD rather than calling a good build a failure.
  */
 export class ArgoSsoWallError extends Error {
   constructor(message: string) {
@@ -55,19 +57,10 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function ssoWallMessage(host: string): string {
   return (
-    `ArgoCD's API at ${host} is behind a browser sign-in (SSO) at the load balancer, ` +
-    'so the CLI cannot reach it. Sign in to ArgoCD in your browser once, then run ' +
-    '`vast argocd login` and paste the load-balancer session cookie when asked. ' +
-    'The permanent fix is for DevOps to exempt /api/* from that rule.'
+    `ArgoCD's API at ${host} answered with a browser sign-in page instead of the API, ` +
+    'so the CLI cannot reach it. Ask DevOps to keep /api/* outside any sign-in rule ' +
+    '(ArgoCD\'s own login still protects it).'
   );
-}
-
-/** A user-pasted `AWSELBAuthSessionCookie-*` value; null when the wall is not in the way. */
-type AlbCookie = string | null | undefined;
-
-/** The auth headers a call needs, with the ALB cookie riding along when there is one. */
-function withCookie(headers: Record<string, string>, cookie: AlbCookie): Record<string, string> {
-  return cookie ? { ...headers, cookie } : headers;
 }
 
 /**
@@ -118,14 +111,13 @@ export async function login(
   username: string,
   password: string,
   fetchFn: FetchFn = fetch,
-  cookie: AlbCookie = null,
 ): Promise<string> {
   const { res, body } = await argoRequest(
     host,
     '/api/v1/session',
     {
       method: 'POST',
-      headers: withCookie({ 'content-type': 'application/json' }, cookie),
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username, password }),
     },
     fetchFn,
@@ -147,12 +139,11 @@ export async function userinfo(
   host: string,
   token: string,
   fetchFn: FetchFn = fetch,
-  cookie: AlbCookie = null,
 ): Promise<{ loggedIn: boolean; username?: string }> {
   const { res, body } = await argoRequest(
     host,
     '/api/v1/session/userinfo',
-    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
+    { headers: { authorization: `Bearer ${token}` } },
     fetchFn,
   );
   if (res.status === 401 || res.status === 403) return { loggedIn: false };
@@ -169,12 +160,11 @@ export async function getApplication(
   token: string,
   app: string,
   fetchFn: FetchFn = fetch,
-  cookie: AlbCookie = null,
 ): Promise<ArgoApp> {
   const { res, body } = await argoRequest(
     host,
     `/api/v1/applications/${encodeURIComponent(app)}`,
-    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
+    { headers: { authorization: `Bearer ${token}` } },
     fetchFn,
   );
 
@@ -215,12 +205,11 @@ export async function refreshApplication(
   token: string,
   app: string,
   fetchFn: FetchFn = fetch,
-  cookie: AlbCookie = null,
 ): Promise<void> {
   const { res, body } = await argoRequest(
     host,
     `/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`,
-    { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) },
+    { headers: { authorization: `Bearer ${token}` } },
     fetchFn,
   );
   if (res.status === 401 || res.status === 403) {
@@ -320,8 +309,8 @@ export async function waitForRollout(
       // A bad token will never come good by waiting, and every other repo in
       // the release is about to hit the same wall. Stop now and say what fixes
       // it rather than burning fifteen minutes per repo.
-      // Nothing gets through an ALB auth rule, so twelve retries would only
-      // turn a working deploy into a false failure a minute later. Say it once.
+      // Nothing gets through a sign-in wall, so twelve retries would only turn
+      // a working deploy into a false failure a minute later. Say it once.
       if (error instanceof ArgoSsoWallError) {
         return {
           ok: false,

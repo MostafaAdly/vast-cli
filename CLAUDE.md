@@ -136,22 +136,19 @@ in `Vast-deployments`:
   refused: it dispatches, skips the ArgoCD wait, and reports `tag committed —
   rollout not confirmed`. An *expired* token still stops it in front of the build,
   because the pre-dispatch read fails.
-- **Since 2026-09-21 the staging ArgoCD host sits behind an ALB Google sign-in
-  (`authenticate-oidc`, vastgroupsa.com) that also covers `/api/*`**, so without a
-  way past the wall the CLI cannot reach ArgoCD's API at all. The CLI detects it
-  (`ArgoSsoWallError`) and degrades exactly like the no-token case: dispatch, tag
-  committed, wait skipped, `tag committed — rollout not confirmed (ArgoCD API
-  behind SSO)`.
-- **The way past the wall is a cookie the user pastes, and nothing more.**
-  `vast argocd login` asks for the ALB session cookie the user copies out of a
-  signed-in browser; only `AWSELBAuthSessionCookie*` pairs are kept from what they
-  paste, it is stored 0600 beside the token, sent on every ArgoCD request, and
-  overridable with `VAST_ARGOCD_ALB_COOKIE_<ENV>`. It never goes through argv and
-  is never logged. **Never read a browser's cookie jar and never automate the
-  Google flow.** The cookie lasts about a week; when it expires the CLI hits the
-  wall again and says `ArgoCD session cookie expired — run vast argocd login
-  again`. The permanent fix is still DevOps exempting `/api/*` from the sign-in
-  rule (ArgoCD's own login still protects it).
+- **From 2026-09-21 to 2026-10-01 the staging ArgoCD host sat behind an ALB
+  Google sign-in that also covered `/api/*`.** It is gone: `vast argocd login` is
+  username and password only. 2.1–2.7 bridged it with a pasted
+  `AWSELBAuthSessionCookie`; 2.8.0 removed that bridge entirely (no prompt, no
+  stored cookie, no `VAST_ARGOCD_ALB_COOKIE_<ENV>`), and a fresh login rewrites
+  old token files without the cookie. **Do not bring a cookie bridge back, never
+  read a browser's cookie jar, and never automate a Google flow.** What stays is
+  the detector: `argoRequest` treats a redirect or an HTML answer as
+  `ArgoSsoWallError`, and `deployOne` degrades exactly like the no-token case —
+  dispatch, tag committed, wait skipped, `tag committed — rollout not confirmed
+  (ArgoCD API behind a sign-in)` — so a returning wall can never turn a good
+  build into a false failure. The fix for a returning wall is DevOps', keeping
+  `/api/*` outside the rule.
 - `vast argocd disable [--to env]` writes `~/.vast-cli/argocd/<env>.disabled`, and
   `deployOne` then makes no ArgoCD call at all (no snapshot, refresh or wait) and
   reports `rollout not confirmed (ArgoCD disabled)`. It is a separate marker, not a

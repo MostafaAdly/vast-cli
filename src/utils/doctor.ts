@@ -2,8 +2,8 @@
  * `vast doctor`: will a release work from this machine right now?
  *
  * Almost every past break came from something outside the CLI changing
- * quietly — the workflow rename on 2026-09-24, the ArgoCD sign-in wall, a
- * cookie that ages out in a week — and was found mid-deploy. These checks find
+ * quietly — the workflow rename on 2026-09-24, the ArgoCD sign-in wall — and
+ * was found mid-deploy. These checks find
  * them first. Read-only: nothing here writes, dispatches or posts.
  *
  * Statuses mean what they mean for a release:
@@ -33,9 +33,7 @@ export interface Check {
 export interface ArgoState {
   enabled: boolean;
   hasToken: boolean;
-  cookieSavedAt: string | null;
-  cookieFromEnv: boolean;
-  /** Asks ArgoCD who the token belongs to; throws ArgoSsoWallError behind the sign-in. */
+  /** Asks ArgoCD who the token belongs to; throws ArgoSsoWallError behind a sign-in wall. */
   session: () => Promise<{ loggedIn: boolean; username?: string }>;
 }
 
@@ -62,11 +60,6 @@ export interface DoctorDeps {
   };
 }
 
-const DAY = 24 * 60 * 60 * 1000;
-/** The ALB session cookie lasts about a week. */
-const COOKIE_WARN_DAYS = 6;
-const COOKIE_LIFE_DAYS = 7;
-
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
@@ -79,26 +72,6 @@ export function workflowAcceptsVersion(yaml: string): boolean {
   const dispatch = yaml.indexOf('workflow_dispatch:');
   if (dispatch === -1) return false;
   return /\n\s+inputs:\s*\n(?:\s+.*\n)*?\s+version:\s*(?:\n|$)/.test(yaml.slice(dispatch));
-}
-
-export function cookieCheck(
-  savedAt: string | null,
-  fromEnv: boolean,
-  now: number,
-): { status: CheckStatus; detail: string } {
-  if (fromEnv) return { status: 'ok', detail: 'cookie from VAST_ARGOCD_ALB_COOKIE_STAGING' };
-  if (!savedAt) return { status: 'warn', detail: 'cookie: none — needed while ArgoCD sits behind the browser sign-in' };
-  const days = (now - Date.parse(savedAt)) / DAY;
-  if (Number.isNaN(days)) return { status: 'warn', detail: 'cookie saved at an unknown time' };
-  const whole = Math.floor(days);
-  const age = whole === 0 ? 'saved today' : `${whole} day${whole === 1 ? '' : 's'} old`;
-  if (days >= COOKIE_LIFE_DAYS) {
-    return { status: 'warn', detail: `cookie ${age} — probably expired; run \`vast argocd login\`` };
-  }
-  if (days >= COOKIE_WARN_DAYS) {
-    return { status: 'warn', detail: `cookie ${age} — expires within a day; run \`vast argocd login\`` };
-  }
-  return { status: 'ok', detail: `cookie ${age}` };
 }
 
 export function tally(checks: Check[]): { fail: number; warn: number } {
@@ -156,28 +129,23 @@ async function argocdChecks(deps: DoctorDeps): Promise<Check[]> {
   if (!argo.enabled) {
     return [{ group, label, status: 'warn', detail: 'confirmation disabled — rollouts go unconfirmed; `vast argocd enable` to turn it on' }];
   }
-
-  const cookie = cookieCheck(argo.cookieSavedAt, argo.cookieFromEnv, deps.now);
-  const checks: Check[] = [{ group, label: 'ArgoCD cookie', ...cookie }];
   if (!argo.hasToken) {
-    checks.unshift({ group, label, status: 'warn', detail: 'no token — rollouts go unconfirmed; run `vast argocd login`' });
-    return checks;
+    return [{ group, label, status: 'warn', detail: 'no token — rollouts go unconfirmed; run `vast argocd login`' }];
   }
   try {
     const who = await argo.session();
-    checks.unshift(
+    return [
       who.loggedIn
         ? { group, label, status: 'ok', detail: `token valid${who.username ? ` — ${who.username}` : ''}` }
         : { group, label, status: 'fail', detail: 'token expired — deploys stop before the build; run `vast argocd login`' },
-    );
+    ];
   } catch (error) {
-    checks.unshift(
+    return [
       error instanceof ArgoSsoWallError
-        ? { group, label, status: 'warn', detail: 'API behind the browser sign-in — cookie missing or expired; run `vast argocd login`' }
+        ? { group, label, status: 'warn', detail: 'API answered with a browser sign-in page — rollouts go unconfirmed; ask DevOps to keep /api/* outside any sign-in rule' }
         : { group, label, status: 'warn', detail: `could not reach ArgoCD — ${message(error)}` },
-    );
+    ];
   }
-  return checks;
 }
 
 /** Each repo's problems, or one ok line saying what was checked. */

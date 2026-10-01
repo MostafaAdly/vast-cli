@@ -179,7 +179,6 @@ function deps(over: Partial<DeployDeps> = {}): { deps: DeployDeps; calls: Calls 
       calls.refreshed.push(`${app}@${calls.rollouts.length}`);
     },
     readArgocdToken: () => 'a-token',
-    readAlbCookie: () => null,
     argocdEnabled: () => true,
     argocdHost: () => 'https://argocd-stg.example.com',
     argocdAppUrl: (_env, app) => `https://argocd-stg.example.com/applications/${app}`,
@@ -468,14 +467,15 @@ test('without a token there is nothing to refresh with', async () => {
   assert.deepEqual(calls.refreshed, []);
 });
 
-// --- the SSO wall ----------------------------------------------------------
+// --- a sign-in wall in front of the API ------------------------------------
 //
-// The load balancer in front of staging's ArgoCD started demanding a browser
-// sign-in on every path, API included. The CLI cannot get through it — but the
-// build and the tag commit never needed ArgoCD at all, so losing the API costs
-// exactly the confirmation and nothing else. Reporting FAILED here was a lie
-// about a deploy that had already shipped.
-test('an SSO wall found before dispatch still builds, and says the rollout is unconfirmed', async () => {
+// From 2026-09-21 to 2026-10-01 a load balancer in front of staging's ArgoCD
+// demanded a browser sign-in on every path, API included. It is gone, and the
+// cookie that got past it is gone with it — but if a wall comes back, the build
+// and the tag commit still never need ArgoCD, so losing the API must cost the
+// confirmation and nothing else. Reporting FAILED would be a lie about a deploy
+// that already shipped.
+test('a sign-in wall found before dispatch still builds, and says the rollout is unconfirmed', async () => {
   const { slot, lines } = recordingSlot();
   const d = deps({
     getApplication: async () => {
@@ -493,19 +493,20 @@ test('an SSO wall found before dispatch still builds, and says the rollout is un
   assert.deepEqual(d.calls.rollouts, [], 'there is nothing to wait on through the wall');
   assert.deepEqual(d.calls.refreshed, [], 'and nothing to refresh through it either');
   assert.match(outcome.detail, /1\.5\.7-rc1 tag committed — rollout not confirmed/);
-  assert.match(outcome.detail, /browser sign-in/);
-  assert.match(outcome.detail, /exempt \/api\/\*/);
+  assert.match(outcome.detail, /browser sign-in page/);
+  assert.match(outcome.detail, /ask DevOps to keep \/api\/\* outside any sign-in rule/);
+  assert.doesNotMatch(outcome.detail, /cookie|vast argocd login/, 'there is no cookie to paste any more');
   assert.ok(!/live on/.test(outcome.detail), 'nothing may claim the tag is live');
   assert.equal(
     lines[lines.length - 1],
-    '  VastPayPwa  run 77  succeeded  0s  tag committed — rollout not confirmed (ArgoCD API behind SSO)',
+    '  VastPayPwa  run 77  succeeded  0s  tag committed — rollout not confirmed (ArgoCD API behind a sign-in)',
   );
 });
 
 // The wall can also appear only after the build — the token was read fine
 // before dispatch and the rule was added, or the pre-read simply hit a
 // different node. Same truth, same outcome.
-test('an SSO wall found during the rollout wait is unconfirmed, not failed', async () => {
+test('a sign-in wall found during the rollout wait is unconfirmed, not failed', async () => {
   const { slot, lines } = recordingSlot();
   const d = deps({
     waitForRollout: async (_label, app, tag): Promise<RolloutResult> => {
@@ -518,61 +519,9 @@ test('an SSO wall found during the rollout wait is unconfirmed, not failed', asy
   assert.equal(outcome.status, 'released');
   assert.deepEqual(d.calls.rollouts, ['vastpay-pwa:1.5.7-rc1'], 'the wait did start');
   assert.match(outcome.detail, /1\.5\.7-rc1 tag committed — rollout not confirmed/);
-  assert.match(outcome.detail, /exempt \/api\/\*/);
+  assert.match(outcome.detail, /outside any sign-in rule/);
   assert.ok(!/live on/.test(outcome.detail));
-  assert.match(lines[lines.length - 1], /tag committed — rollout not confirmed \(ArgoCD API behind SSO\)/);
-});
-
-// --- the ALB session cookie reaches every ArgoCD read a deploy makes ---
-test('the stored ALB cookie is passed to the snapshot, the refresh and the wait', async () => {
-  const { slot } = recordingSlot();
-  const cookies: Array<string | null | undefined> = [];
-  const { deps: d } = deps({
-    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=part0',
-    getApplication: async (_h, _t, _a, _f, cookie) => {
-      cookies.push(cookie);
-      return STALE;
-    },
-    refreshApplication: async (_h, _t, _a, _f, cookie) => {
-      cookies.push(cookie);
-    },
-  });
-  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
-  assert.equal(outcome.status, 'released');
-  // snapshot + refresh; the wait is faked here, its closure is exercised below.
-  assert.deepEqual(cookies, ['AWSELBAuthSessionCookie-0=part0', 'AWSELBAuthSessionCookie-0=part0']);
-});
-
-test('the rollout wait reads the app with the cookie too', async () => {
-  const { slot } = recordingSlot();
-  const cookies: Array<string | null | undefined> = [];
-  const { deps: d } = deps({
-    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=part0',
-    getApplication: async (_h, _t, _a, _f, cookie) => {
-      cookies.push(cookie);
-      return HEALTHY;
-    },
-    waitForRollout: async (_label, _app, _tag, rdeps): Promise<RolloutResult> => {
-      const app = await rdeps.getApp();
-      return { ok: true, elapsedMs: 1000, app };
-    },
-  });
-  await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
-  assert.ok(cookies.length >= 2 && cookies.every((c) => c === 'AWSELBAuthSessionCookie-0=part0'));
-});
-
-test('hitting the wall with a stored cookie says the cookie expired', async () => {
-  const { slot } = recordingSlot();
-  const { deps: d } = deps({
-    readAlbCookie: () => 'AWSELBAuthSessionCookie-0=old',
-    getApplication: async () => {
-      throw new ArgoSsoWallError('wall');
-    },
-  });
-  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, slot, undefined, d);
-  assert.equal(outcome.status, 'released');
-  assert.match(outcome.detail, /session cookie expired/);
-  assert.match(outcome.detail, /vast argocd login/);
+  assert.match(lines[lines.length - 1], /tag committed — rollout not confirmed \(ArgoCD API behind a sign-in\)/);
 });
 
 // --- `vast argocd disable`: deploy runs, ArgoCD is never touched ---

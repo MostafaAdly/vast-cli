@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   workflowAcceptsVersion,
-  cookieCheck,
   runDoctor,
   tally,
   type Check,
@@ -11,7 +10,6 @@ import {
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import { ArgoSsoWallError } from '../src/utils/argocd.js';
 
-const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-10-01T12:00:00Z');
 
 // The real header of VastPayPwa's build-deploy.yml on 2026-10-01.
@@ -39,23 +37,6 @@ test('a workflow without a version input, or without workflow_dispatch, is not',
   assert.equal(workflowAcceptsVersion('on:\n  push:\n    branches: [staging]\n'), false);
 });
 
-// --- the session cookie's age ---
-
-test('cookie age: fresh is fine, day 6 warns, a week is probably expired', () => {
-  assert.equal(cookieCheck(new Date(NOW - 2 * DAY).toISOString(), false, NOW).status, 'ok');
-  const soon = cookieCheck(new Date(NOW - 6.2 * DAY).toISOString(), false, NOW);
-  assert.equal(soon.status, 'warn');
-  assert.match(soon.detail, /expires within a day/);
-  const old = cookieCheck(new Date(NOW - 8 * DAY).toISOString(), false, NOW);
-  assert.equal(old.status, 'warn');
-  assert.match(old.detail, /probably expired/);
-});
-
-test('cookie: none stored, or from the env var', () => {
-  assert.match(cookieCheck(null, false, NOW).detail, /none/);
-  assert.equal(cookieCheck(null, true, NOW).status, 'ok');
-});
-
 // --- the whole run, against fakes ---
 
 const REPOS = ['VastPayPwa', 'VastMenu-DashBoard'].map((n) => getRepo(n) as RepoConfig);
@@ -76,8 +57,6 @@ function deps(over: Partial<DoctorDeps> = {}): DoctorDeps {
     argocd: () => ({
       enabled: true,
       hasToken: true,
-      cookieSavedAt: new Date(NOW - DAY).toISOString(),
-      cookieFromEnv: false,
       session: async () => ({ loggedIn: true, username: 'admin' }),
     }),
     slack: { token: 'xoxb-test', channel: 'C123', authTest: async () => undefined, channelName: async () => '#releases' },
@@ -127,8 +106,6 @@ test('ArgoCD: expired token fails, no token warns, SSO wall warns', async () => 
   const argo = (session: () => Promise<{ loggedIn: boolean; username?: string }>, hasToken = true) => () => ({
     enabled: true,
     hasToken,
-    cookieSavedAt: new Date(NOW - DAY).toISOString(),
-    cookieFromEnv: false,
     session,
   });
   const expired = problems(await runDoctor(deps({ argocd: argo(async () => ({ loggedIn: false })) })));
@@ -146,7 +123,8 @@ test('ArgoCD: expired token fails, no token warns, SSO wall warns', async () => 
       }),
     ),
   );
-  assert.ok(wall.some((x) => /^warn ArgoCD staging: .*sign-in/.test(x)), wall.join('\n'));
+  assert.ok(wall.some((x) => /^warn ArgoCD staging: .*sign-in page.*DevOps/.test(x)), wall.join('\n'));
+  assert.ok(!wall.some((x) => /cookie/i.test(x)), 'there is no cookie to suggest any more');
 });
 
 test('gh not authenticated: one failure, and no API checks that would all fail the same way', async () => {
