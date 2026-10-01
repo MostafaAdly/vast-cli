@@ -295,6 +295,29 @@ Zero-padded series (`1.6.9-rc03`) keep their padding. A tag with an ad-hoc suffi
 (`1.1.3-rc4-health`) is ambiguous to increment, so it is refused rather than guessed —
 pass `--target-version` there.
 
+**Every staging version is checked against production first**, in `release` and in
+`deploy --to staging`. Hotfixes advance production's own patch, so a staging series
+falls behind it, and a candidate whose `X.Y.Z` is not above production's would make
+that repo's next release take production backwards (`release/2.1.12` on top of
+`2.1.36`). That repo is refused before anything is promoted or built:
+
+```text
+✗ VastMenu-DashBoard  2.1.12-rc31  2.1.12-rc31 is not above production 2.1.36 — its release
+                                   would take production backwards. Rerun with --fix-version
+                                   (→ 2.1.37-rc1) or --target-version
+```
+
+```bash
+vast release VastMenu-DashBoard --fix-version   # 2.1.12-rc31 → 2.1.37-rc1, and says so
+vast release --frontend --fix-version           # corrects only the repos that need it
+```
+
+`--fix-version` uses the first version past production (`<production patch + 1>-rc1`),
+prints `auto-corrected <old> → <new> (production is <tag>)`, and repeats it on the
+summary line. An explicit `--target-version` is only warned about, never refused or
+rewritten. If production's tag cannot be read, the version goes through unchecked
+with a note — the guard never blocks a release on missing data.
+
 ### Several repos at once
 
 ```bash
@@ -345,7 +368,7 @@ minute, report that repo as failed. The ArgoCD wait behaves the same way.
 
 Names resolve in any casing, in the order typed, and duplicates collapse. An unknown
 name anywhere refuses the whole command before anything runs. `--bump`,
-`--skip-promote` and `--dry-run` apply to every repo; `--target-version` and `--dir`
+`--fix-version`, `--skip-promote` and `--dry-run` apply to every repo; `--target-version` and `--dir`
 are per-repo and are refused with a sweep flag (`--all`, `--frontend`, `--backend`) or
 with more than one repo — one name repeated in another casing is still a single repo, so
 it is still accepted.
@@ -640,6 +663,7 @@ from the sign-in rule, and the cookie step disappears.
 | `not cloned` for a repo you *do* have | It moved. `vast init --rescan`, or `vast init --root <new path>`. |
 | `promote` refuses: uncommitted changes | Commit or stash first. It will not merge over a dirty tree. |
 | `promote` refuses: conflicts | Real conflict. Nothing was changed. Resolve it, or use `/release` to have Claude explain both sides. |
+| `<version> is not above production <tag>` | That repo's staging series has fallen behind production (hotfixes advance production on their own), so its next release would take production backwards. Nothing was promoted or built. Rerun with `--fix-version` to take the first version past production, or pass `--target-version`. See [Versions are derived, not typed](#versions-are-derived-not-typed). |
 | `Unparseable version tag` | The repo ships a tag like `1.1.3-rc4-health`, ambiguous to increment. Pass `--target-version X.Y.Z`. |
 | `tag committed — rollout not confirmed (no ArgoCD token)` | The build ran and the tag was committed, but you have never logged in on this machine (or you logged out), so the CLI could not watch ArgoCD. The rollout is almost certainly happening — check the app in ArgoCD, or run `vast argocd login` so the next deploy is confirmed for you. |
 | `ArgoCD's API is behind a browser sign-in (SSO)` / `tag committed — rollout not confirmed (ArgoCD API behind SSO)` | The ArgoCD host sits behind a load-balancer Google sign-in that covers every path, including `/api/*`, and the CLI has no session cookie to get past it. Sign in to `https://argocd-stg.vastmenu.com` in your browser, copy the `AWSELBAuthSessionCookie-0` value from DevTools → Application → Cookies, and run `vast argocd login` — it asks for the cookie, then for your ArgoCD username and password. Full steps: [When ArgoCD sits behind a browser sign-in](#when-argocd-sits-behind-a-browser-sign-in). **Deploys still work** meanwhile — the build runs and the tag is committed; only the rollout confirmation is skipped, and you can watch it in the ArgoCD UI. The permanent fix is DevOps': exempt `/api/*` from the sign-in rule (ArgoCD's own login still protects the API), and the cookie step goes away. |

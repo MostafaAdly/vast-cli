@@ -173,6 +173,13 @@ If the user asked for a new version series, pass it through: `--bump patch`,
 is only for repos whose tag `vast` cannot parse — it says so explicitly, naming
 the tag, for example `1.1.3-rc4-health`.
 
+**A repo refused with `<version> is not above production <tag>`.** Its staging
+series has fallen behind production, so its next release would take production
+backwards. Nothing was promoted or built. Relay the line with both versions and
+the corrected one it names, and ask the user before rerunning that repo with
+`--fix-version` — it changes the version series, which is their call. When the
+rerun prints `auto-corrected <old> → <new> (production is <tag>)`, relay that too.
+
 **Several repos at once.** Pass them all to one command, in one dry run and one
 real run:
 

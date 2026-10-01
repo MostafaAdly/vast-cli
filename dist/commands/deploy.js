@@ -21,6 +21,7 @@ import { argocdAppUrl, argocdHost, isArgocdEnabled, readAlbCookie, readArgocdTok
 import { ArgoSsoWallError, ArgoUnauthorizedError, DEFAULT_ROLLOUT_TIMING, getApplication, refreshApplication, rolloutDone, waitForRollout, } from '../utils/argocd.js';
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
+import { guardStagingVersion } from '../utils/version-guard.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
 import { failedStepName, getRunStatus, runUrl, runWorkflow } from '../utils/github.js';
@@ -92,8 +93,18 @@ export function perRepoOptionProblem(names, options) {
     }
     return null;
 }
+/** --fix-version replaces a derived version, so it has nothing to do beside an explicit one. */
+export function fixVersionProblem(options) {
+    if (!options.fixVersion)
+        return null;
+    if (options.targetVersion)
+        return '--fix-version and --target-version are mutually exclusive.';
+    if (options.to && options.to !== 'staging')
+        return '--fix-version only applies to staging.';
+    return null;
+}
 export function validateDeployOptions(names, options) {
-    return sweepAndNamesProblem(names, options) ?? perRepoOptionProblem(names, options);
+    return sweepAndNamesProblem(names, options) ?? perRepoOptionProblem(names, options) ?? fixVersionProblem(options);
 }
 /**
  * The outcome for a repo that is not on this machine.
@@ -413,6 +424,19 @@ export function isOutcome(x) {
     return 'status' in x;
 }
 /**
+ * A staging candidate checked against production before anything runs: either
+ * ready to deploy (possibly auto-corrected) or refused. Shared by `release` and
+ * `deploy --to staging`, which derive versions the same way.
+ */
+export async function guardedStaging(repo, dir, candidate, options, readProduction) {
+    const guard = await guardStagingVersion(repo, dir, candidate, options, readProduction);
+    if (!guard.ok)
+        return { repo: repo.name, version: candidate, status: 'failed', detail: guard.detail };
+    if (guard.notice)
+        (guard.notice.tone === 'warn' ? log.warn : log.muted)(`  ${guard.notice.text}`);
+    return guard.note ? { repo, version: guard.version, note: guard.note } : { repo, version: guard.version };
+}
+/**
  * Several repos at once, each on its own line of one shared board.
  *
  * One board for every repo: two would each believe they own the cursor.
@@ -438,14 +462,19 @@ export async function deployMany(planned, env, dryRun, deps = {}) {
     const board = (deps.board ?? createStatusBoard)(going.length);
     const run = deps.deploy ?? deployOne;
     const settled = await Promise.allSettled(going.map((g, i) => run(g.repo, env, g.version, dryRun, { board, row: i, labelWidth }, timing)));
-    const finished = settled.map((r, i) => r.status === 'fulfilled'
-        ? r.value
-        : {
-            repo: going[i].repo.name,
-            version: going[i].version,
-            status: 'failed',
-            detail: r.reason instanceof Error ? r.reason.message : String(r.reason),
-        });
+    const finished = settled.map((r, i) => {
+        const outcome = r.status === 'fulfilled'
+            ? r.value
+            : {
+                repo: going[i].repo.name,
+                version: going[i].version,
+                status: 'failed',
+                detail: r.reason instanceof Error ? r.reason.message : String(r.reason),
+            };
+        // A note belongs in the summary too, not only in the scrollback above the board.
+        const note = going[i].note;
+        return note ? { ...outcome, detail: `${outcome.detail} · ${note}` } : outcome;
+    });
     let next = 0;
     return planned.map((p) => (isOutcome(p) ? p : finished[next++]));
 }
@@ -499,6 +528,13 @@ async function executeDeploy(repoNames, options) {
                 continue;
             }
         }
+        if (options.to === 'staging') {
+            planned.push(await guardedStaging(repo, repoDir(repo, options.dir), version, {
+                explicit: Boolean(options.targetVersion),
+                fixVersion: options.fixVersion,
+            }));
+            continue;
+        }
         // Production only: refuse if this version's PR has not been merged yet.
         // The checkout is needed for nothing else now — the deployed tag comes from
         // Vast-deployments, not from a local Helm file.
@@ -542,6 +578,7 @@ export function registerDeployCommand(program) {
         .option('--backend', 'Deploy the backend repos', false)
         .option('--dir <path>', 'Override the local checkout path (one repo only)')
         .option('-v, --target-version <version>', 'Override the derived version (one repo only)')
+        .option('--fix-version', 'If the derived version is not above production, use the first one that is', false)
         .option('-n, --dry-run', 'Report what would happen without deploying', false)
         .addHelpText('after', `
 Deploys what is already on the branch — it does not promote first.
@@ -578,6 +615,16 @@ vast-menu-payments is in neither train — deploy it by name.
 
 --target-version and --dir are per-repo and refused with a sweep flag or more
 than one repository.
+
+Staging versions are checked against production first. A version whose X.Y.Z
+is not above production's would make that repo's next release take production
+backwards (hotfixes advance production on their own), so it is refused:
+
+  ✗ VastMenu-DashBoard  2.1.12-rc31 is not above production 2.1.36 ...
+  $ vast deploy VastMenu-DashBoard --fix-version    deploys 2.1.37-rc1 and says so
+
+An explicit --target-version is only warned about. If production's tag cannot
+be read, the version goes through unchecked with a note.
 
 PRODUCTION IS BLOCKED. It has not moved to the new pipeline, so this command
 refuses --to production outright — before the production lock is even read.
