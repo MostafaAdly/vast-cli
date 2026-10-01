@@ -37,15 +37,19 @@ This skill lives beside the CLI it drives. The helper it uses is at
 
 ## 0. Before anything: is the tool usable?
 
-Run this first on an unfamiliar machine. It is cheap and it turns four
-confusing failure modes into one clear sentence.
+Run this first on an unfamiliar machine. It takes about two seconds, reads only,
+and checks everything below in one screen — tools and `gh` auth, whether `vast`
+is up to date, the ArgoCD token and cookie age, every repo's workflow and tags,
+and Slack. `✗` lines would stop a release (it exits 1), `⚠` lines would degrade it
+or need a flag.
 
 ```bash
-vast --version    || echo "vast is not installed"
-gh auth status    || echo "gh is not authenticated"
-vast argocd status
-vast upgrade --check
+vast --version || echo "vast is not installed"
+vast doctor
 ```
+
+If `vast doctor` is an unknown command, the CLI predates it: run `vast upgrade`
+first (see the newer-release bullet below). What each finding means:
 
 - **`vast` missing** → the install one-liner is in the vast-cli README. Stop and
   say so; do not attempt a release.
@@ -88,6 +92,14 @@ vast upgrade --check
   a promote landed, a deploy is running, a PR is open — finish it on the version
   you began with and upgrade afterwards. Swapping the binary mid-flow changes the
   tool under your own feet.
+
+- **A repo warns `next <v> is not above production <tag>`.** Its staging series
+  has fallen behind production, so `vast release` will refuse it. Not a stop
+  condition for the other repos. Tell the user before releasing, and ask before
+  adding `--fix-version` for that repo (see §1).
+- **A repo fails on `build-deploy.yml`.** The workflow is missing on staging or no
+  longer takes a `version` input, so that repo cannot deploy at all — the
+  2026-09-24 rename was this shape. Stop for that repo and report the line.
 
 - **The repo is not on this machine.** `vast` reports `not cloned` rather than
   failing obscurely. Tell the user to run `vast clone --team <their team>`, or

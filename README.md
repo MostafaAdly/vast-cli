@@ -154,6 +154,7 @@ worked examples.
 | `vast upgrade` | Update to the latest release |
 | `vast status` | Deployed versions and branch drift |
 | `vast pending` | What staging has that production lacks (or develop vs staging), by PR — `--parity` both ways |
+| `vast doctor` | Check that a release will work from this machine — tools, ArgoCD, every repo's workflow and versions, Slack |
 | `vast release` | Promote develop→staging, derive the version, deploy, wait until it is live |
 | `vast promote` | Merge branches, or open a release/hotfix PR into production — `--slack` announces it |
 | `vast deploy` | Ship a version already on the branch — one repo, or `--frontend`/`--backend`/`--all` |
@@ -227,6 +228,30 @@ and `?` means the lookup itself failed.
 **DRIFT** is how many commits are waiting on `develop` that `staging` does not
 have. Only DRIFT needs a local checkout — the tags are read over the API, so they
 are reported even for a repo you have never cloned.
+
+### Is this machine ready? `vast doctor`
+
+```bash
+vast doctor
+```
+
+One read-only screen, about two seconds, that answers "will a release work from here?"
+before you start one rather than halfway through:
+
+| Group | Checks |
+|---|---|
+| Tools | node 18+, `git`, `gh` installed and authenticated |
+| vast-cli | up to date; every releasable repo found on this machine |
+| ArgoCD | staging token valid, session cookie age (it lasts about a week), or that confirmation is disabled |
+| Repos | per releasable repo: `build-deploy.yml` on staging takes a `version` input; the staging tag is readable and can be incremented; the next version is above production's |
+| Slack | bot token valid and the channel reachable — only `--slack` needs it |
+
+`✗` means a release or deploy would stop (no `gh` auth, a missing workflow, an expired
+ArgoCD token) and makes it exit 1. `⚠` means it would run but degrade or need a flag —
+no ArgoCD token, a cookie about to expire, or a repo whose next version is not above
+production's (release that one with `--fix-version`). Most of the things that broke
+deploys before — the workflow rename, the sign-in wall, an expired cookie — show up
+here first.
 
 ### What's waiting: `vast pending`
 
@@ -673,6 +698,7 @@ from the sign-in rule, and the cookie step disappears.
 
 | Symptom | Cause and fix |
 |---|---|
+| Not sure what is wrong | Run `vast doctor` first. It checks `gh`, ArgoCD, every repo's workflow and versions, and Slack in one screen and names the fix for each problem. |
 | `vast: command not found` | `~/.local/bin` is not on your `PATH`. The installer prints the exact line for your shell; add it and open a new terminal. |
 | Everything fails against GitHub | `gh auth status` — every command goes through `gh`. Fix with `gh auth login`. |
 | `vast init` finds nothing | Your repos are outside the searched locations. Point at them: `vast init --root /path/to/repos`. The path is remembered. |
