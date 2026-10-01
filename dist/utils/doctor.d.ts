@@ -2,8 +2,8 @@
  * `vast doctor`: will a release work from this machine right now?
  *
  * Almost every past break came from something outside the CLI changing
- * quietly — the workflow rename on 2026-09-24, the ArgoCD sign-in wall, a
- * cookie that ages out in a week — and was found mid-deploy. These checks find
+ * quietly — the workflow rename on 2026-09-24, the ArgoCD sign-in wall — and
+ * was found mid-deploy. These checks find
  * them first. Read-only: nothing here writes, dispatches or posts.
  *
  * Statuses mean what they mean for a release:
@@ -25,9 +25,7 @@ export interface Check {
 export interface ArgoState {
     enabled: boolean;
     hasToken: boolean;
-    cookieSavedAt: string | null;
-    cookieFromEnv: boolean;
-    /** Asks ArgoCD who the token belongs to; throws ArgoSsoWallError behind the sign-in. */
+    /** Asks ArgoCD who the token belongs to; throws ArgoSsoWallError behind a sign-in wall. */
     session: () => Promise<{
         loggedIn: boolean;
         username?: string;
@@ -62,10 +60,6 @@ export interface DoctorDeps {
  * key — is the contract itself.
  */
 export declare function workflowAcceptsVersion(yaml: string): boolean;
-export declare function cookieCheck(savedAt: string | null, fromEnv: boolean, now: number): {
-    status: CheckStatus;
-    detail: string;
-};
 export declare function tally(checks: Check[]): {
     fail: number;
     warn: number;

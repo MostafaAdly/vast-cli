@@ -31,23 +31,6 @@ export declare function argocdHost(env: DeployEnv): string;
 export declare function readArgocdToken(env: DeployEnv): string | null;
 export declare function saveArgocdToken(env: DeployEnv, token: string, username: string): void;
 export declare function forgetArgocdToken(env: DeployEnv): void;
-/**
- * Turn whatever the user pasted into the exact `Cookie` header value to send.
- *
- * People copy this three ways: the bare value from DevTools, one `name=value`
- * pair, or a whole `Cookie:` line lifted from a request. All three are accepted,
- * and only the `AWSELBAuthSessionCookie-*` pairs are kept — the ALB splits long
- * sessions into `-0`, `-1`, ... so several may be needed, while `_ga`,
- * `AWSALBAuthNonce` and `argocd.token` must never be stored or sent.
- *
- * The value is base64, so a bare value often ends in `=` padding. Only an `=`
- * with something other than `=` after it marks a `name=value` pair.
- */
-export declare function normalizeAlbCookie(input: string): string | null;
-/** The stored ALB cookie for an env, or null. The env var wins, like the token's. */
-export declare function readAlbCookie(env: DeployEnv): string | null;
-export declare function albCookieSavedAt(env: DeployEnv): string | null;
-export declare function saveAlbCookie(env: DeployEnv, cookie: string): void;
 export declare function isArgocdEnabled(env: DeployEnv): boolean;
 export declare function setArgocdEnabled(env: DeployEnv, enabled: boolean): void;
 export declare function argocdAppUrl(env: DeployEnv, app: string): string;

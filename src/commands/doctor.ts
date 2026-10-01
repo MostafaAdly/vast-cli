@@ -12,7 +12,7 @@ import { promisify } from 'util';
 import { Command } from 'commander';
 import { REPOS, isReleasable } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
-import { albCookieSavedAt, argocdHost, isArgocdEnabled, readAlbCookie, readArgocdToken } from '../config/argocd.js';
+import { argocdHost, isArgocdEnabled, readArgocdToken } from '../config/argocd.js';
 import { readSlackChannel, readSlackToken } from '../config/slack.js';
 import { userinfo } from '../utils/argocd.js';
 import { deployedTag, productionTag } from '../utils/deployments.js';
@@ -66,9 +66,7 @@ function liveDeps(): DoctorDeps {
       return {
         enabled: isArgocdEnabled(env),
         hasToken: Boolean(token),
-        cookieSavedAt: albCookieSavedAt(env),
-        cookieFromEnv: Boolean(process.env[`VAST_ARGOCD_ALB_COOKIE_${env.toUpperCase()}`]?.trim()),
-        session: () => userinfo(argocdHost(env), token ?? '', undefined, readAlbCookie(env)),
+        session: () => userinfo(argocdHost(env), token ?? ''),
       };
     },
     slack: {
@@ -140,8 +138,7 @@ would stop a release.
 What it checks:
   Tools      node 18+, git, gh installed and authenticated
   vast-cli   up to date; every releasable repo found on this machine
-  ArgoCD     staging token valid, session cookie age (it lasts about a week),
-             or that confirmation is disabled
+  ArgoCD     staging token valid, or that confirmation is disabled
   Repos      per releasable repo: build-deploy.yml on staging takes a
              \`version\` input; the staging tag is readable and can be
              incremented; the next version is above production's

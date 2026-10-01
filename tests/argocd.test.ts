@@ -480,8 +480,9 @@ test('every redirect status the ALB may use is treated as the wall', async () =>
 });
 
 // The message is the whole value of this error: the user cannot fix it, only
-// DevOps can, and only by exempting the API paths.
-test('the SSO wall message names the host and the fix', async () => {
+// DevOps can, by keeping the API paths outside any sign-in rule. There is no
+// cookie to paste any more, so the message must not suggest one.
+test('the sign-in wall message names the host and who fixes it, and offers no cookie', async () => {
   const error = await getApplication(
     'https://argocd-stg.example.com',
     'tok',
@@ -489,8 +490,9 @@ test('the SSO wall message names the host and the fix', async () => {
     ssoRedirectFetch(),
   ).catch((e: Error) => e);
   assert.match(error.message, /argocd-stg\.example\.com/);
-  assert.match(error.message, /browser sign-in \(SSO\)/);
-  assert.match(error.message, /exempt \/api\/\* from that rule/);
+  assert.match(error.message, /browser sign-in page/);
+  assert.match(error.message, /ask DevOps to keep \/api\/\* outside any sign-in rule/i);
+  assert.doesNotMatch(error.message, /cookie|vast argocd login/i);
 });
 
 // A JSON path must keep behaving exactly as before: `redirect: 'manual'` is the
@@ -522,12 +524,12 @@ test('an SSO wall during the wait stops at once instead of retrying twelve times
   assert.deepEqual(h.lines, [], 'and nothing may be printed as a retry');
 });
 
-// --- the ALB session cookie rides on every request when the user supplied one ---
-test('every ArgoCD call carries the cookie header when a cookie is given', async () => {
+// --- no credential other than the ArgoCD token is ever sent ---
+test('no ArgoCD call sends a cookie header', async () => {
   const { login, userinfo, getApplication, refreshApplication } = await import('../src/utils/argocd.js');
-  const seen: Array<string | null> = [];
+  const seen: Array<string | undefined> = [];
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
-    seen.push((init?.headers as Record<string, string>)?.cookie ?? null);
+    seen.push((init?.headers as Record<string, string>)?.cookie);
     const body = String(url).includes('/session/userinfo')
       ? '{"loggedIn":true,"username":"admin"}'
       : String(url).includes('/session')
@@ -535,30 +537,9 @@ test('every ArgoCD call carries the cookie header when a cookie is given', async
         : '{"status":{"sync":{"status":"Synced"},"health":{"status":"Healthy"}}}';
     return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
-  const cookie = 'AWSELBAuthSessionCookie-0=part0';
-  await login('https://argo.example', 'admin', 'pw', fetchFn, cookie);
-  await userinfo('https://argo.example', 't', fetchFn, cookie);
-  await getApplication('https://argo.example', 't', 'app', fetchFn, cookie);
-  await refreshApplication('https://argo.example', 't', 'app', fetchFn, cookie);
-  assert.deepEqual(seen, [cookie, cookie, cookie, cookie]);
-});
-
-test('no cookie header is sent when none is given', async () => {
-  const { getApplication } = await import('../src/utils/argocd.js');
-  let cookieHeader: string | undefined = 'unset';
-  const fetchFn = (async (_url: string | URL | Request, init?: RequestInit) => {
-    cookieHeader = (init?.headers as Record<string, string>)?.cookie;
-    return new Response('{"status":{}}', { status: 200, headers: { 'content-type': 'application/json' } });
-  }) as typeof fetch;
-  await getApplication('https://argo.example', 't', 'app', fetchFn, null);
-  assert.equal(cookieHeader, undefined);
-});
-
-test('the wall message tells the user how to get past it and who fixes it for good', async () => {
-  const { getApplication, ArgoSsoWallError } = await import('../src/utils/argocd.js');
-  const fetchFn = (async () => new Response('', { status: 302, headers: { location: 'https://accounts.google.com/x' } })) as typeof fetch;
-  await assert.rejects(
-    () => getApplication('https://argo.example', 't', 'app', fetchFn),
-    (e: Error) => e instanceof ArgoSsoWallError && /vast argocd login/.test(e.message) && /exempt \/api\/\*/.test(e.message),
-  );
+  await login('https://argo.example', 'admin', 'pw', fetchFn);
+  await userinfo('https://argo.example', 't', fetchFn);
+  await getApplication('https://argo.example', 't', 'app', fetchFn);
+  await refreshApplication('https://argo.example', 't', 'app', fetchFn);
+  assert.deepEqual(seen, [undefined, undefined, undefined, undefined]);
 });

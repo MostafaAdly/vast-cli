@@ -19,14 +19,16 @@ export class ArgoUnauthorizedError extends Error {
     }
 }
 /**
- * The API is not answering as an API: a load balancer is demanding a browser
- * sign-in in front of it.
+ * The API is not answering as an API: something in front of it is demanding a
+ * browser sign-in.
  *
- * Staging's ArgoCD sits behind an AWS ALB `authenticate-oidc` rule, which
- * intercepts EVERY path — `/api/v1/session` included — and answers 302 to
- * Google. No token can get past that, and no amount of retrying will change it,
- * so it is its own error: the CLI reports it once, says who can fix it, and
- * carries on with the work that never needed ArgoCD.
+ * From 2026-09-21 to 2026-10-01 staging's ArgoCD sat behind an AWS ALB
+ * `authenticate-oidc` rule that answered every path — `/api/*` included — with
+ * a 302 to Google. That rule is gone and the CLI no longer carries a way past
+ * it, but if one comes back no token can get through it and no amount of
+ * retrying will change that. So it stays its own error: the CLI reports it
+ * once, says who can fix it, and carries on with the work that never needed
+ * ArgoCD rather than calling a good build a failure.
  */
 export class ArgoSsoWallError extends Error {
     constructor(message) {
@@ -37,14 +39,9 @@ export class ArgoSsoWallError extends Error {
 /** The statuses an ALB auth rule bounces an unauthenticated request with. */
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 function ssoWallMessage(host) {
-    return (`ArgoCD's API at ${host} is behind a browser sign-in (SSO) at the load balancer, ` +
-        'so the CLI cannot reach it. Sign in to ArgoCD in your browser once, then run ' +
-        '`vast argocd login` and paste the load-balancer session cookie when asked. ' +
-        'The permanent fix is for DevOps to exempt /api/* from that rule.');
-}
-/** The auth headers a call needs, with the ALB cookie riding along when there is one. */
-function withCookie(headers, cookie) {
-    return cookie ? { ...headers, cookie } : headers;
+    return (`ArgoCD's API at ${host} answered with a browser sign-in page instead of the API, ` +
+        'so the CLI cannot reach it. Ask DevOps to keep /api/* outside any sign-in rule ' +
+        '(ArgoCD\'s own login still protects it).');
 }
 /**
  * Every call into the ArgoCD API goes through here, so the wall is detected in
@@ -85,10 +82,10 @@ function serverMessage(body, status) {
  * The password is only ever a request body field: it is never logged, never
  * echoed back, and never included in a thrown message.
  */
-export async function login(host, username, password, fetchFn = fetch, cookie = null) {
+export async function login(host, username, password, fetchFn = fetch) {
     const { res, body } = await argoRequest(host, '/api/v1/session', {
         method: 'POST',
-        headers: withCookie({ 'content-type': 'application/json' }, cookie),
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username, password }),
     }, fetchFn);
     if (!res.ok)
@@ -104,8 +101,8 @@ export async function login(host, username, password, fetchFn = fetch, cookie = 
  * A rejected token is an answer, not a failure — `vast argocd status` wants to
  * print "expired", not blow up — so 401/403 returns `{ loggedIn: false }`.
  */
-export async function userinfo(host, token, fetchFn = fetch, cookie = null) {
-    const { res, body } = await argoRequest(host, '/api/v1/session/userinfo', { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) }, fetchFn);
+export async function userinfo(host, token, fetchFn = fetch) {
+    const { res, body } = await argoRequest(host, '/api/v1/session/userinfo', { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403)
         return { loggedIn: false };
     if (!res.ok)
@@ -115,8 +112,8 @@ export async function userinfo(host, token, fetchFn = fetch, cookie = null) {
         return { loggedIn: false };
     return parsed.username ? { loggedIn: true, username: parsed.username } : { loggedIn: true };
 }
-export async function getApplication(host, token, app, fetchFn = fetch, cookie = null) {
-    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}`, { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) }, fetchFn);
+export async function getApplication(host, token, app, fetchFn = fetch) {
+    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}`, { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403) {
         throw new ArgoUnauthorizedError(`argocd rejected the token: ${serverMessage(body, res.status)}`);
     }
@@ -140,8 +137,8 @@ export async function getApplication(host, token, app, fetchFn = fetch, cookie =
  * response body is the same application document and is deliberately ignored:
  * the waiter reads the state on its own schedule.
  */
-export async function refreshApplication(host, token, app, fetchFn = fetch, cookie = null) {
-    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`, { headers: withCookie({ authorization: `Bearer ${token}` }, cookie) }, fetchFn);
+export async function refreshApplication(host, token, app, fetchFn = fetch) {
+    const { res, body } = await argoRequest(host, `/api/v1/applications/${encodeURIComponent(app)}?refresh=normal`, { headers: { authorization: `Bearer ${token}` } }, fetchFn);
     if (res.status === 401 || res.status === 403) {
         throw new ArgoUnauthorizedError(`argocd rejected the token: ${serverMessage(body, res.status)}`);
     }
@@ -198,8 +195,8 @@ export async function waitForRollout(label, appName, tag, deps, timing = DEFAULT
             // A bad token will never come good by waiting, and every other repo in
             // the release is about to hit the same wall. Stop now and say what fixes
             // it rather than burning fifteen minutes per repo.
-            // Nothing gets through an ALB auth rule, so twelve retries would only
-            // turn a working deploy into a false failure a minute later. Say it once.
+            // Nothing gets through a sign-in wall, so twelve retries would only turn
+            // a working deploy into a false failure a minute later. Say it once.
             if (error instanceof ArgoSsoWallError) {
                 return {
                     ok: false,

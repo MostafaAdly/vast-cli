@@ -62,8 +62,12 @@ export function saveArgocdToken(env, token, username) {
     const file = argocdFile(env);
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
     // Keep any host override the user hand-wrote; logging in must not silently
-    // point them back at the default server.
-    const next = { ...read(env), token, username, savedAt: new Date().toISOString() };
+    // point them back at the default server. Nothing else carries over: files
+    // from 2.1–2.7 also hold the load balancer's session cookie, a credential
+    // that has been useless since the Google sign-in was removed (2026-10-01),
+    // and a fresh login is what clears it off disk.
+    const { host } = read(env);
+    const next = { ...(host ? { host } : {}), token, username, savedAt: new Date().toISOString() };
     writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
     // `mode` on writeFileSync only applies when the file is created, so an
     // existing file keeps whatever permissions it had. Force them.
@@ -71,50 +75,6 @@ export function saveArgocdToken(env, token, username) {
 }
 export function forgetArgocdToken(env) {
     rmSync(argocdFile(env), { force: true });
-}
-/** Only the cookies the load balancer itself sets. Everything else a browser holds is noise. */
-const ALB_COOKIE_PREFIX = 'AWSELBAuthSessionCookie';
-/**
- * Turn whatever the user pasted into the exact `Cookie` header value to send.
- *
- * People copy this three ways: the bare value from DevTools, one `name=value`
- * pair, or a whole `Cookie:` line lifted from a request. All three are accepted,
- * and only the `AWSELBAuthSessionCookie-*` pairs are kept — the ALB splits long
- * sessions into `-0`, `-1`, ... so several may be needed, while `_ga`,
- * `AWSALBAuthNonce` and `argocd.token` must never be stored or sent.
- *
- * The value is base64, so a bare value often ends in `=` padding. Only an `=`
- * with something other than `=` after it marks a `name=value` pair.
- */
-export function normalizeAlbCookie(input) {
-    const text = input.trim().replace(/^cookie:\s*/i, '');
-    if (!text)
-        return null;
-    if (!text.replace(/=+$/, '').includes('='))
-        return `${ALB_COOKIE_PREFIX}-0=${text}`;
-    const pairs = text
-        .split(';')
-        .map((pair) => pair.trim())
-        .filter((pair) => pair.startsWith(ALB_COOKIE_PREFIX) && pair.includes('='));
-    return pairs.length > 0 ? pairs.join('; ') : null;
-}
-/** The stored ALB cookie for an env, or null. The env var wins, like the token's. */
-export function readAlbCookie(env) {
-    const fromEnv = process.env[`VAST_ARGOCD_ALB_COOKIE_${env.toUpperCase()}`]?.trim();
-    if (fromEnv)
-        return fromEnv;
-    const stored = read(env).albCookie?.trim();
-    return stored || null;
-}
-export function albCookieSavedAt(env) {
-    return read(env).albCookieSavedAt ?? null;
-}
-export function saveAlbCookie(env, cookie) {
-    const file = argocdFile(env);
-    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-    const next = { ...read(env), albCookie: cookie, albCookieSavedAt: new Date().toISOString() };
-    writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
-    chmodSync(file, 0o600);
 }
 /**
  * Whether deploys should talk to ArgoCD at all. On by default.

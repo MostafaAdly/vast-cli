@@ -140,75 +140,30 @@ test('argocdAppUrl points at the env host', () => {
 
 process.on('exit', () => rmSync(SANDBOX, { recursive: true, force: true }));
 
-// --- the load-balancer session cookie that gets the CLI past the SSO wall ---
-const {
-  normalizeAlbCookie,
-  readAlbCookie,
-  saveAlbCookie,
-  albCookieSavedAt,
-} = await import('../src/config/argocd.js');
-
-test('normalizeAlbCookie accepts a bare value and names it', () => {
-  assert.equal(normalizeAlbCookie('  abc123  '), 'AWSELBAuthSessionCookie-0=abc123');
-});
-
-test('normalizeAlbCookie accepts a bare base64 value with = padding', () => {
-  // The real value is base64: +, / and trailing = padding. The padding is not a name=value separator.
-  assert.equal(normalizeAlbCookie('7ZSe+P2F/taH=='), 'AWSELBAuthSessionCookie-0=7ZSe+P2F/taH==');
-  assert.equal(normalizeAlbCookie('7ZSedEh0UHse='), 'AWSELBAuthSessionCookie-0=7ZSedEh0UHse=');
-});
-
-test('normalizeAlbCookie keeps = padding inside a named pair', () => {
-  assert.equal(
-    normalizeAlbCookie('AWSELBAuthSessionCookie-0=7ZSe+P2F/taH=='),
-    'AWSELBAuthSessionCookie-0=7ZSe+P2F/taH==',
+// Files written by 2.1–2.7 also hold the load balancer's session cookie, a
+// credential that has been useless since the Google sign-in went away. A fresh
+// login is what clears it off disk, and it must not take the host with it.
+test('a fresh login drops a leftover session cookie but keeps the host override', () => {
+  clean();
+  const file = argocdFile('staging');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      host: 'http://127.0.0.1:9999',
+      token: 'old',
+      albCookie: 'AWSELBAuthSessionCookie-0=secret',
+      albCookieSavedAt: '2026-10-01T00:00:00Z',
+    }),
+    'utf-8',
   );
-});
-
-test('normalizeAlbCookie keeps only the ALB session pairs out of a whole Cookie line', () => {
-  const line = '_ga=GA1.1; AWSALBAuthNonce=nonce; AWSELBAuthSessionCookie-0=part0; AWSELBAuthSessionCookie-1=part1; argocd.token=';
-  assert.equal(
-    normalizeAlbCookie(line),
-    'AWSELBAuthSessionCookie-0=part0; AWSELBAuthSessionCookie-1=part1',
-  );
-});
-
-test('normalizeAlbCookie returns null when nothing usable was pasted', () => {
-  assert.equal(normalizeAlbCookie('_ga=GA1.1; argocd.token='), null);
-  assert.equal(normalizeAlbCookie('   '), null);
-});
-
-test('saveAlbCookie stores the cookie beside the token, owner-only, with a timestamp', () => {
+  saveArgocdToken('staging', 'tok-new', 'admin');
+  const stored = JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
+  assert.equal(stored.host, 'http://127.0.0.1:9999');
+  assert.equal(stored.token, 'tok-new');
+  assert.equal('albCookie' in stored, false);
+  assert.equal('albCookieSavedAt' in stored, false);
   clean();
-  saveArgocdToken('staging', 'tok', 'admin');
-  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=part0');
-  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=part0');
-  assert.equal(readArgocdToken('staging'), 'tok', 'the token survives saving a cookie');
-  assert.ok(albCookieSavedAt('staging'));
-  assert.equal(statSync(argocdFile('staging')).mode & 0o777, 0o600);
-});
-
-test('the ALB cookie env var beats the stored one', () => {
-  clean();
-  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=stored');
-  process.env.VAST_ARGOCD_ALB_COOKIE_STAGING = 'AWSELBAuthSessionCookie-0=fromenv';
-  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=fromenv');
-  process.env.VAST_ARGOCD_ALB_COOKIE_STAGING = '   ';
-  assert.equal(readAlbCookie('staging'), 'AWSELBAuthSessionCookie-0=stored');
-  delete process.env.VAST_ARGOCD_ALB_COOKIE_STAGING;
-});
-
-test('no cookie stored and no env var reads as null', () => {
-  clean();
-  assert.equal(readAlbCookie('staging'), null);
-  assert.equal(albCookieSavedAt('staging'), null);
-});
-
-test('forgetArgocdToken drops the cookie too', () => {
-  clean();
-  saveAlbCookie('staging', 'AWSELBAuthSessionCookie-0=part0');
-  forgetArgocdToken('staging');
-  assert.equal(readAlbCookie('staging'), null);
 });
 
 // --- the on/off switch for rollout confirmation ---

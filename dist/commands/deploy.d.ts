@@ -124,8 +124,6 @@ export interface DeployDeps {
     getApplication: typeof getApplication;
     refreshApplication: typeof refreshApplication;
     readArgocdToken: (env: DeployEnv) => string | null;
-    /** The user-pasted load-balancer cookie that gets past the SSO wall, if any. */
-    readAlbCookie: (env: DeployEnv) => string | null;
     /** `vast argocd disable` turns every ArgoCD call off for that env. */
     argocdEnabled: (env: DeployEnv) => boolean;
     argocdHost: (env: DeployEnv) => string;
