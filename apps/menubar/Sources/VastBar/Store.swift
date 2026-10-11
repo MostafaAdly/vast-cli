@@ -21,6 +21,7 @@ final class Store: ObservableObject {
 
     let runStore = RunStore(dir: RunStore.defaultDir())
     private var refreshTimer: Timer?
+    var pollTimer: Timer?
 
     init() {
         Task { await start() }
@@ -71,10 +72,87 @@ final class Store: ObservableObject {
         refreshError = errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
 
-    /// Task 7 replaces this with the run-tracking version.
-    func loadRuns() {}
-
     static func lastLine(_ text: String) -> String {
         text.split(whereSeparator: \.isNewline).last.map(String.init) ?? "no output"
+    }
+}
+
+struct Preview: Equatable {
+    let summary: RunSummary
+    let stderr: String
+    let exitCode: Int32
+}
+
+extension Store {
+    /// Reads every run from disk, works out which are still going, and polls
+    /// while any is. Finished runs older than seven days are pruned.
+    func loadRuns() {
+        let store = runStore
+        store.prune(isFinished: { record in
+            summarize(store.events(id: record.id)).isFinished || !Self.isRunAlive(record)
+        })
+        reloadRuns()
+        if runs.contains(where: { $0.state == .running }) { startPolling() }
+    }
+
+    func reloadRuns() {
+        runs = runStore.records().map { record in
+            let summary = summarize(runStore.events(id: record.id))
+            return TrackedRun(record: record, summary: summary,
+                              state: runState(summary: summary, alive: Self.isRunAlive(record)))
+        }
+    }
+
+    /// A run's process is alive only if its pid is, and only for two hours:
+    /// after that a pid still answering is most likely a reused one, so a run
+    /// with no `end` reads as died instead of running forever.
+    nonisolated static func isRunAlive(_ record: RunRecord, now: Date = Date()) -> Bool {
+        Shell.isAlive(record.pid) && now.timeIntervalSince(record.startedAt) < 2 * 3600
+    }
+
+    private func startPolling() {
+        guard pollTimer == nil else { return }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let wasRunning = Set(self.runs.filter { $0.state == .running }.map(\.id))
+                self.reloadRuns()
+                let nowRunning = Set(self.runs.filter { $0.state == .running }.map(\.id))
+                if nowRunning.isEmpty {
+                    self.pollTimer?.invalidate(); self.pollTimer = nil
+                }
+                // A run just ended: the deployed tags changed, so refresh.
+                if !wasRunning.subtracting(nowRunning).isEmpty { Task { await self.refresh() } }
+            }
+        }
+    }
+
+    /// A dry run, synchronously: the preview the user confirms.
+    func preview(_ command: VastCommand) async -> Preview {
+        let r = await Shell.run(command, timeout: 300)
+        return Preview(summary: summarize(NDJSON.events(from: r.stdout)), stderr: r.stderr, exitCode: r.exitCode)
+    }
+
+    /// The real run, detached. Returns an error message, or nil once started.
+    func start(_ command: VastCommand) async -> String? {
+        let id = newRunID()
+        do {
+            try runStore.ensureDir()
+            let pid = try await Shell.startDetached(command, stdout: runStore.ndjsonURL(id), stderr: runStore.logURL(id))
+            try runStore.save(RunRecord(id: id, pid: pid, args: command.args, startedAt: Date(), dismissed: false))
+        } catch {
+            return "Could not start: \(error)"
+        }
+        panel = nil
+        reloadRuns()
+        startPolling()
+        return nil
+    }
+
+    func dismiss(_ id: String) {
+        guard var record = runs.first(where: { $0.id == id })?.record else { return }
+        record.dismissed = true
+        try? runStore.save(record)
+        reloadRuns()
     }
 }

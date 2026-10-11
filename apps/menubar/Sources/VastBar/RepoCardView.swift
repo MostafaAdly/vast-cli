@@ -41,9 +41,3 @@ struct RepoCardView: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
     }
 }
-
-/// Task 7 replaces this with the live progress row.
-struct RunProgressSlot: View {
-    let card: RepoCard
-    var body: some View { EmptyView() }
-}

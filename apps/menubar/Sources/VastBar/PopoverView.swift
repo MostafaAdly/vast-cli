@@ -125,11 +125,12 @@ struct DoctorFooter: View {
     }
 }
 
-/// Task 7 fills this in with the release and promote panels.
 struct PanelHost: View {
-    @EnvironmentObject var store: Store
     let panel: Panel
     var body: some View {
-        VStack { Button("Back") { store.panel = nil } }.padding(12)
+        switch panel {
+        case .release(let target): ReleasePanel(target: target)
+        case .promote(let repo): PromotePanel(repo: repo)
+        }
     }
 }
