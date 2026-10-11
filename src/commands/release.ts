@@ -27,6 +27,7 @@ import {
   deployMany,
   fixVersionProblem,
   guardedStaging,
+  isOutcome,
   isSweep,
   notClonedOutcome,
   perRepoOptionProblem,
@@ -41,6 +42,10 @@ import {
   type Sweep,
 } from './deploy.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
+import { NO_EVENTS, doneEvent, ndjsonSink, type EventSink, type PromoteState, type VastEvent } from '../utils/events.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
+import { newReport, type PromotionReport } from '../utils/promotion-report.js';
+import { createStatusBoard } from '../utils/status-board.js';
 
 // `release` and `deploy` must agree on what a sweep flag means and on how fast
 // runs are polled, so both live in deploy.ts and are re-exported here rather
@@ -60,6 +65,7 @@ export interface ReleaseOptions {
   all: boolean;
   frontend: boolean;
   backend: boolean;
+  json?: boolean;
 }
 
 const BUMP_LEVELS = ['patch', 'minor', 'major'];
@@ -121,7 +127,7 @@ export function releaseTargets(
 /** The network and git calls in `prepareOne`, injectable so tests never touch either. */
 export interface PrepareDeps {
   stagingTag?: (repo: RepoConfig) => Promise<string>;
-  promote?: (repo: RepoConfig, dir: string, dryRun: boolean) => Promise<boolean>;
+  promote?: (repo: RepoConfig, dir: string, dryRun: boolean, report: PromotionReport) => Promise<boolean>;
   readProduction?: ReadProduction;
 }
 
@@ -178,6 +184,7 @@ export async function prepareOne(
   );
   if ('status' in planned) return planned;
 
+  let promotion: PromotionReport | undefined;
   if (!options.skipPromote) {
     if (!needsPromotion(repo)) {
       // The backend repos have no usable develop — human PRs there target
@@ -186,12 +193,60 @@ export async function prepareOne(
       // every `release --all` sweep red. Skipping is not a policy change:
       // there is nothing to promote.
       log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
-    } else if (!(await (deps.promote ?? ((r, d, n) => promote(r, d, 'staging', n)))(repo, dir, options.dryRun))) {
-      return { repo: repo.name, version: '—', status: 'failed', detail: 'promotion refused' };
+    } else {
+      promotion = newReport();
+      const run =
+        deps.promote ??
+        ((r: RepoConfig, d: string, n: boolean, rep: PromotionReport) =>
+          promote(r, d, 'staging', n, 'release', undefined, 'changelog', [], false, rep));
+      if (!(await run(repo, dir, options.dryRun, promotion))) {
+        const why = promotion.error ? `promotion refused — ${promotion.error}` : 'promotion refused';
+        return { repo: repo.name, version: '—', status: 'failed', detail: why };
+      }
     }
   }
 
-  return planned;
+  return promotion ? { ...planned, promotion } : planned;
+}
+
+function promoteState(repo: RepoConfig, report: PromotionReport | undefined): PromoteState {
+  if (!needsPromotion(repo)) return 'no develop';
+  switch (report?.result) {
+    case 'merged':
+      return 'merged';
+    case 'would merge':
+      return 'will merge';
+    case 'nothing to promote':
+      return 'nothing to promote';
+    default:
+      return 'not run';
+  }
+}
+
+/** One repo's preparation, as the app's preview reads it. */
+export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome): VastEvent {
+  if (isOutcome(prepared)) {
+    return {
+      type: 'plan',
+      repo: repo.name,
+      ok: false,
+      version: prepared.version,
+      commits: null,
+      promote: 'not run',
+      notice: null,
+      detail: prepared.detail,
+    };
+  }
+  return {
+    type: 'plan',
+    repo: repo.name,
+    ok: true,
+    version: prepared.version,
+    commits: prepared.promotion?.commits ?? null,
+    promote: promoteState(repo, prepared.promotion),
+    notice: prepared.notice?.text ?? null,
+    detail: prepared.note ?? null,
+  };
 }
 
 /** The two halves of a release, injectable so they can be faked in tests. */
@@ -213,17 +268,39 @@ export async function releaseMany(
   deps: ReleaseManyDeps = {},
 ): Promise<DeployOutcome[]> {
   const prepare = deps.prepare ?? prepareOne;
+  const events = deps.events ?? NO_EVENTS;
   const planned: Array<Deployable | DeployOutcome> = [];
-  for (const repo of targets) planned.push(await prepare(repo, options));
+  for (const repo of targets) {
+    const prepared = await prepare(repo, options);
+    events.emit(planEvent(repo, prepared));
+    if (isOutcome(prepared)) {
+      // Refused before deploying: this repo's story ends here, so say so now.
+      events.emit(doneEvent(prepared));
+    } else if (prepared.promotion?.result === 'merged') {
+      events.emit({ type: 'promoted', repo: repo.name, commits: prepared.promotion.commits ?? 0 });
+    }
+    planned.push(prepared);
+  }
   return deployMany(planned, 'staging', options.dryRun, deps);
 }
 
-async function executeRelease(repoNames: string[], options: ReleaseOptions): Promise<void> {
+/**
+ * The whole release, as an exit code rather than a process.exit, so it can be
+ * driven by --json and by tests. Every human line still prints; in --json mode
+ * the command boundary has already moved those lines to stderr.
+ */
+export async function runRelease(
+  repoNames: string[],
+  options: ReleaseOptions,
+  events: EventSink,
+  args: string[],
+  deps: ReleaseManyDeps = {},
+): Promise<number> {
   const startedAt = Date.now();
   const problem = validateReleaseOptions(repoNames, options);
   if (problem) {
     log.error(problem);
-    process.exit(1);
+    return 1;
   }
 
   if (options.to !== 'staging') {
@@ -240,25 +317,42 @@ async function executeRelease(repoNames: string[], options: ReleaseOptions): Pro
           'shipped by hand until DevOps has migrated it.',
       ),
     );
-    process.exit(1);
+    return 1;
   }
 
   const { repos: targets, unknown } = releaseTargets(repoNames, options);
   if (unknown.length > 0) {
     log.error(`Unknown ${unknown.length === 1 ? 'repository' : 'repositories'}: ${unknown.join(', ')}`);
-    process.exit(1);
+    return 1;
   }
   if (targets.length === 0) {
     log.error('Specify a repository, or --all / --frontend / --backend');
-    process.exit(1);
+    return 1;
   }
 
   console.log(createHeader('Release', `${targets.length} repo(s) | → staging`));
+  events.emit({ type: 'start', command: 'release', args, dryRun: options.dryRun, repos: targets.map((r) => r.name) });
 
-  const outcomes = await releaseMany(targets, options);
+  const outcomes = await releaseMany(targets, options, { ...deps, events });
 
   printSummary(outcomes, 'staging', { dryRun: options.dryRun, startedAt });
-  if (outcomes.some((o) => o.status === 'failed')) process.exit(1);
+  return outcomes.some((o) => o.status === 'failed') ? 1 : 0;
+}
+
+async function executeRelease(repoNames: string[], options: ReleaseOptions): Promise<void> {
+  if (!options.json) {
+    const code = await runRelease(repoNames, options, NO_EVENTS, process.argv.slice(2));
+    if (code !== 0) process.exit(code);
+    return;
+  }
+  // stdout is a data channel from here on: one JSON object per line.
+  routeHumanOutputToStderr();
+  const events = ndjsonSink();
+  const code = await runRelease(repoNames, options, events, process.argv.slice(2), {
+    board: (rows) => createStatusBoard(rows, process.stderr),
+  });
+  events.emit({ type: 'end', exitCode: code });
+  process.exitCode = code;
 }
 
 /** The train members, listed from the config so the help can never drift from it. */
@@ -283,6 +377,7 @@ export function registerReleaseCommand(program: Command): void {
     .option('--fix-version', 'If the derived version is not above production, use the first one that is', false)
     .option('--skip-promote', 'Deploy what is already on the branch', false)
     .option('-n, --dry-run', 'Report what would happen without merging or deploying', false)
+    .option('--json', 'Stream progress as JSON lines on stdout (human output goes to stderr)', false)
     .addHelpText(
       'after',
       `
@@ -296,6 +391,7 @@ Version derivation (from the tag currently deployed to staging):
   $ vast release VastPayPwa --fix-version    if that is not above production, use the
                                              first version that is, and say so
   $ vast release VastPayPwa --dry-run        show the derived version, deploy nothing
+  $ vast release VastPayPwa --dry-run --json   the plan, as JSON lines
   $ vast release VastPayPwa VastMenuPwa      both at once, one summary
   $ vast release --frontend                  the frontend repos, side by side
   $ vast release --backend                   the backend repos

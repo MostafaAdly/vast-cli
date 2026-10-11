@@ -2,11 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSweep,
+  planEvent,
   pollIntervalFor,
   prepareOne,
   pollTimingFor,
   releaseMany,
   releaseTargets,
+  runRelease,
   validateReleaseOptions,
   type ReleaseOptions,
   type Sweep,
@@ -494,4 +496,95 @@ test('deployMany emits done for every repo it deploys, even one that throws', as
     seen.filter((e) => e.type === 'done').map((e) => (e.type === 'done' ? `${e.repo}:${e.status}` : '')).sort(),
     ['VastMenu-DashBoard:failed', 'VastMenuPwa:released'],
   );
+});
+
+function recorder(): { events: { emit: (e: VastEvent) => void }; seen: VastEvent[] } {
+  const seen: VastEvent[] = [];
+  return { events: { emit: (e) => seen.push(e) }, seen };
+}
+
+test('a refused repo still reports its plan and its done', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastPayPwa', 'VastMenuPwa']), MANY_OPTIONS, {
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events,
+  });
+  const forPwa = seen.filter((e) => 'repo' in e && e.repo === 'VastPayPwa').map((e) => e.type);
+  assert.deepEqual(forPwa, ['plan', 'done']);
+  const plan = seen.find((e) => e.type === 'plan' && e.repo === 'VastPayPwa');
+  assert.deepEqual(plan, {
+    type: 'plan',
+    repo: 'VastPayPwa',
+    ok: false,
+    version: '—',
+    commits: null,
+    promote: 'not run',
+    notice: null,
+    detail: 'promotion refused',
+  });
+});
+
+test('a promoted repo reports plan, promoted, then its deploy', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastMenuPwa']), MANY_OPTIONS, {
+    prepare: async (repo) => ({ repo, version: '1.6.13-rc1', promotion: { commits: 4, result: 'merged' } }),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events,
+  });
+  assert.deepEqual(seen.map((e) => e.type), ['plan', 'promoted', 'done']);
+  assert.deepEqual(seen[1], { type: 'promoted', repo: 'VastMenuPwa', commits: 4 });
+});
+
+test('a plan names the guard notice and the promotion state', () => {
+  const repo = getRepo('VastMenuPwa')!;
+  assert.deepEqual(
+    planEvent(repo, {
+      repo,
+      version: '1.6.13-rc1',
+      note: 'auto-corrected past production',
+      notice: { tone: 'warn', text: '1.6.10-rc16 is not above production 1.6.12 — using 1.6.13-rc1' },
+      promotion: { commits: 2, result: 'would merge' },
+    }),
+    {
+      type: 'plan',
+      repo: 'VastMenuPwa',
+      ok: true,
+      version: '1.6.13-rc1',
+      commits: 2,
+      promote: 'will merge',
+      notice: '1.6.10-rc16 is not above production 1.6.12 — using 1.6.13-rc1',
+      detail: 'auto-corrected past production',
+    },
+  );
+  const backend = getRepo('VastPay-BackEnd')!;
+  assert.equal((planEvent(backend, { repo: backend, version: '4.5.11-rc31' }) as { promote: string }).promote, 'no develop');
+});
+
+test('runRelease brackets the stream with start and end, and returns the exit code', async () => {
+  const { events, seen } = recorder();
+  const code = await runRelease(['VastMenuPwa'], { ...MANY_OPTIONS, dryRun: true }, events, ['release', 'VastMenuPwa', '--dry-run', '--json'], {
+    prepare: async (repo) => ({ repo, version: '1.6.13-rc1' }),
+    deploy: async (repo, _env, version) => ({ repo: repo.name, version, status: 'skipped', detail: 'dry run' }),
+    board: () => ({ update: () => {} }),
+  });
+  assert.equal(code, 0);
+  assert.equal(seen[0].type, 'start');
+  assert.deepEqual(seen[0], {
+    type: 'start',
+    command: 'release',
+    args: ['release', 'VastMenuPwa', '--dry-run', '--json'],
+    dryRun: true,
+    repos: ['VastMenuPwa'],
+  });
+  assert.equal(seen.at(-1)?.type, 'done');
+});
+
+test('an unknown repository is exit code 1 with no repo events', async () => {
+  const { events, seen } = recorder();
+  const code = await runRelease(['Nope'], MANY_OPTIONS, events, ['release', 'Nope'], {});
+  assert.equal(code, 1);
+  assert.deepEqual(seen, []);
 });
