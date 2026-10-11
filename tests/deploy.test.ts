@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  deployMany,
   deployOne,
   deployTargets,
   notClonedOutcome,
@@ -587,4 +588,50 @@ test('a rollout that is not confirmed says why, as an event', async () => {
     reason: 'ArgoCD disabled',
     elapsedMs: 0,
   });
+});
+
+test('a sign-in wall hit mid-wait reports how long it waited', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    waitForRollout: async (): Promise<RolloutResult> => ({
+      ok: false,
+      elapsedMs: 300,
+      reason: 'argocd api behind sso',
+      ssoWall: true,
+    }),
+  });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(seen.find((e) => e.type === 'rollout' && e.state === 'not confirmed'), {
+    type: 'rollout',
+    repo: 'VastPayPwa',
+    state: 'not confirmed',
+    reason: 'ArgoCD API behind a sign-in',
+    elapsedMs: 300,
+  });
+});
+
+test('a sink that throws on done cannot lose a sibling outcome', async () => {
+  const other = getRepo('VastMenuPwa')!;
+  const outcomes = await deployMany(
+    [
+      { repo: REPO, version: '1.5.7-rc1' },
+      { repo: other, version: '2.0.0-rc1' },
+    ],
+    'staging',
+    false,
+    {
+      board: () => ({ update: () => {} }),
+      events: {
+        emit: (e) => {
+          if (e.type === 'done') throw new Error('EPIPE');
+        },
+      },
+      deploy: async (repo, _env, version) => ({ repo: repo.name, version, status: 'released', detail: 'ok' }),
+    },
+  );
+  assert.deepEqual(
+    outcomes.map((o) => `${o.repo}:${o.status}`),
+    ['VastPayPwa:released', 'VastMenuPwa:released'],
+  );
 });

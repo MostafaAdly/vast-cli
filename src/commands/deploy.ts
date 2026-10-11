@@ -429,13 +429,14 @@ export async function deployOne(
   // A sign-in wall in front of the API lands in the same place for the same
   // reason: whatever is blocking it, the tag IS committed, and calling that a
   // failure would be a lie about a deploy that already shipped.
-  const unconfirmed = (kind: 'token' | 'sso' | 'disabled'): DeployOutcome => {
+  // elapsedMs is 0 when no wait started; a wall hit mid-wait passes how long it waited.
+  const unconfirmed = (kind: 'token' | 'sso' | 'disabled', elapsedMs = 0): DeployOutcome => {
     events.emit({
       type: 'rollout',
       repo: repo.name,
       state: 'not confirmed',
       reason: kind === 'sso' ? 'ArgoCD API behind a sign-in' : kind === 'disabled' ? 'ArgoCD disabled' : 'no ArgoCD token',
-      elapsedMs: 0,
+      elapsedMs,
     });
     const why =
       kind === 'sso'
@@ -497,7 +498,7 @@ export async function deployOne(
 
   // The wall can also go up between the pre-dispatch read and the wait. Same
   // truth, same outcome: shipped, unconfirmed.
-  if (!rollout.ok && rollout.ssoWall) return unconfirmed('sso');
+  if (!rollout.ok && rollout.ssoWall) return unconfirmed('sso', rollout.elapsedMs);
 
   if (!rollout.ok) {
     const why = rollout.reason ?? 'rollout did not complete';
@@ -658,15 +659,20 @@ export async function deployMany(
     return note ? { ...outcome, detail: `${outcome.detail} · ${note}` } : outcome;
   };
   // Each repo reports `done` the moment it finishes — a long rollout must not
-  // hold back the news that a sibling already failed. Never rejects, so
-  // one throw cannot swallow the others' outcomes.
+  // hold back the news that a sibling already failed. Never rejects, so one
+  // throw cannot swallow the others' outcomes — not even a throwing sink: a
+  // broken stdout costs the event, never the release.
   const finished = await Promise.all(
     going.map((g, i) =>
       run(g.repo, env, g.version, dryRun, { board, row: i, labelWidth, events }, timing).then(
         (o) => withNote(i, o),
         (reason) => withNote(i, failedOutcome(i, reason)),
       ).then((final) => {
-        events.emit(doneEvent(final));
+        try {
+          events.emit(doneEvent(final));
+        } catch {
+          // Deliberately swallowed; see above.
+        }
         return final;
       }),
     ),
