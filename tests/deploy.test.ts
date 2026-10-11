@@ -590,6 +590,30 @@ test('a rollout that is not confirmed says why, as an event', async () => {
   });
 });
 
+test('without an ArgoCD token the rollout event says so', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({ readArgocdToken: () => null });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'rollout'),
+    [{ type: 'rollout', repo: 'VastPayPwa', state: 'not confirmed', reason: 'no ArgoCD token', elapsedMs: 0 }],
+  );
+});
+
+test('a rollout that fails is a failed rollout event carrying the reason', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    waitForRollout: async (): Promise<RolloutResult> => ({ ok: false, elapsedMs: 600000, reason: 'timed out after 10m00s' }),
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.equal(outcome.status, 'failed');
+  assert.deepEqual(seen.filter((e) => e.type === 'rollout'), [
+    { type: 'rollout', repo: 'VastPayPwa', state: 'failed', reason: 'timed out after 10m00s', elapsedMs: 600000 },
+  ]);
+});
+
 test('a sign-in wall hit mid-wait reports how long it waited', async () => {
   const { slot } = recordingSlot();
   const { events, seen } = recordingEvents();

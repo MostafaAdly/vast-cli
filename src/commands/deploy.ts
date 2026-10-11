@@ -54,13 +54,11 @@ import { DEFAULT_TIMING, formatElapsed, pollRun, type PollTiming } from '../util
 import { createStatusBoard, type BoardStream, type StatusBoard, type Tone } from '../utils/status-board.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { repoDir } from '../config/workspace.js';
+import type { DeployOutcome } from '../utils/outcome.js';
 
-export interface DeployOutcome {
-  repo: string;
-  version: string;
-  status: 'released' | 'skipped' | 'failed';
-  detail: string;
-}
+// Defined in utils so the event model need not import a command; re-exported
+// for everything that already imports it from here.
+export type { DeployOutcome };
 
 /**
  * The flags that mean "a whole release train" rather than named repos.

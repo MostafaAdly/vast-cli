@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import type { DeployOutcome } from '../commands/deploy.js';
+import type { DeployOutcome } from './outcome.js';
 
 export const NOTIFY_AFTER_MS = 60_000;
 

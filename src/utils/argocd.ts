@@ -355,7 +355,11 @@ export async function waitForRollout(
       lastApp = current;
       const elapsed = deps.now() - start;
       if (isDone(current)) {
-        deps.onState?.(`${current.syncStatus}/${current.healthStatus}`, elapsed);
+        // Once per state change, the final one included: with a custom isDone
+        // (the tag was already live) Synced/Healthy may have been reported
+        // while the wait went on, and must not be reported again.
+        const done = `${current.syncStatus}/${current.healthStatus}`;
+        if (done !== lastReported) deps.onState?.(done, elapsed);
         return { ok: true, elapsedMs: elapsed, app: current };
       }
 

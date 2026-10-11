@@ -7,7 +7,7 @@
  * never tell two different stories. Without --json the sink is a no-op.
  */
 
-import type { DeployOutcome } from '../commands/deploy.js';
+import type { DeployOutcome } from './outcome.js';
 import { firstLine, reportUnexpectedError } from './errors.js';
 
 /** Where a repo's develop → staging promotion stands when its plan is reported. */
