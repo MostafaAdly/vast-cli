@@ -13,6 +13,7 @@
  */
 
 import { Command, Option } from 'commander';
+import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo, type RepoConfig } from '../config/repos.js';
@@ -32,6 +33,7 @@ import {
   releaseBranchName,
   RELEASE_KINDS,
   type ReleaseKind,
+  type CutResult,
 } from '../utils/release-branch.js';
 import { resolvePicks, type ResolvedPick } from '../utils/picks.js';
 import { nextPatch, stripRc } from '../utils/version.js';
@@ -216,11 +218,27 @@ export async function promote(
   report: PromotionReport = newReport(),
 ): Promise<boolean> {
   // Every refusal goes through here so the report always knows why it stopped.
+  // The title alone can lose the cause ("cannot derive a release version"), so
+  // the body's first line rides along.
   const refuse = (title: string, body: string): false => {
     console.log(createErrorBox(title, body));
     report.result = 'refused';
-    report.error = title;
+    const cause = body.split('\n').find((line) => line.trim() !== '')?.trim();
+    report.error = cause ? `${title} — ${cause}` : title;
     return false;
+  };
+
+  // A cut that names a problem refused, dry run or not: a preview must not
+  // promise a PR the real run would refuse to open.
+  const recordCut = (cut: CutResult): boolean => {
+    report.url = cut.url;
+    if (cut.problem !== null || (cut.url === null && !dryRun)) {
+      report.result = 'refused';
+      report.error = cut.problem ?? `could not cut ${report.branch} or open its PR`;
+      return false;
+    }
+    report.result = cut.url !== null ? 'pr opened' : 'would open pr';
+    return true;
   };
 
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
@@ -299,13 +317,11 @@ export async function promote(
       report.kind = kind;
       report.branch = releaseBranchName(kind, version);
       log.info(`${repo.name}: ${what} → production, ${kind} ${version}`);
-      const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
-      report.url = url;
-      report.result = url !== null ? 'pr opened' : dryRun ? 'would open pr' : 'refused';
-      // The cut prints its own reason; the report still has to say it stopped.
-      if (report.result === 'refused') report.error = `could not cut ${report.branch} or open its PR`;
+      const cut = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
+      const ok = recordCut(cut);
+      const url = cut.url;
       // A dry run never returns a URL, but it still has a message to show.
-      if (slack && (url !== null || dryRun)) {
+      if (slack && ok) {
         report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun, picks });
       }
       if (url !== null) {
@@ -318,7 +334,7 @@ export async function promote(
           );
         }
       }
-      return url !== null || dryRun;
+      return ok;
     }
 
     const { ahead } = aheadBehind(dir, 'origin/staging', 'origin/production');
@@ -349,14 +365,12 @@ export async function promote(
     report.kind = kind;
     report.branch = releaseBranchName(kind, version);
     log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-    const url = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
-    report.url = url;
-    report.result = url !== null ? 'pr opened' : dryRun ? 'would open pr' : 'refused';
-    if (report.result === 'refused') report.error = `could not cut ${report.branch} or open its PR`;
-    if (slack && (url !== null || dryRun)) {
-      report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun });
+    const cut = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
+    const ok = recordCut(cut);
+    if (slack && ok) {
+      report.slack = await announceRelease(repo, dir, kind, version, cut.url, { dryRun });
     }
-    return url !== null || dryRun;
+    return ok;
   }
 
   const from = repo.promoteFrom.staging;
@@ -396,8 +410,9 @@ export async function promote(
     return true;
   }
 
-  mergeAndPush(dir, 'staging', `origin/${from}`);
+  // Counted before the push, so a push that throws still says what it carried.
   report.commits = ahead;
+  mergeAndPush(dir, 'staging', `origin/${from}`);
   report.result = 'merged';
   log.success(`${repo.name}: ${from} → staging pushed`);
   return true;
@@ -491,18 +506,36 @@ export async function runPromote(
   events.emit({ type: 'start', command: 'promote', args, dryRun: options.dryRun, repos: [repo.name] });
 
   const report = newReport();
-  const ok = await promote(
-    repo,
-    dir,
-    options.to as 'staging' | 'production',
-    options.dryRun,
-    kind,
-    options.targetVersion,
-    bodyMode,
-    options.pick ?? [],
-    options.slack ?? false,
-    report,
-  );
+  let ok: boolean;
+  try {
+    ok = await promote(
+      repo,
+      dir,
+      options.to as 'staging' | 'production',
+      options.dryRun,
+      kind,
+      options.targetVersion,
+      bodyMode,
+      options.pick ?? [],
+      options.slack ?? false,
+      report,
+    );
+  } catch (error) {
+    // A throw (a push, a git call, gh) must still end the stream with plan and
+    // done, or the app shows a promotion that never ends. The report keeps any
+    // success it recorded before the throw; otherwise it is still at its
+    // default, 'refused'. The lines are the ones the global handler prints.
+    const message = error instanceof Error ? error.message : String(error);
+    report.error = message;
+    ok = false;
+    console.error();
+    log.error('An unexpected error occurred:');
+    console.error(chalk.red(`  ${message}`));
+    if (process.argv.includes('--verbose') && error instanceof Error && error.stack) {
+      console.error();
+      console.error(chalk.gray(error.stack));
+    }
+  }
   events.emit({
     type: 'plan',
     repo: repo.name,
@@ -523,7 +556,8 @@ export async function runPromote(
   if (options.to === 'staging' && report.result === 'merged') {
     events.emit({ type: 'promoted', repo: repo.name, commits: report.commits ?? 0 });
   }
-  if (report.branch && report.version) {
+  // A refused cut opened no PR and would open none: no `pr` event for it.
+  if (report.branch && report.version && report.result !== 'refused') {
     events.emit({
       type: 'pr',
       repo: repo.name,
