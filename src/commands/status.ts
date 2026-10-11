@@ -9,13 +9,13 @@
 import { Command } from 'commander';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { REPOS, getRepo, isReleasable, type DeployEnv, type RepoConfig } from '../config/repos.js';
+import { REPOS, getRepo, isReleasable, type DeployEnv, type RepoConfig, type ReleaseTeam } from '../config/repos.js';
 import { repoDir } from '../config/workspace.js';
 import { deployedTag } from '../utils/deployments.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
 
-interface Row {
+export interface Row {
   name: string;
   staging: string;
   production: string;
@@ -158,9 +158,63 @@ function inspect(
   };
 }
 
+export interface StatusCell {
+  tag: string | null;
+  problem: string | null;
+}
+
+export interface StatusDrift {
+  text: string;
+  /** Commits develop has that staging lacks; null when that cannot be said. */
+  ahead: number | null;
+  problem: string | null;
+}
+
+export interface StatusJsonRepo {
+  repo: string;
+  displayName: string;
+  releaseTeam: ReleaseTeam | null;
+  staging: StatusCell;
+  production: StatusCell;
+  drift: StatusDrift;
+}
+
+export interface StatusJson {
+  generatedAt: string;
+  repos: StatusJsonRepo[];
+}
+
+/** The words the table prints instead of a version. In JSON they are problems, never tags. */
+const TAG_PROBLEMS = new Set(['not migrated', 'n/a', '?']);
+
+function cellOf(value: string): StatusCell {
+  return TAG_PROBLEMS.has(value) ? { tag: null, problem: value } : { tag: value, problem: null };
+}
+
+function driftOf(text: string): StatusDrift {
+  if (text === 'in sync') return { text, ahead: 0, problem: null };
+  const m = /\+(\d+)$/.exec(text);
+  return m ? { text, ahead: Number(m[1]), problem: null } : { text, ahead: null, problem: text };
+}
+
+/** The table, as data: built from the same rows, so the two cannot disagree. */
+export function statusJson(targets: RepoConfig[], rows: Row[], generatedAt: Date): StatusJson {
+  return {
+    generatedAt: generatedAt.toISOString(),
+    repos: rows.map((r, i) => ({
+      repo: r.name,
+      displayName: targets[i].displayName,
+      releaseTeam: targets[i].releaseTeam,
+      staging: cellOf(r.staging),
+      production: cellOf(r.production),
+      drift: driftOf(r.drift),
+    })),
+  };
+}
+
 async function executeStatus(
   repoName: string | undefined,
-  options: { all: boolean; dir?: string; fetch: boolean },
+  options: { all: boolean; dir?: string; fetch: boolean; json?: boolean },
 ): Promise<void> {
   const targets = repoName
     ? [getRepo(repoName)].filter((r): r is RepoConfig => Boolean(r))
@@ -182,19 +236,26 @@ async function executeStatus(
   if (options.fetch) {
     // Only animate on a terminal — piped output would keep the spinner's text
     // as a stray line.
-    const spinner = process.stdout.isTTY
+    const spinner = process.stdout.isTTY && !options.json
       ? createSpinner(`Refreshing ${targets.length} repo(s)...`).start()
       : null;
     fetchFailed = await refreshAll(targets, dirs);
     spinner?.stop();
   }
 
-  console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
+  if (!options.json) {
+    console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
+  }
 
   const tags = await readTags(targets);
   const rows = targets.map((r) =>
     inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name), tags.get(r.name)!),
   );
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(statusJson(targets, rows, new Date()), null, 2)}\n`);
+    return;
+  }
 
   // Widths come from the data, not constants — real tags run long
   // ("1.1.3-rc4-health") and a fixed width silently breaks the columns.
@@ -223,12 +284,14 @@ export function registerStatusCommand(program: Command): void {
     .option('-a, --all', 'Report on every configured repo', false)
     .option('--no-fetch', 'Skip the git fetch — DRIFT may be stale (tags are always read live)')
     .option('--dir <path>', 'Override the local checkout path')
+    .option('--json', 'Print the table as JSON and nothing else', false)
     .addHelpText(
       'after',
       `
 Examples:
   $ vast status --all              every repo, one screen
   $ vast status VastPayPwa         one repo
+  $ vast status --all --json       the same, as JSON for scripts and Vast Bar
 
 Reads only — it fetches and reports, and changes nothing.
 
