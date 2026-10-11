@@ -57,7 +57,8 @@ final class Store: ObservableObject {
         let busy = runs.contains { $0.state == .running }
         async let s = Shell.run(busy ? Commands.statusNoFetch : Commands.status, timeout: 120)
         async let d = Shell.run(Commands.doctor, timeout: 120)
-        async let p = Shell.run(Commands.pending, timeout: 180)
+        // pending has no --no-fetch: skip it under a run and keep the last counts.
+        async let p: ShellResult? = busy ? nil : await Shell.run(Commands.pending, timeout: 180)
         let (sr, dr, pr) = await (s, d, p)
         let decoder = VastJSON.decoder()
         var errors: [String] = []
@@ -67,8 +68,10 @@ final class Store: ObservableObject {
         // doctor exits 1 when a check fails; its JSON is still the answer.
         if let v = try? decoder.decode(DoctorSnapshot.self, from: Data(dr.stdout.utf8)) { doctor = v }
         else { errors.append("doctor: \(Self.lastLine(dr.stderr))") }
-        if let v = try? decoder.decode(PendingSnapshot.self, from: Data(pr.stdout.utf8)) { pending = v }
-        else { errors.append("pending: \(Self.lastLine(pr.stderr))") }
+        if let pr {
+            if let v = try? decoder.decode(PendingSnapshot.self, from: Data(pr.stdout.utf8)) { pending = v }
+            else { errors.append("pending: \(Self.lastLine(pr.stderr))") }
+        }
         // The cards are status; doctor and pending only decorate them.
         if statusRead { lastSuccess = Date() }
         refreshError = errors.isEmpty ? nil : errors.joined(separator: "\n")
