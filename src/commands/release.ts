@@ -245,7 +245,8 @@ export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome
       commits: null,
       promote: 'not run',
       notice: null,
-      detail: prepared.detail,
+      // One line, like done's: a failed tag read can carry pages of gh output.
+      detail: firstLine(prepared.detail),
     };
   }
   return {
@@ -301,7 +302,20 @@ export async function releaseMany(
     }
     planned.push(prepared);
   }
-  return deployMany(planned, 'staging', options.dryRun, { ...deps, events });
+  try {
+    return await deployMany(planned, 'staging', options.dryRun, { ...deps, events });
+  } catch (error) {
+    // deployMany settles each repo itself, but a throw before it gets that far
+    // (the board) would leave every planned repo with a plan and no done.
+    reportUnexpectedError(error);
+    const detail = firstLine(errorMessage(error));
+    return planned.map((p) => {
+      if (isOutcome(p)) return p;
+      const failed: DeployOutcome = { repo: p.repo.name, version: p.version, status: 'failed', detail };
+      events.emit(doneEvent(failed));
+      return failed;
+    });
+  }
 }
 
 /**

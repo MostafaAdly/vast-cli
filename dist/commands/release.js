@@ -165,7 +165,8 @@ export function planEvent(repo, prepared) {
             commits: null,
             promote: 'not run',
             notice: null,
-            detail: prepared.detail,
+            // One line, like done's: a failed tag read can carry pages of gh output.
+            detail: firstLine(prepared.detail),
         };
     }
     return {
@@ -213,7 +214,22 @@ export async function releaseMany(targets, options, deps = {}) {
         }
         planned.push(prepared);
     }
-    return deployMany(planned, 'staging', options.dryRun, { ...deps, events });
+    try {
+        return await deployMany(planned, 'staging', options.dryRun, { ...deps, events });
+    }
+    catch (error) {
+        // deployMany settles each repo itself, but a throw before it gets that far
+        // (the board) would leave every planned repo with a plan and no done.
+        reportUnexpectedError(error);
+        const detail = firstLine(errorMessage(error));
+        return planned.map((p) => {
+            if (isOutcome(p))
+                return p;
+            const failed = { repo: p.repo.name, version: p.version, status: 'failed', detail };
+            events.emit(doneEvent(failed));
+            return failed;
+        });
+    }
 }
 /**
  * The whole release, as an exit code rather than a process.exit, so it can be

@@ -631,7 +631,7 @@ test('prepareOne turns a promotion that throws into a failed outcome for that re
   });
 });
 
-test('a throw inside runRelease still ends the stream with end, exit code 1', async () => {
+test('a board that throws still gives the planned repo its done, then end with exit code 1', async () => {
   const { events, seen } = recorder();
   const code = await streamToEnd(events, () =>
     runRelease(['VastMenuPwa'], MANY_OPTIONS, events, [], {
@@ -643,6 +643,7 @@ test('a throw inside runRelease still ends the stream with end, exit code 1', as
     }),
   );
   assert.equal(code, 1);
+  assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'done', 'end']);
   assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
 });
 
