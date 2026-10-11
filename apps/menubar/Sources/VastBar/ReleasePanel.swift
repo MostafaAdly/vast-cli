@@ -48,6 +48,7 @@ struct ReleasePanel: View {
                         ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo)) }
                         if offersFixVersion || fixVersion {
                             Toggle("Use the first version above production (--fix-version)", isOn: $fixVersion)
+                                .disabled(starting)
                         }
                     }
                 }
@@ -67,7 +68,7 @@ struct ReleasePanel: View {
 
     /// Runs the previewed command for real — never one rebuilt from the toggles.
     private func confirm() {
-        guard let p = preview else { return }
+        guard startable, !loading, !starting, let p = preview else { return }
         starting = true
         error = nil
         Task {
@@ -80,6 +81,8 @@ struct ReleasePanel: View {
     }
 
     private func load() async {
+        // A start in flight owns the panel: no new dry run beside it, and its warning stays.
+        guard !starting else { return }
         generation += 1
         let mine = generation
         error = nil

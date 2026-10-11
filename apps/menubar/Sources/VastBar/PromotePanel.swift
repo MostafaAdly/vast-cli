@@ -20,7 +20,9 @@ struct PromotePanel: View {
     /// The preview on screen is for the toggles as they are now, and it opens a PR.
     private var openable: Bool {
         guard let p = preview, p.command == dryRun else { return false }
-        return p.summary.plans.first?.ok == true && !p.summary.prs.isEmpty && !p.summary.cliFailed
+        // With Slack on, the message it would post must be on screen before it can be posted.
+        let slackShown = !slack || p.summary.prs.contains { $0.slack != nil }
+        return p.summary.plans.first?.ok == true && !p.summary.prs.isEmpty && !p.summary.cliFailed && slackShown
     }
 
     var body: some View {
@@ -31,7 +33,9 @@ struct PromotePanel: View {
                 Text("Hotfix").tag(true)
             }
             .pickerStyle(.segmented)
+            .disabled(starting)
             Toggle("Post to Slack", isOn: $slack)
+                .disabled(starting)
             CappedScroll(maxHeight: 400) {
                 VStack(alignment: .leading, spacing: 10) {
                     if loading {
@@ -72,7 +76,7 @@ struct PromotePanel: View {
 
     /// Runs the previewed command for real — never one rebuilt from the toggles.
     private func confirm() {
-        guard let p = preview else { return }
+        guard openable, !loading, !starting, let p = preview else { return }
         starting = true
         error = nil
         Task {
@@ -85,6 +89,8 @@ struct PromotePanel: View {
     }
 
     private func load() async {
+        // A start in flight owns the panel: no new dry run beside it, and its warning stays.
+        guard !starting else { return }
         generation += 1
         let mine = generation
         error = nil

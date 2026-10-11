@@ -15,15 +15,22 @@ public enum Shell {
         await runLine(command.shellLine, timeout: timeout)
     }
 
+    /// Cancelling the calling task terminates the process, so a superseded
+    /// preview never keeps running (and fetching) beside its replacement.
     public static func runLine(_ line: String, timeout: TimeInterval) async -> ShellResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global().async {
-                continuation.resume(returning: runBlocking(line, timeout: timeout))
+        let handle = ProcessHandle()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: runBlocking(line, timeout: timeout, handle: handle))
+                }
             }
+        } onCancel: {
+            handle.cancel()
         }
     }
 
-    private static func runBlocking(_ line: String, timeout: TimeInterval) -> ShellResult {
+    private static func runBlocking(_ line: String, timeout: TimeInterval, handle: ProcessHandle) -> ShellResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-lc", line]
@@ -34,6 +41,7 @@ public enum Shell {
         do { try process.run() } catch {
             return ShellResult(stdout: "", stderr: "\(error)", exitCode: 127)
         }
+        handle.attach(process)
         // Drain both pipes as data arrives, or a chatty child fills one and blocks forever.
         let outReader = PipeReader(out.fileHandleForReading), errReader = PipeReader(err.fileHandleForReading)
         let timeoutFlag = FlagBox()
@@ -135,6 +143,23 @@ private final class PipeReader: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if !closed { closeLocked() }
         return data
+    }
+}
+
+/// The running process for a cancellation that may arrive before it starts.
+private final class ProcessHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    func attach(_ p: Process) {
+        lock.lock(); process = p; let stop = cancelled; lock.unlock()
+        if stop, p.isRunning { p.terminate() }
+    }
+
+    func cancel() {
+        lock.lock(); cancelled = true; let p = process; lock.unlock()
+        if let p, p.isRunning { p.terminate() }
     }
 }
 

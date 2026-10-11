@@ -92,4 +92,15 @@ final class ShellTests: XCTestCase {
         XCTAssertFalse(Shell.isAlive(-1))
         XCTAssertTrue(Shell.isAlive(getpid()))
     }
+
+    // A superseded preview must not leave its dry run going beside the new one.
+    func testCancellingARunStopsItsProcess() async {
+        let started = Date()
+        let task = Task { await Shell.runLine("sleep 20", timeout: 60) }
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        task.cancel()
+        let r = await task.value
+        XCTAssertNotEqual(r.exitCode, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+    }
 }
