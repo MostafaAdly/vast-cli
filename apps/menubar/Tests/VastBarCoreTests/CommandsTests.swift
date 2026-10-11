@@ -7,6 +7,29 @@ final class CommandsTests: XCTestCase {
         XCTAssertEqual(Commands.doctor.args, ["doctor", "--json"])
         XCTAssertEqual(Commands.pending.args, ["pending", "--all", "--short", "--json"])
         XCTAssertEqual(Commands.version.args, ["--version"])
+        XCTAssertEqual(Commands.statusNoFetch.args, ["status", "--all", "--json", "--no-fetch"])
+    }
+
+    func testWithoutDryRunIsThePreviewedCommandForReal() {
+        let promote = Commands.promote(repo: "VastPayPwa", hotfix: true, slack: true, dryRun: true)
+        XCTAssertEqual(promote.withoutDryRun.args,
+                       ["promote", "VastPayPwa", "--to", "production", "--as", "hotfix", "--slack", "--json"])
+        XCTAssertEqual(promote.withoutDryRun, Commands.promote(repo: "VastPayPwa", hotfix: true, slack: true, dryRun: false))
+        let train = Commands.release(.train(.frontend), dryRun: true, fixVersion: true)
+        XCTAssertEqual(train.withoutDryRun, Commands.release(.train(.frontend), dryRun: false, fixVersion: true))
+        let real = Commands.release(.repo("VastPayPwa"), dryRun: false, fixVersion: false)
+        XCTAssertEqual(real.withoutDryRun, real, "a real command is unchanged")
+    }
+
+    func testSafeTerminalLineIsADryRunThatNeverPosts() {
+        let promote = Commands.promote(repo: "VastPayPwa", hotfix: true, slack: true, dryRun: false)
+        XCTAssertEqual(promote.safeTerminalLine, "vast promote VastPayPwa --to production --as hotfix --dry-run")
+        XCTAssertEqual(promote.terminalLine, "vast promote VastPayPwa --to production --as hotfix --slack",
+                       "Copy command keeps the full command")
+        let release = Commands.release(.repo("VastPayPwa"), dryRun: false, fixVersion: true)
+        XCTAssertEqual(release.safeTerminalLine, "vast release VastPayPwa --fix-version --dry-run")
+        let dry = Commands.release(.train(.backend), dryRun: true, fixVersion: false)
+        XCTAssertEqual(dry.safeTerminalLine, "vast release --backend --dry-run", "--dry-run is not added twice")
     }
 
     func testReleaseOneRepoAndATrain() {

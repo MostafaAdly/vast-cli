@@ -8,6 +8,9 @@ public struct RunRecord: Codable, Equatable, Sendable, Identifiable {
     public let args: [String]
     public let startedAt: Date
     public var dismissed: Bool
+    /// The pid of a start whose outcome is not known yet: saved before the
+    /// launch so an unclear start can never be started a second time.
+    public static let pendingPID: Int32 = -1
     public init(id: String, pid: Int32, args: [String], startedAt: Date, dismissed: Bool) {
         self.id = id; self.pid = pid; self.args = args; self.startedAt = startedAt; self.dismissed = dismissed
     }

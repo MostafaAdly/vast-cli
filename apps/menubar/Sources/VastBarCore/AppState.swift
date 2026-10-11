@@ -34,9 +34,19 @@ public func runState(summary: RunSummary, alive: Bool) -> RunState {
 
 /// A run's process is alive only if its pid is, and only for two hours: after
 /// that a pid still answering is most likely a reused one, so a run with no
-/// `end` reads as died instead of running forever.
+/// `end` reads as died instead of running forever. A start whose pid is not
+/// known (`RunRecord.pendingPID`) reads as alive for ten minutes, then died;
+/// its pid is never asked about.
 public func isRunAlive(_ record: RunRecord, now: Date = Date(), pidAlive: (Int32) -> Bool = Shell.isAlive) -> Bool {
-    pidAlive(record.pid) && now.timeIntervalSince(record.startedAt) < 2 * 3600
+    let age = now.timeIntervalSince(record.startedAt)
+    if record.pid == RunRecord.pendingPID { return age < 10 * 60 }
+    return pidAlive(record.pid) && age < 2 * 3600
+}
+
+/// The repos a run works on: its events' once they arrive, before that the
+/// ones its argument list covers.
+public func reposOf(_ run: TrackedRun, status: StatusSnapshot?) -> [String] {
+    run.summary.repos.isEmpty ? reposCovered(args: run.record.args, status: status) : run.summary.repos.map(\.repo)
 }
 
 /// Red beats blue beats amber beats green.
@@ -76,7 +86,7 @@ public func repoCards(status: StatusSnapshot?, doctor: DoctorSnapshot?, pending:
         problems += (doctor?.checks ?? [])
             .filter { $0.group == "Repos" && $0.label == r.repo && $0.status != .ok }
             .map(\.detail)
-        let mine = runs.filter { run in run.summary.repos.contains { $0.repo == r.repo } }
+        let mine = runs.filter { reposOf($0, status: status).contains(r.repo) }
         let latestReal = mine.last { !$0.summary.dryRun && !$0.record.dismissed }
         return RepoCard(
             id: r.repo,
@@ -140,8 +150,7 @@ public func startRefusal(named: [String], covers: [String], runs: [TrackedRun], 
     if let refusal = repoNameRefusal(named) { return refusal }
     let wanted = Set(covers)
     for run in runs where run.state == .running {
-        let repos = run.summary.repos.isEmpty ? reposCovered(args: run.record.args, status: status) : run.summary.repos.map(\.repo)
-        if let busy = repos.first(where: wanted.contains) {
+        if let busy = reposOf(run, status: status).first(where: wanted.contains) {
             return "\(busy) already has a run in progress — wait for it to finish."
         }
     }

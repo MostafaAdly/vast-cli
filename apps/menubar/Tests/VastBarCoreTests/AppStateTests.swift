@@ -31,6 +31,34 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(isRunAlive(young, now: now, pidAlive: { $0 != 42 }), "asks about the record's own pid")
     }
 
+    func testAStartWhosePidIsUnknownReadsAliveForTenMinutes() {
+        let now = Date()
+        let pending = { (age: TimeInterval) in
+            RunRecord(id: "p", pid: RunRecord.pendingPID, args: [], startedAt: now.addingTimeInterval(-age), dismissed: false)
+        }
+        var asked = false
+        XCTAssertTrue(isRunAlive(pending(60), now: now, pidAlive: { _ in asked = true; return false }))
+        XCTAssertFalse(asked, "pid -1 is never passed to kill: kill(-1, 0) reaches every process")
+        XCTAssertTrue(isRunAlive(pending(9 * 60), now: now, pidAlive: { _ in false }))
+        XCTAssertFalse(isRunAlive(pending(11 * 60), now: now, pidAlive: { _ in true }))
+        // its NDJSON still decides once `end` is there
+        let ended = summarize([.end(exitCode: 0)])
+        XCTAssertEqual(runState(summary: ended, alive: isRunAlive(pending(60), now: now)), .finished)
+    }
+
+    func testAStartWithNoEventsYetCoversItsArgsRepos() throws {
+        let status = try status()
+        let fresh = run(args: ["release", "--frontend", "--json"], events: [], state: .running)
+        XCTAssertEqual(reposOf(fresh, status: status), ["VastPayPwaV2", "VastMenuPwa"])
+        let started = run(args: ["release", "--frontend", "--json"],
+                          events: [.start(command: "release", args: [], dryRun: false, repos: ["VastMenuPwa"])],
+                          state: .running)
+        XCTAssertEqual(reposOf(started, status: status), ["VastMenuPwa"], "events win once they arrive")
+        let cards = repoCards(status: status, doctor: nil, pending: nil, runs: [fresh])
+        XCTAssertEqual(cards.map(\.isRunning), [true, true, false])
+        XCTAssertNil(cards[0].progress, "no progress yet: the row reads starting…")
+    }
+
     private func run(args: [String], events: [VastEvent], state: RunState) -> TrackedRun {
         TrackedRun(record: RunRecord(id: UUID().uuidString, pid: 1, args: args, startedAt: Date(), dismissed: false),
                    summary: summarize(events), state: state)

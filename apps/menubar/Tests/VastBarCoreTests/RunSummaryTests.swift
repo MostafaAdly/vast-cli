@@ -59,6 +59,28 @@ final class RunSummaryTests: XCTestCase {
         XCTAssertEqual(s.repos[1].detail, "ended without finishing")
         XCTAssertTrue(s.anyFailed)
         XCTAssertFalse(s.cliFailed, "A finished by a real done")
+        XCTAssertFalse(s.repos[0].endedUnfinished, "A ended by its own done")
+        XCTAssertTrue(s.repos[1].endedUnfinished, "B's failure was synthesised at end")
+    }
+
+    func testACliFailureMarksTheRepoEndedUnfinished() throws {
+        let s = try summary("cli-failed.ndjson")
+        XCTAssertTrue(s.repos[0].endedUnfinished)
+        XCTAssertFalse(try summary("release-real.ndjson").repos[0].endedUnfinished)
+    }
+
+    func testWillSkipShowsOnlyARealSkipReason() throws {
+        let dry = try summary("release-dry-run.ndjson")
+        XCTAssertNil(dry.willSkip("VastPayPwaV2"), "\"dry run\" is the preview itself, not a reason")
+        XCTAssertNil(dry.willSkip("VastMenuPwa"), "failed, not skipped")
+        XCTAssertNil(dry.willSkip("Nope"))
+        let skipped = summarize([
+            .start(command: "release", args: [], dryRun: true, repos: ["A"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: nil, promote: "not run", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "skipped", detail: "not cloned")),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(skipped.willSkip("A"), "not cloned")
     }
 
     func testADispatchedRepoLeftUnfinishedAtAZeroEndIsFailed() {

@@ -14,6 +14,9 @@ public struct RepoProgress: Equatable, Sendable, Identifiable {
     public var runUrl: String?
     public var prUrl: String?
     public var detail: String?
+    /// Failed by the "ended without finishing" synthesis at `end`, not by a
+    /// `done`: the reason is only on stderr.
+    public var endedUnfinished = false
     public var id: String { repo }
     public init(repo: String) { self.repo = repo }
 }
@@ -37,6 +40,14 @@ public struct RunSummary: Equatable, Sendable {
     public var cliFailed: Bool { (exitCode ?? 0) != 0 && !anyFinishedByDone }
 
     public init() {}
+
+    /// Why a dry run says `repo` will be skipped, or nil. "dry run" is the
+    /// preview itself, not a reason.
+    public func willSkip(_ repo: String) -> String? {
+        guard let p = repos.first(where: { $0.repo == repo }), p.phase == .finished(status: "skipped"),
+              let detail = p.detail, detail != "dry run" else { return nil }
+        return detail
+    }
 }
 
 /// Folds a run's events into what the card shows. Order of repos: as `start`
@@ -97,6 +108,7 @@ public func summarize(_ events: [VastEvent]) -> RunSummary {
                 guard code != 0 || touched.contains(s.repos[i].repo) else { continue }
                 s.repos[i].phase = .finished(status: "failed")
                 s.repos[i].detail = "ended without finishing"
+                s.repos[i].endedUnfinished = true
             }
         case .unknown:
             break

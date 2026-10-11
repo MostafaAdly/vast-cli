@@ -35,9 +35,25 @@ public struct VastCommand: Equatable, Sendable {
     }
 }
 
+public extension VastCommand {
+    /// The real command a preview stands for: the same arguments, in the same
+    /// order, without `--dry-run`. The confirm runs exactly what was shown.
+    var withoutDryRun: VastCommand { VastCommand(args: args.filter { $0 != "--dry-run" }) }
+
+    /// What "Open dry run in Terminal" types: the human command, never posting
+    /// to Slack and always a dry run, because Terminal runs it at once.
+    var safeTerminalLine: String {
+        var safe = args.filter { $0 != "--json" && $0 != "--slack" }
+        if !safe.contains("--dry-run") { safe.append("--dry-run") }
+        return (["vast"] + safe.map(shellQuote)).joined(separator: " ")
+    }
+}
+
 public enum Commands {
     public static let version = VastCommand(args: ["--version"])
     public static let status = VastCommand(args: ["status", "--all", "--json"])
+    /// Status while a run is going: no git fetch under a release in the same checkouts.
+    public static let statusNoFetch = VastCommand(args: ["status", "--all", "--json", "--no-fetch"])
     public static let doctor = VastCommand(args: ["doctor", "--json"])
     public static let pending = VastCommand(args: ["pending", "--all", "--short", "--json"])
 
