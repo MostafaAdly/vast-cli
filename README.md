@@ -595,9 +595,11 @@ stored file, with nothing written to disk.
 A macOS menu bar app for the same releases, in `apps/menubar/`. The icon's dot says
 whether anything needs you: **green** all good, **blue** a release or promote is running,
 **amber** something to look at (a doctor warning, a version behind production, a tag that
-could not be read), **red** a doctor failure or a run that failed. Click it for one card
-per repo: staging → production versions, drift, how many PRs are waiting for production,
-and any problem in plain words, with doctor's warnings and failures at the bottom.
+could not be read, a staging backend down), **red** a doctor failure or a run that failed.
+Click it for a one-line summary, the staging backends' health (VastPay API and VastMenu
+API, pinged at `/health` every minute), and one card per repo grouped by team: staging →
+production versions, drift, how many PRs are waiting for production, and any problem in
+plain words. Doctor's machine-wide warnings and failures sit at the bottom.
 
 ```bash
 apps/menubar/build.sh     # build, sign for this machine, install to /Applications
@@ -607,14 +609,15 @@ It needs macOS 13+, Xcode's Swift toolchain to build, and vast **2.9.0** or newe
 login shell's PATH: it runs `vast … --json` through `/bin/zsh -lc` and never decides
 anything itself. It refreshes when you open it and every five minutes.
 
-**Release** and **Promote…** on a card (or **Release frontend** / **Release backend**) are
-always preview-then-confirm: the app runs the `--dry-run --json` form first and shows the
+To release, tick one or more repos (or **Select all** on a team) and press **Preview
+release**: one `vast release A B C` covers them all. Promote is the paper-plane button on a
+card. Both are always preview-then-confirm: the app runs the `--dry-run --json` form first and shows the
 plan — the version, the commits, a refusal with its reason, for promote the PR branch and
 the exact Slack message — and only the button inside that preview runs it for real, with
 exactly the options you previewed. "Post to Slack" is off by default. A real run is
 started detached and written to `~/Library/Application Support/Vast Bar/runs/`, so
-quitting the app never stops it; the card follows it live (promoting → building → rolling
-out → done) and links the build and the PR. A run that fails shows the CLI's last lines,
+quitting the app never stops it; the card follows it live (Promote → Build → Roll out →
+Live) and links the build and the PR. A run that fails shows the CLI's last lines,
 and "Open dry run in Terminal" re-runs it as a dry run — never for real, never posting.
 
 It never merges a PR, never deploys production, and never handles credentials: log in to

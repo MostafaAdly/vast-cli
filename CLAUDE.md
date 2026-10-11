@@ -232,6 +232,13 @@ in `Vast-deployments`:
   credentials in the app.
 - The app's minimum CLI is 2.9.0 (`CLICompat.minimum`); the event shapes it decodes are
   `src/utils/events.ts` — change both together.
+- Staging health is the one thing the app checks itself: plain GETs to the two backends'
+  `/health` (hosts from Vast-deployments' staging `stage.yaml`), listed once in
+  `StagingHealth.endpoints`. A down backend is amber, never red.
+- The look has one rule Mostafa asked for: surfaces stay neutral, colour only as accents
+  and same-hue tints, one filled button per screen. Colours live in `Theme.swift` only.
+  Any scrollable area uses `CappedScroll` — a bare `ScrollView` collapses to zero height
+  in the menu bar window (it shipped blank once).
 
 ## Slack announcements
 
