@@ -301,6 +301,8 @@ export async function promote(
       const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
       report.url = url;
       report.result = url !== null ? 'pr opened' : dryRun ? 'would open pr' : 'refused';
+      // The cut prints its own reason; the report still has to say it stopped.
+      if (report.result === 'refused') report.error = `could not cut ${report.branch} or open its PR`;
       // A dry run never returns a URL, but it still has a message to show.
       if (slack && (url !== null || dryRun)) {
         report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun, picks });
@@ -349,6 +351,7 @@ export async function promote(
     const url = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
     report.url = url;
     report.result = url !== null ? 'pr opened' : dryRun ? 'would open pr' : 'refused';
+    if (report.result === 'refused') report.error = `could not cut ${report.branch} or open its PR`;
     if (slack && (url !== null || dryRun)) {
       report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun });
     }
