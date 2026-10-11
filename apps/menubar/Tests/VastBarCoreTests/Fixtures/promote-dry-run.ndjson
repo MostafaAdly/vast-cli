@@ -1,0 +1,6 @@
+{"type":"start","command":"promote","args":["promote","VastPayPwaV2","--to","production","--slack","--dry-run","--json"],"dryRun":true,"repos":["VastPayPwaV2"],"at":"2026-10-11T09:00:00.000Z"}
+{"type":"plan","repo":"VastPayPwaV2","ok":true,"version":"2.1.18","commits":12,"promote":"not run","notice":null,"detail":null,"at":"2026-10-11T09:00:03.000Z"}
+{"type":"pr","repo":"VastPayPwaV2","branch":"release/2.1.18","url":null,"version":"2.1.18","slack":{"text":"• Vastpay Pwa V2 - release/2.1.18 - fixes a thing (@dev-one)","posted":false,"error":null},"at":"2026-10-11T09:00:03.000Z"}
+{"type":"surprise","repo":"VastPayPwaV2","at":"2026-10-11T09:00:03.000Z"}
+{"type":"done","repo":"VastPayPwaV2","version":"2.1.18","status":"skipped","detail":"dry run","at":"2026-10-11T09:00:03.000Z"}
+{"type":"end","exitCode":0,"at":"2026-10-11T09:00:03.100Z"}

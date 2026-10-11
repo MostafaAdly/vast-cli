@@ -1,0 +1,6 @@
+{"type":"start","command":"release","args":["release","--frontend","--dry-run","--json"],"dryRun":true,"repos":["VastPayPwaV2","VastMenuPwa"],"at":"2026-10-11T09:00:00.000Z"}
+{"type":"plan","repo":"VastPayPwaV2","ok":true,"version":"2.1.18-rc6","commits":5,"promote":"will merge","notice":null,"detail":null,"at":"2026-10-11T09:00:01.000Z"}
+{"type":"plan","repo":"VastMenuPwa","ok":false,"version":"1.6.12-rc1","commits":null,"promote":"not run","notice":null,"detail":"next 1.6.12-rc1 is not above production 1.6.12 — re-run with --fix-version","at":"2026-10-11T09:00:02.000Z"}
+{"type":"done","repo":"VastMenuPwa","version":"1.6.12-rc1","status":"failed","detail":"next 1.6.12-rc1 is not above production 1.6.12 — re-run with --fix-version","at":"2026-10-11T09:00:02.000Z"}
+{"type":"done","repo":"VastPayPwaV2","version":"2.1.18-rc6","status":"skipped","detail":"dry run","at":"2026-10-11T09:00:02.100Z"}
+{"type":"end","exitCode":1,"at":"2026-10-11T09:00:02.200Z"}
