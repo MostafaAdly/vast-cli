@@ -20,3 +20,7 @@ npm-debug.log*
 # Editor
 .idea/
 *.swp
+
+# Swift package build output (apps/menubar)
+.build/
+.swiftpm/

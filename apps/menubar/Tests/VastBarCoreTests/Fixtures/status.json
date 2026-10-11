@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-10-11T09:00:00.000Z",
+  "repos": [
+    {
+      "repo": "VastPayPwaV2", "displayName": "Vastpay Pwa V2", "releaseTeam": "frontend",
+      "staging": { "tag": "2.1.18-rc5", "problem": null },
+      "production": { "tag": "2.1.17", "problem": null },
+      "drift": { "text": "develop +5", "ahead": 5, "problem": null }
+    },
+    {
+      "repo": "VastMenuPwa", "displayName": "Vastmenu Pwa", "releaseTeam": "frontend",
+      "staging": { "tag": null, "problem": "?" },
+      "production": { "tag": "1.6.12", "problem": null },
+      "drift": { "text": "in sync", "ahead": 0, "problem": null }
+    },
+    {
+      "repo": "VastPay-BackEnd", "displayName": "Vastpay Backend", "releaseTeam": "backend",
+      "staging": { "tag": "3.0.1-rc2", "problem": null },
+      "production": { "tag": null, "problem": "not migrated" },
+      "drift": { "text": "no develop", "ahead": null, "problem": "no develop" }
+    }
+  ]
+}
