@@ -182,6 +182,7 @@ function hasTag(app, tag) {
 export async function waitForRollout(label, appName, tag, deps, timing = DEFAULT_ROLLOUT_TIMING, isDone = (app) => rolloutDone(app, tag)) {
     const start = deps.now();
     let lastState = null;
+    let lastReported = null;
     let lastPrintedAt = 0;
     let consecutiveErrors = 0;
     let lastApp;
@@ -232,13 +233,24 @@ export async function waitForRollout(label, appName, tag, deps, timing = DEFAULT
         if (current) {
             lastApp = current;
             const elapsed = deps.now() - start;
-            if (isDone(current))
+            if (isDone(current)) {
+                // Once per state change, the final one included: with a custom isDone
+                // (the tag was already live) Synced/Healthy may have been reported
+                // while the wait went on, and must not be reported again.
+                const done = `${current.syncStatus}/${current.healthStatus}`;
+                if (done !== lastReported)
+                    deps.onState?.(done, elapsed);
                 return { ok: true, elapsedMs: elapsed, app: current };
+            }
             // Before the tag shows up, sync/health describe the OLD image and would
             // read as a finished deploy. Say what we are actually waiting for.
             const state = hasTag(current, tag)
                 ? `${current.syncStatus}/${current.healthStatus}`
                 : `waiting for ${tag}`;
+            if (state !== lastReported) {
+                deps.onState?.(state, elapsed);
+                lastReported = state;
+            }
             if (state !== lastState || elapsed - lastPrintedAt >= timing.heartbeatMs) {
                 deps.print(`  ${label}  argocd ${appName}  ${state}  ${formatElapsed(elapsed)}`);
                 lastState = state;

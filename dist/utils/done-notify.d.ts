@@ -7,7 +7,7 @@
  * nothing. VAST_NOTIFY=0 turns it off. Never throws — a notification that
  * cannot be shown must not fail a deploy that already succeeded.
  */
-import type { DeployOutcome } from '../commands/deploy.js';
+import type { DeployOutcome } from './outcome.js';
 export declare const NOTIFY_AFTER_MS = 60000;
 export interface DoneMessage {
     title: string;

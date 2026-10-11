@@ -17,16 +17,14 @@
 import { Command } from 'commander';
 import { type DeployEnv, type RepoConfig } from '../config/repos.js';
 import { getApplication, refreshApplication, waitForRollout, type RolloutTiming } from '../utils/argocd.js';
-import { type ReadProduction } from '../utils/version-guard.js';
+import { type GuardNotice, type ReadProduction } from '../utils/version-guard.js';
+import { type EventSink } from '../utils/events.js';
+import type { PromotionReport } from '../utils/promotion-report.js';
 import { getRunStatus, runWorkflow } from '../utils/github.js';
 import { type PollTiming } from '../utils/run-poll.js';
-import { type StatusBoard } from '../utils/status-board.js';
-export interface DeployOutcome {
-    repo: string;
-    version: string;
-    status: 'released' | 'skipped' | 'failed';
-    detail: string;
-}
+import { type BoardStream, type StatusBoard } from '../utils/status-board.js';
+import type { DeployOutcome } from '../utils/outcome.js';
+export type { DeployOutcome };
 /**
  * The flags that mean "a whole release train" rather than named repos.
  *
@@ -114,6 +112,8 @@ export interface DeploySlot {
     board: StatusBoard;
     row: number;
     labelWidth: number;
+    /** Machine-readable progress; a no-op unless --json. */
+    events?: EventSink;
 }
 /** Everything `deployOne` reaches the outside world with, so a test can hand it fakes. */
 export interface DeployDeps {
@@ -167,6 +167,8 @@ export interface Deployable {
     version: string;
     /** Appended to the summary line, e.g. that the version was auto-corrected. */
     note?: string;
+    notice?: GuardNotice;
+    promotion?: PromotionReport;
 }
 export declare function isOutcome(x: Deployable | DeployOutcome): x is DeployOutcome;
 /**
@@ -183,13 +185,21 @@ export interface DeployManyDeps {
     /** The per-repo deploy, so `release` can share this orchestration and fake it. */
     deploy?: (repo: RepoConfig, env: DeployEnv, version: string, dryRun: boolean, slot: DeploySlot, timing: PollTiming) => Promise<DeployOutcome>;
     board?: (rows: number) => StatusBoard;
+    /**
+     * Where the board draws: stdout by default, stderr in --json mode. Whether
+     * the board is live (and so how often it heartbeats) is this stream's
+     * TTY-ness, not stdout's.
+     */
+    stream?: BoardStream;
+    /** Machine-readable progress; a no-op unless --json. */
+    events?: EventSink;
 }
 /**
  * Several repos at once, each on its own line of one shared board.
  *
  * One board for every repo: two would each believe they own the cursor.
- * allSettled rather than all, so one repo's watch throwing cannot swallow the
- * outcomes of the repos that finished fine — that is the whole promise of the
+ * Each repo's throw is caught into its own failed outcome, so one repo's watch
+ * throwing cannot swallow the outcomes of the repos that finished fine — that is the whole promise of the
  * multi-repo path, so it is structural here rather than a matter of every
  * caller downstream remembering to catch. Outcomes come back in the order the
  * repos were given, so the summary reads the way the command was typed.

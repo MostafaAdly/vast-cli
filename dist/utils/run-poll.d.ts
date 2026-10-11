@@ -21,6 +21,8 @@ export interface PollDeps {
     sleep: (ms: number) => Promise<void>;
     now: () => number;
     print: (line: string) => void;
+    /** Called once per status change (including completion), for machine-readable progress. */
+    onStatus?: (status: RunStatus, elapsedMs: number) => void;
 }
 export interface PollTiming {
     pollMs: number;

@@ -87,8 +87,10 @@ export function announceDone(outcomes, env, run) {
     const message = doneMessage(outcomes, env);
     if (!message)
         return;
-    if (process.stdout.isTTY)
-        process.stdout.write('\x07');
+    // The bell is for a person at a terminal, never data: stderr, so a --json
+    // stdout stays one JSON object per line.
+    if (process.stderr.isTTY)
+        process.stderr.write('\x07');
     desktopNotify(message);
 }
 //# sourceMappingURL=done-notify.js.map

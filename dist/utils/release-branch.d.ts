@@ -23,8 +23,17 @@ export declare const __testing: {
 export type ReleaseKind = 'release' | 'hotfix';
 export declare const RELEASE_KINDS: ReleaseKind[];
 export declare function releaseBranchName(kind: ReleaseKind, version: string): string;
-/** @returns the PR URL, or null if nothing was opened. */
-export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, bodyMode?: BodyMode): string | null;
+/**
+ * What a cut did. `url` is the opened PR (null on a dry run or a refusal);
+ * `problem` says why it refused, and is null whenever it did not — so a dry run
+ * that would refuse reads as a refusal, not as a PR that would open.
+ */
+export interface CutResult {
+    url: string | null;
+    problem: string | null;
+}
+/** @returns the PR URL, or why the branch could not be cut. */
+export declare function cutReleaseBranch(dir: string, repo: string, kind: ReleaseKind, version: string, dryRun: boolean, bodyMode?: BodyMode): CutResult;
 /**
  * The selective path: cut <kind>/<version> from production and cherry-pick the
  * chosen commits onto it, instead of merging staging wholesale.
@@ -32,8 +41,11 @@ export declare function cutReleaseBranch(dir: string, repo: string, kind: Releas
  * All or nothing. A conflict aborts the pick, restores the original branch,
  * and deletes the temp branch — the checkout ends exactly where it started.
  *
- * @returns the PR URL, or null if nothing was opened.
+ * A dry run applies nothing, so it cannot see a pick conflict: its `problem`
+ * is always null.
+ *
+ * @returns the PR URL, or why the branch could not be cut.
  */
-export declare function cutPickedBranch(dir: string, repo: string, kind: ReleaseKind, version: string, picks: ResolvedPick[], dryRun: boolean, bodyMode?: BodyMode, merges?: BranchMerge[]): string | null;
+export declare function cutPickedBranch(dir: string, repo: string, kind: ReleaseKind, version: string, picks: ResolvedPick[], dryRun: boolean, bodyMode?: BodyMode, merges?: BranchMerge[]): CutResult;
 export {};
 //# sourceMappingURL=release-branch.d.ts.map

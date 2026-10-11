@@ -47,7 +47,7 @@ function git(dir, args) {
 export function releaseBranchName(kind, version) {
     return `${kind}/${stripRc(version)}`;
 }
-/** @returns the PR URL, or null if nothing was opened. */
+/** @returns the PR URL, or why the branch could not be cut. */
 export function cutReleaseBranch(dir, repo, kind, version, dryRun, bodyMode = 'changelog') {
     const branch = releaseBranchName(kind, version);
     const finalVersion = stripRc(version);
@@ -61,21 +61,24 @@ export function cutReleaseBranch(dir, repo, kind, version, dryRun, bodyMode = 'c
         log.error(`staging → production conflicts in ${trial.conflicts.length} file(s):`);
         for (const f of trial.conflicts)
             log.error(`  • ${f}`);
-        return null;
+        return {
+            url: null,
+            problem: `staging → production conflicts in ${trial.conflicts.length} file(s): ${trial.conflicts.join(', ')}`,
+        };
     }
     if (dryRun) {
         if (onlyVersionConflict) {
             log.muted(`  (would align ${GENERATED_VERSION_FILE} version, then merge cleanly)`);
         }
         log.muted(`  (dry run — would cut ${branch} and open a PR into production)`);
-        return null;
+        return { url: null, problem: null };
     }
     git(dir, ['checkout', '-B', branch, 'origin/production']);
     if (onlyVersionConflict) {
         const stagingVersion = readVersionField(git(dir, ['show', `origin/staging:${GENERATED_VERSION_FILE}`]));
         if (!stagingVersion) {
             log.error(`Could not read the version field from staging's ${GENERATED_VERSION_FILE}.`);
-            return null;
+            return { url: null, problem: `could not read the version field from staging's ${GENERATED_VERSION_FILE}` };
         }
         const path = join(dir, GENERATED_VERSION_FILE);
         writeFileSync(path, setVersionField(readFileSync(path, 'utf-8'), stagingVersion), 'utf-8');
@@ -106,7 +109,7 @@ export function cutReleaseBranch(dir, repo, kind, version, dryRun, bodyMode = 'c
         releaseBody(dir, 'origin/production', branch, bodyMode),
     ], { encoding: 'utf-8' }).trim();
     log.success(`${repo}: opened ${url}`);
-    return url;
+    return { url, problem: null };
 }
 /**
  * The selective path: cut <kind>/<version> from production and cherry-pick the
@@ -115,7 +118,10 @@ export function cutReleaseBranch(dir, repo, kind, version, dryRun, bodyMode = 'c
  * All or nothing. A conflict aborts the pick, restores the original branch,
  * and deletes the temp branch — the checkout ends exactly where it started.
  *
- * @returns the PR URL, or null if nothing was opened.
+ * A dry run applies nothing, so it cannot see a pick conflict: its `problem`
+ * is always null.
+ *
+ * @returns the PR URL, or why the branch could not be cut.
  */
 export function cutPickedBranch(dir, repo, kind, version, picks, dryRun, bodyMode = 'changelog', merges = []) {
     const branch = releaseBranchName(kind, version);
@@ -131,7 +137,7 @@ export function cutPickedBranch(dir, repo, kind, version, picks, dryRun, bodyMod
             merges.length ? `merge ${merges.length} branch(es)` : '',
         ].filter(Boolean);
         log.muted(`  (dry run — would cut ${branch}, ${parts.join(' and ')}, and open a PR into production)`);
-        return null;
+        return { url: null, problem: null };
     }
     const original = currentBranch(dir);
     git(dir, ['checkout', '-B', branch, 'origin/production']);
@@ -147,7 +153,10 @@ export function cutPickedBranch(dir, repo, kind, version, picks, dryRun, bodyMod
         for (const f of applied.conflicts)
             log.error(`  • ${f}`);
         log.error('Nothing was changed. Resolve on staging first, or pick a smaller set.');
-        return null;
+        return {
+            url: null,
+            problem: `pick ${applied.failedSha.slice(0, 7)} (${failed?.subject ?? '?'}) conflicts: ${applied.conflicts.join(', ')}`,
+        };
     }
     // Branch merges come after all copies, in the order given. Same
     // all-or-nothing promise: any conflict rolls the whole branch back.
@@ -159,7 +168,10 @@ export function cutPickedBranch(dir, repo, kind, version, picks, dryRun, bodyMod
         for (const f of merged.conflicts)
             log.error(`  • ${f}`);
         log.error('Nothing was changed. Resolve the conflict on the branch first.');
-        return null;
+        return {
+            url: null,
+            problem: `merging ${failed?.name ?? merged.failedRef} conflicts: ${merged.conflicts.join(', ')}`,
+        };
     }
     git(dir, ['push', '-u', 'origin', branch]);
     const url = execFileSync('gh', [
@@ -177,6 +189,6 @@ export function cutPickedBranch(dir, repo, kind, version, picks, dryRun, bodyMod
         releaseBody(dir, 'origin/production', branch, bodyMode, { selective: true }),
     ], { encoding: 'utf-8' }).trim();
     log.success(`${repo}: opened ${url}`);
-    return url;
+    return { url, problem: null };
 }
 //# sourceMappingURL=release-branch.js.map

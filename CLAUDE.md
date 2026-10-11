@@ -193,6 +193,27 @@ in `Vast-deployments`:
   cannot post. Never run it live while developing: `~/.vast-cli/slack.json`
   exists and it would post to the team channel.
 
+## Machine-readable output (--json)
+
+- `status --json` and `doctor --json` print one JSON document; `release --json` and
+  `promote --json` stream NDJSON events (`src/utils/events.ts`) for the Vast Bar menu
+  bar app (`docs/superpowers/specs/2026-10-11-vast-bar-design.md`). Stdout carries only
+  JSON: `routeHumanOutputToStderr()` (`src/utils/json-mode.ts`) moves every human line
+  to stderr at the command boundary, the board writes to stderr, and so do the update
+  hint, `--verbose`'s banner and the done bell.
+- Events come from the same call sites that update the board and build outcomes,
+  through an `EventSink` (a no-op without --json; `guardedSink` so a broken stdout never
+  costs a release). Never add a second code path that reconstructs events from text,
+  and never write to stdout from command code except through the sink.
+- Every repo in a stream gets a `plan` and a `done`, including one refused before
+  deploying or one whose preparation throws; `streamToEnd` makes `end` (with the exit
+  code) the last line even on a throw. Vast Bar relies on both to tell "finished" from
+  "still running". The promote stream reads `plan.ok`/`done` from the `PromotionReport`,
+  not from promote's boolean — a dry run that would conflict exits 0 but reports
+  `ok: false`.
+- Exit codes are the same with and without `--json`. `--json` never prompts; anything
+  added later that would ask must instead fail that repo with a detail naming the input.
+
 ## Slack announcements
 
 - `vast promote --to production --slack` posts one message after the release PR

@@ -72,6 +72,8 @@ export interface RolloutDeps {
     sleep: (ms: number) => Promise<void>;
     now: () => number;
     print: (line: string) => void;
+    /** Called once per state change, and with "Synced/Healthy" when done, for machine-readable progress. */
+    onState?: (state: string, elapsedMs: number) => void;
 }
 export interface RolloutTiming {
     pollMs: number;

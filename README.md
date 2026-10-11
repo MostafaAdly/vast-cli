@@ -222,6 +222,11 @@ and `?` means the lookup itself failed.
 have. Only DRIFT needs a local checkout — the tags are read over the API, so they
 are reported even for a repo you have never cloned.
 
+Add `--json` for the same table as data: `staging` and `production` as `{ tag, problem }`
+(`tag` is null when the cell reads `not migrated`, `n/a` or `?`, and `problem` says which),
+drift as `{ text, ahead, problem }`. `vast doctor --json` prints its checks the same way.
+See [Machine-readable output](#machine-readable-output).
+
 ### Is this machine ready? `vast doctor`
 
 ```bash
@@ -404,6 +409,47 @@ It uses `osascript` on macOS and `notify-send` on Linux when that is installed, 
 does nothing anywhere else; no notification ever fails a deploy. On macOS the first
 one may ask for notification permission (System Settings → Notifications → Script
 Editor). Set `VAST_NOTIFY=0` to turn it off.
+
+### Machine-readable output
+
+For scripts, and for the Vast Bar menu bar app, four commands take `--json`:
+
+```bash
+vast status --all --json                                # one JSON document
+vast doctor --json                                      # one JSON document; exit 1 when a check fails
+vast release VastPayPwa --dry-run --json                # NDJSON: the plan only
+vast promote VastPayPwa --to production -n --json       # NDJSON: the PR it would open
+```
+
+`status --json` and `doctor --json` print one JSON document and nothing else.
+`release … --json` and `promote … --json` stream one JSON object per line on stdout as
+things happen. In `--json` mode stdout carries only JSON: the board, the summary, the
+update hint, `--verbose`'s banner and the terminal bell all go to stderr. Exit codes are
+the same as without `--json`. `--json` never prompts. Add `--dry-run` for the preview
+alone.
+
+Every event has `type` and `at` (ISO time):
+
+| `type` | Fields | When |
+|---|---|---|
+| `start` | `command`, `args`, `dryRun`, `repos` | first |
+| `plan` | `repo`, `ok`, `version`, `commits`, `promote`, `notice`, `detail` | a repo is prepared; `ok: false` means it was refused, `detail` says why |
+| `promoted` | `repo`, `commits` | develop merged into staging |
+| `dispatched` | `repo`, `version`, `runId`, `runUrl` | the Pipeline run started |
+| `run` | `repo`, `status`, `conclusion`, `elapsedMs` | the build's status changed |
+| `rollout` | `repo`, `state`, `reason`, `elapsedMs` | ArgoCD's state changed: `waiting for <tag>`, `<sync>/<health>`, `failed`, or `not confirmed` with the reason (disabled, no token, sign-in wall) |
+| `pr` | `repo`, `branch`, `url`, `version`, `slack` | promote opened its PR; on a dry run `url` is null and `slack` (`{ text, posted, error }`, or null without `--slack`) is the message it would post |
+| `done` | `repo`, `version`, `status`, `detail` | a repo finished: `released`, `skipped` or `failed`, with the summary's detail on one line |
+| `end` | `exitCode` | last, always — even when something throws |
+
+Every repo in a stream gets a `plan` and a `done`, including one refused before it
+deploys or one whose preparation fails outright; the rest of a train carries on.
+
+Two refusals a dry run cannot see, so a preview can look clean and the real run still
+refuse: a `--pick` whose cherry-pick conflicts, and a staging `package.json` whose
+version cannot be read. A production `promote --dry-run` that would hit a merge conflict
+exits 0, as it always has, but its stream says so: `plan.ok` is false and `done` is
+`failed` with the conflict as detail.
 
 ### Production
 

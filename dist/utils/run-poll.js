@@ -43,6 +43,7 @@ export function formatElapsed(ms) {
 export async function pollRun(label, runId, deps, timing = DEFAULT_TIMING) {
     const start = deps.now();
     let lastStatus = null;
+    let lastReported = null;
     let lastPrintedAt = 0;
     let consecutiveErrors = 0;
     for (;;) {
@@ -70,6 +71,11 @@ export async function pollRun(label, runId, deps, timing = DEFAULT_TIMING) {
         }
         if (current) {
             const elapsed = deps.now() - start;
+            const key = `${current.status}/${current.conclusion ?? ''}`;
+            if (key !== lastReported) {
+                deps.onStatus?.(current, elapsed);
+                lastReported = key;
+            }
             if (current.status === 'completed') {
                 return { ok: current.conclusion === 'success', conclusion: current.conclusion, elapsedMs: elapsed };
             }

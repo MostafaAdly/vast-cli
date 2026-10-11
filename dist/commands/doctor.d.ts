@@ -9,5 +9,10 @@
 import { Command } from 'commander';
 import { type Check } from '../utils/doctor.js';
 export declare function renderChecks(checks: Check[]): string[];
+/** The check list, as data — the same list the terminal output is drawn from. */
+export declare function doctorJson(checks: Check[], generatedAt: Date): {
+    generatedAt: string;
+    checks: Check[];
+};
 export declare function registerDoctorCommand(program: Command): void;
 //# sourceMappingURL=doctor.d.ts.map
