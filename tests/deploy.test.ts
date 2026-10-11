@@ -19,6 +19,7 @@ import {
   type RolloutResult,
 } from '../src/utils/argocd.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
+import type { VastEvent } from '../src/utils/events.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
 function sweep(over: Partial<Sweep> = {}): Sweep {
@@ -546,4 +547,44 @@ test('with ArgoCD disabled the deploy runs and no ArgoCD call is made', async ()
   assert.match(outcome.detail, /ArgoCD disabled/);
   assert.match(outcome.detail, /vast argocd enable/);
   assert.match(lines.at(-1) ?? '', /rollout not confirmed \(ArgoCD disabled\)/);
+});
+
+function recordingEvents(): { events: { emit: (e: VastEvent) => void }; seen: VastEvent[] } {
+  const seen: VastEvent[] = [];
+  return { events: { emit: (e) => seen.push(e) }, seen };
+}
+
+test('a deploy streams dispatched, run progress and its rollout', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    getRunStatus: async () => ({ status: 'completed', conclusion: 'success' }),
+  });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(seen[0], {
+    type: 'dispatched',
+    repo: 'VastPayPwa',
+    version: '1.5.7-rc1',
+    runId: 77,
+    runUrl: 'https://github.com/Vast-menu/VastPayPwa/actions/runs/77',
+  });
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'run').map((e) => (e.type === 'run' ? `${e.status}/${e.conclusion}` : '')),
+    ['completed/success'],
+  );
+});
+
+test('a rollout that is not confirmed says why, as an event', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({ argocdEnabled: () => false });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  const rollout = seen.find((e) => e.type === 'rollout');
+  assert.deepEqual(rollout && { ...rollout, elapsedMs: 0 }, {
+    type: 'rollout',
+    repo: 'VastPayPwa',
+    state: 'not confirmed',
+    reason: 'ArgoCD disabled',
+    elapsedMs: 0,
+  });
 });

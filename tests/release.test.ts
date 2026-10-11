@@ -11,9 +11,10 @@ import {
   type ReleaseOptions,
   type Sweep,
 } from '../src/commands/release.js';
-import { notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
+import { deployMany, notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
+import type { VastEvent } from '../src/utils/events.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
 function sweep(over: Partial<Sweep> = {}): Sweep {
@@ -474,5 +475,23 @@ test('--fix-version cannot be combined with --target-version', () => {
   assert.match(
     validateReleaseOptions(['VastPayPwa'], { ...opts({ targetVersion: '1.0.0-rc1' }), fixVersion: true }) ?? '',
     /mutually exclusive/,
+  );
+});
+
+test('deployMany emits done for every repo it deploys, even one that throws', async () => {
+  const seen: VastEvent[] = [];
+  const [a, b] = targetsFor(['VastMenuPwa', 'VastMenu-DashBoard']);
+  const outcomes = await deployMany([{ repo: a, version: '1.0.0-rc1' }, { repo: b, version: '2.0.0-rc1' }], 'staging', false, {
+    board: () => ({ update: () => {} }),
+    events: { emit: (e) => seen.push(e) },
+    deploy: async (repo, _env, version) => {
+      if (repo.name === 'VastMenu-DashBoard') throw new Error('boom');
+      return released(repo, version);
+    },
+  });
+  assert.deepEqual(outcomes.map((o) => o.status), ['released', 'failed']);
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'done').map((e) => (e.type === 'done' ? `${e.repo}:${e.status}` : '')).sort(),
+    ['VastMenu-DashBoard:failed', 'VastMenuPwa:released'],
   );
 });

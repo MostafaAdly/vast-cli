@@ -42,7 +42,9 @@ import {
 } from '../utils/argocd.js';
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
-import { guardStagingVersion, type ReadProduction } from '../utils/version-guard.js';
+import { guardStagingVersion, type GuardNotice, type ReadProduction } from '../utils/version-guard.js';
+import { NO_EVENTS, doneEvent, type EventSink } from '../utils/events.js';
+import type { PromotionReport } from '../utils/promotion-report.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
 import { announceDone } from '../utils/done-notify.js';
@@ -243,6 +245,8 @@ export interface DeploySlot {
   board: StatusBoard;
   row: number;
   labelWidth: number;
+  /** Machine-readable progress; a no-op unless --json. */
+  events?: EventSink;
 }
 
 /** Everything `deployOne` reaches the outside world with, so a test can hand it fakes. */
@@ -296,6 +300,7 @@ export async function deployOne(
 ): Promise<DeployOutcome> {
   const label = repo.name.padEnd(slot.labelWidth);
   const say = (line: string, tone: Tone): void => slot.board.update(slot.row, line, tone);
+  const events = slot.events ?? NO_EVENTS;
   const outcome = (status: DeployOutcome['status'], detail: string): DeployOutcome => ({
     repo: repo.name,
     version,
@@ -382,6 +387,7 @@ export async function deployOne(
 
   const runId = dispatched.runId;
   const url = runUrl(repo.name, runId);
+  events.emit({ type: 'dispatched', repo: repo.name, version, runId, runUrl: url });
   const run = await pollRun(
     label,
     runId,
@@ -390,6 +396,8 @@ export async function deployOne(
       sleep,
       now: Date.now,
       print: (line) => say(line, 'muted'),
+      onStatus: (s, ms) =>
+        events.emit({ type: 'run', repo: repo.name, status: s.status, conclusion: s.conclusion, elapsedMs: ms }),
     },
     timing,
   );
@@ -422,6 +430,13 @@ export async function deployOne(
   // reason: whatever is blocking it, the tag IS committed, and calling that a
   // failure would be a lie about a deploy that already shipped.
   const unconfirmed = (kind: 'token' | 'sso' | 'disabled'): DeployOutcome => {
+    events.emit({
+      type: 'rollout',
+      repo: repo.name,
+      state: 'not confirmed',
+      reason: kind === 'sso' ? 'ArgoCD API behind a sign-in' : kind === 'disabled' ? 'ArgoCD disabled' : 'no ArgoCD token',
+      elapsedMs: 0,
+    });
     const why =
       kind === 'sso'
         ? 'tag committed — rollout not confirmed (ArgoCD API behind a sign-in)'
@@ -471,6 +486,7 @@ export async function deployOne(
       sleep,
       now: Date.now,
       print: (line) => say(line, 'muted'),
+      onState: (state, ms) => events.emit({ type: 'rollout', repo: repo.name, state, reason: null, elapsedMs: ms }),
     },
     deps.rolloutTiming ?? DEFAULT_ROLLOUT_TIMING,
     alreadyLive
@@ -485,6 +501,7 @@ export async function deployOne(
 
   if (!rollout.ok) {
     const why = rollout.reason ?? 'rollout did not complete';
+    events.emit({ type: 'rollout', repo: repo.name, state: 'failed', reason: why, elapsedMs: rollout.elapsedMs });
     say(`  ${label}  argocd ${app}  ${why}  ${rolledFor}  ${appUrl}`, 'error');
     return outcome('failed', `${version} built, but ${why} — ${appUrl}`);
   }
@@ -551,6 +568,8 @@ export interface Deployable {
   version: string;
   /** Appended to the summary line, e.g. that the version was auto-corrected. */
   note?: string;
+  notice?: GuardNotice;
+  promotion?: PromotionReport;
 }
 
 export function isOutcome(x: Deployable | DeployOutcome): x is DeployOutcome {
@@ -572,7 +591,10 @@ export async function guardedStaging(
   const guard = await guardStagingVersion(repo, dir, candidate, options, readProduction);
   if (!guard.ok) return { repo: repo.name, version: candidate, status: 'failed', detail: guard.detail };
   if (guard.notice) (guard.notice.tone === 'warn' ? log.warn : log.muted)(`  ${guard.notice.text}`);
-  return guard.note ? { repo, version: guard.version, note: guard.note } : { repo, version: guard.version };
+  const ready: Deployable = { repo, version: guard.version };
+  if (guard.note) ready.note = guard.note;
+  if (guard.notice) ready.notice = guard.notice;
+  return ready;
 }
 
 /** The pieces of a multi-repo deploy a test replaces; production code passes none. */
@@ -587,14 +609,16 @@ export interface DeployManyDeps {
     timing: PollTiming,
   ) => Promise<DeployOutcome>;
   board?: (rows: number) => StatusBoard;
+  /** Machine-readable progress; a no-op unless --json. */
+  events?: EventSink;
 }
 
 /**
  * Several repos at once, each on its own line of one shared board.
  *
  * One board for every repo: two would each believe they own the cursor.
- * allSettled rather than all, so one repo's watch throwing cannot swallow the
- * outcomes of the repos that finished fine — that is the whole promise of the
+ * Each repo's throw is caught into its own failed outcome, so one repo's watch
+ * throwing cannot swallow the outcomes of the repos that finished fine — that is the whole promise of the
  * multi-repo path, so it is structural here rather than a matter of every
  * caller downstream remembering to catch. Outcomes come back in the order the
  * repos were given, so the summary reads the way the command was typed.
@@ -621,23 +645,32 @@ export async function deployMany(
   const labelWidth = Math.max(...going.map((g) => g.repo.name.length), 0);
   const board = (deps.board ?? createStatusBoard)(going.length);
   const run = deps.deploy ?? deployOne;
-  const settled = await Promise.allSettled(
-    going.map((g, i) => run(g.repo, env, g.version, dryRun, { board, row: i, labelWidth }, timing)),
-  );
-  const finished = settled.map((r, i): DeployOutcome => {
-    const outcome: DeployOutcome =
-      r.status === 'fulfilled'
-        ? r.value
-        : {
-            repo: going[i].repo.name,
-            version: going[i].version,
-            status: 'failed',
-            detail: r.reason instanceof Error ? r.reason.message : String(r.reason),
-          };
-    // A note belongs in the summary too, not only in the scrollback above the board.
+  const events = deps.events ?? NO_EVENTS;
+  const failedOutcome = (i: number, reason: unknown): DeployOutcome => ({
+    repo: going[i].repo.name,
+    version: going[i].version,
+    status: 'failed',
+    detail: reason instanceof Error ? reason.message : String(reason),
+  });
+  // A note belongs in the summary too, not only in the scrollback above the board.
+  const withNote = (i: number, outcome: DeployOutcome): DeployOutcome => {
     const note = going[i].note;
     return note ? { ...outcome, detail: `${outcome.detail} · ${note}` } : outcome;
-  });
+  };
+  // Each repo reports `done` the moment it finishes — a long rollout must not
+  // hold back the news that a sibling already failed. Never rejects, so
+  // one throw cannot swallow the others' outcomes.
+  const finished = await Promise.all(
+    going.map((g, i) =>
+      run(g.repo, env, g.version, dryRun, { board, row: i, labelWidth, events }, timing).then(
+        (o) => withNote(i, o),
+        (reason) => withNote(i, failedOutcome(i, reason)),
+      ).then((final) => {
+        events.emit(doneEvent(final));
+        return final;
+      }),
+    ),
+  );
 
   let next = 0;
   return planned.map((p) => (isOutcome(p) ? p : finished[next++]));
