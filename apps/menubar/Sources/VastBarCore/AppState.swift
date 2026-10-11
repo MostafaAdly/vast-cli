@@ -49,15 +49,18 @@ public func reposOf(_ run: TrackedRun, status: StatusSnapshot?) -> [String] {
     run.summary.repos.isEmpty ? reposCovered(args: run.record.args, status: status) : run.summary.repos.map(\.repo)
 }
 
-/// Red beats blue beats amber beats green.
-public func iconState(doctor: DoctorSnapshot?, status: StatusSnapshot?, runs: [TrackedRun]) -> IconState {
+/// Red beats blue beats amber beats green. A staging backend that is down
+/// is amber: worth a look, never a failure of ours.
+public func iconState(doctor: DoctorSnapshot?, status: StatusSnapshot?, runs: [TrackedRun],
+                      health: [String: HealthState] = [:]) -> IconState {
     let visible = runs.filter { !$0.record.dismissed }
     if doctor?.checks.contains(where: { $0.status == .fail }) == true || visible.contains(where: \.failed) {
         return .failed
     }
     if visible.contains(where: { $0.state == .running }) { return .running }
     let unreadable = status?.repos.contains { $0.staging.problem == "?" || $0.production.problem == "?" || $0.drift.problem == "?" } ?? false
-    if doctor?.checks.contains(where: { $0.status == .warn }) == true || unreadable { return .attention }
+    let backendDown = health.values.contains(where: \.isDown)
+    if doctor?.checks.contains(where: { $0.status == .warn }) == true || unreadable || backendDown { return .attention }
     return .ok
 }
 
