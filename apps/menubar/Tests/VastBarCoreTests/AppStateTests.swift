@@ -165,6 +165,11 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(attentionLines(doctor: try doctor()).map(\.label), ["ArgoCD staging", "VastMenuPwa"])
     }
 
+    // A repo's own warnings already sit on its card; the footer only lists the rest.
+    func testFooterLinesLeaveRepoChecksToTheirCards() throws {
+        XCTAssertEqual(footerLines(doctor: try doctor()).map(\.label), ["ArgoCD staging"])
+    }
+
     func testTrainRepos() throws {
         XCTAssertEqual(trainRepos(.frontend, status: try status()), ["VastPayPwaV2", "VastMenuPwa"])
         XCTAssertEqual(trainRepos(.backend, status: try status()), ["VastPay-BackEnd"])

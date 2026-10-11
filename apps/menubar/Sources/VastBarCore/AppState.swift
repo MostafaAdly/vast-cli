@@ -129,6 +129,11 @@ public func attentionLines(doctor: DoctorSnapshot?) -> [DoctorCheck] {
     (doctor?.checks ?? []).filter { $0.status != .ok }
 }
 
+/// The popover's doctor footer: a repo's own checks already show on its card.
+public func footerLines(doctor: DoctorSnapshot?) -> [DoctorCheck] {
+    attentionLines(doctor: doctor).filter { $0.group != "Repos" }
+}
+
 public func trainRepos(_ train: Train, status: StatusSnapshot?) -> [String] {
     (status?.repos ?? []).filter { $0.releaseTeam == train.rawValue }.map(\.repo)
 }

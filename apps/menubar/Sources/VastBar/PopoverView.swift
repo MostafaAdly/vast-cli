@@ -13,7 +13,8 @@ struct PopoverView: View {
                 SelectionBar()
             }
         }
-        .task { await store.refresh() }
+        // Not .task: closing the popover would cancel the refresh and kill its vast commands.
+        .onAppear { Task { await store.refresh() } }
     }
 
     @ViewBuilder private var content: some View {
@@ -37,7 +38,7 @@ struct PopoverView: View {
                         }
                         if store.status != nil { SummaryTilesView(tiles: store.tiles) }
                         ForEach(teamSections(store.cards)) { TeamSectionView(section: $0) }
-                        DoctorSection(lines: attentionLines(doctor: store.doctor))
+                        DoctorSection(lines: footerLines(doctor: store.doctor))
                     }
                     .padding(12)
                 }
@@ -97,16 +98,16 @@ struct HeaderView: View {
     private var loaded: Bool { store.lastSuccess != nil }
     private var title: String { loaded ? store.headline.title : "Vast Bar" }
 
-    /// The cause truncates; when it was updated always shows.
+    /// The cause gets its own lines so it is read, not cut; when it was updated sits under it.
     @ViewBuilder private var subtitle: some View {
         if let last = store.lastSuccess {
             let rel = RelativeDateTimeFormatter().localizedString(for: last, relativeTo: Date())
-            HStack(spacing: 0) {
-                Text(store.headline.detail).help(store.headline.detail).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                Text(" · ").foregroundStyle(.secondary).fixedSize()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(store.headline.detail).help(store.headline.detail).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
                 Text(store.stale ? "stale, last good refresh \(rel)" : "updated \(rel)")
-                    .foregroundStyle(store.stale ? Theme.waiting : Color.secondary)
-                    .lineLimit(1).fixedSize()
+                    .foregroundStyle(store.stale ? Theme.waiting : Color(nsColor: .tertiaryLabelColor))
+                    .lineLimit(1)
             }
         } else {
             Text(store.refreshing ? "Loading…" : "No data yet").foregroundStyle(.secondary)
