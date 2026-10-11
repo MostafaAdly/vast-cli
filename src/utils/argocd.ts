@@ -225,6 +225,8 @@ export interface RolloutDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   print: (line: string) => void;
+  /** Called once per state change, and with "Synced/Healthy" when done, for machine-readable progress. */
+  onState?: (state: string, elapsedMs: number) => void;
 }
 
 export interface RolloutTiming {
@@ -296,6 +298,7 @@ export async function waitForRollout(
 ): Promise<RolloutResult> {
   const start = deps.now();
   let lastState: string | null = null;
+  let lastReported: string | null = null;
   let lastPrintedAt = 0;
   let consecutiveErrors = 0;
   let lastApp: ArgoApp | undefined;
@@ -351,13 +354,20 @@ export async function waitForRollout(
     if (current) {
       lastApp = current;
       const elapsed = deps.now() - start;
-      if (isDone(current)) return { ok: true, elapsedMs: elapsed, app: current };
+      if (isDone(current)) {
+        deps.onState?.(`${current.syncStatus}/${current.healthStatus}`, elapsed);
+        return { ok: true, elapsedMs: elapsed, app: current };
+      }
 
       // Before the tag shows up, sync/health describe the OLD image and would
       // read as a finished deploy. Say what we are actually waiting for.
       const state = hasTag(current, tag)
         ? `${current.syncStatus}/${current.healthStatus}`
         : `waiting for ${tag}`;
+      if (state !== lastReported) {
+        deps.onState?.(state, elapsed);
+        lastReported = state;
+      }
       if (state !== lastState || elapsed - lastPrintedAt >= timing.heartbeatMs) {
         deps.print(`  ${label}  argocd ${appName}  ${state}  ${formatElapsed(elapsed)}`);
         lastState = state;

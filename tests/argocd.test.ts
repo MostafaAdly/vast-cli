@@ -543,3 +543,31 @@ test('no ArgoCD call sends a cookie header', async () => {
   await refreshApplication('https://argo.example', 't', 'app', fetchFn);
   assert.deepEqual(seen, [undefined, undefined, undefined, undefined]);
 });
+
+test('onState reports each rollout state change and the final Synced/Healthy', async () => {
+  const apps = [
+    { syncStatus: 'Synced', healthStatus: 'Healthy', images: ['r/app:1.0.0'], revision: 'a' },
+    { syncStatus: 'OutOfSync', healthStatus: 'Progressing', images: ['r/app:1.0.1'], revision: 'b' },
+    { syncStatus: 'Synced', healthStatus: 'Healthy', images: ['r/app:1.0.1'], revision: 'b' },
+  ];
+  let i = 0;
+  let clock = 0;
+  const seen: string[] = [];
+  const result = await waitForRollout(
+    'X',
+    'app',
+    '1.0.1',
+    {
+      getApp: async () => apps[Math.min(i++, apps.length - 1)],
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      now: () => clock,
+      print: () => {},
+      onState: (state) => seen.push(state),
+    },
+    { pollMs: 5000, heartbeatMs: 30000, timeoutMs: 900000, maxConsecutiveErrors: 12 },
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(seen, ['waiting for 1.0.1', 'OutOfSync/Progressing', 'Synced/Healthy']);
+});

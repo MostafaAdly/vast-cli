@@ -139,3 +139,19 @@ test('formatElapsed reads like a stopwatch', () => {
   assert.equal(formatElapsed(65_000), '1m05s');
   assert.equal(formatElapsed(3_723_000), '1h02m03s');
 });
+
+test('onStatus reports each status change once, including completion', async () => {
+  const s = scripted([
+    { status: 'queued', conclusion: null },
+    { status: 'in_progress', conclusion: null },
+    { status: 'in_progress', conclusion: null },
+    { status: 'completed', conclusion: 'success' },
+  ]);
+  const seen: string[] = [];
+  await pollRun('X', 1, { ...s.deps, onStatus: (st) => seen.push(`${st.status}/${st.conclusion}`) }, {
+    pollMs: 5000,
+    heartbeatMs: 30000,
+    maxConsecutiveErrors: 12,
+  });
+  assert.deepEqual(seen, ['queued/null', 'in_progress/null', 'completed/success']);
+});
