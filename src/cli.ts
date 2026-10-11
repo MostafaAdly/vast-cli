@@ -7,7 +7,6 @@
 
 import { Command, Help } from 'commander';
 import { spawn } from 'child_process';
-import chalk from 'chalk';
 import { renderRootHelp } from './utils/help.js';
 import { pendingHint, isDue, readState, refreshInBackground } from './utils/update-check.js';
 import { registerInitCommand } from './commands/init.js';
@@ -23,7 +22,8 @@ import { registerReleaseCommand } from './commands/release.js';
 import { registerProductionCommand } from './commands/production.js';
 import { registerArgocdCommand } from './commands/argocd.js';
 import { registerSlackCommand } from './commands/slack.js';
-import { colors, log } from './utils/ui.js';
+import { colors } from './utils/ui.js';
+import { reportUnexpectedError } from './utils/errors.js';
 
 /**
  * CLI version, generated from package.json by scripts/sync-version.mjs.
@@ -74,8 +74,10 @@ export class VastCli {
       .hook('preAction', (thisCommand) => {
         // Global pre-action hook for any setup needed before commands run
         const verbose = thisCommand.opts().verbose;
+        // stderr: this runs before any command's action, so before --json has
+        // routed human output away from stdout.
         if (verbose) {
-          log.muted('Running in verbose mode...');
+          console.error(colors.muted('Running in verbose mode...'));
         }
       });
 
@@ -172,20 +174,7 @@ export class VastCli {
       await this.program.parseAsync(process.argv);
     } catch (error) {
       // Global error handler
-      console.error();
-      log.error('An unexpected error occurred:');
-      
-      if (error instanceof Error) {
-        console.error(chalk.red(`  ${error.message}`));
-        
-        if (process.argv.includes('--verbose') && error.stack) {
-          console.error();
-          console.error(chalk.gray(error.stack));
-        }
-      } else {
-        console.error(chalk.red(`  ${String(error)}`));
-      }
-      
+      reportUnexpectedError(error);
       process.exit(1);
     }
   }

@@ -43,7 +43,7 @@ import {
 import { deployedTag } from '../utils/deployments.js';
 import { nextRc, stripRc } from '../utils/version.js';
 import { guardStagingVersion, type GuardNotice, type ReadProduction } from '../utils/version-guard.js';
-import { NO_EVENTS, doneEvent, type EventSink } from '../utils/events.js';
+import { NO_EVENTS, doneEvent, guardedSink, type EventSink } from '../utils/events.js';
 import type { PromotionReport } from '../utils/promotion-report.js';
 import { fetchBranches, isAncestor, refExists } from '../utils/git.js';
 import { notify } from '../utils/notify.js';
@@ -646,7 +646,8 @@ export async function deployMany(
   const labelWidth = Math.max(...going.map((g) => g.repo.name.length), 0);
   const board = (deps.board ?? createStatusBoard)(going.length);
   const run = deps.deploy ?? deployOne;
-  const events = deps.events ?? NO_EVENTS;
+  // A broken stdout costs the event, never the release: see guardedSink.
+  const events = guardedSink(deps.events ?? NO_EVENTS);
   const failedOutcome = (i: number, reason: unknown): DeployOutcome => ({
     repo: going[i].repo.name,
     version: going[i].version,
@@ -668,11 +669,7 @@ export async function deployMany(
         (o) => withNote(i, o),
         (reason) => withNote(i, failedOutcome(i, reason)),
       ).then((final) => {
-        try {
-          events.emit(doneEvent(final));
-        } catch {
-          // Deliberately swallowed; see above.
-        }
+        events.emit(doneEvent(final));
         return final;
       }),
     ),

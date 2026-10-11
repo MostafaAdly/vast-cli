@@ -283,6 +283,8 @@ test('a promotion that throws still ends with plan and done, exit 1', async () =
     assert.ok(plan.type === 'plan' && plan.ok === false && plan.commits === 1 && plan.detail);
     const done = seen[2];
     assert.ok(done.type === 'done' && done.status === 'failed' && done.detail.length > 0);
+    assert.ok(!done.detail.includes('\n'), 'a thrown error reaches done as its first line only');
+    assert.match(done.detail, /^Command failed: git/);
   } finally {
     f.cleanup();
   }

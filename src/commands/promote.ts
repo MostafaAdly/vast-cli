@@ -13,7 +13,6 @@
  */
 
 import { Command, Option } from 'commander';
-import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { getRepo, type RepoConfig } from '../config/repos.js';
@@ -52,7 +51,8 @@ import { lookupUserByEmail, postMessage } from '../utils/slack.js';
 import { buildReleaseMessage, releaseContributors } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { newReport, type PromotionReport } from '../utils/promotion-report.js';
-import { ndjsonSink, NO_EVENTS, type EventSink, type SlackResult } from '../utils/events.js';
+import { ndjsonSink, NO_EVENTS, streamToEnd, type EventSink, type SlackResult } from '../utils/events.js';
+import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
 import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 
 /**
@@ -524,17 +524,11 @@ export async function runPromote(
     // A throw (a push, a git call, gh) must still end the stream with plan and
     // done, or the app shows a promotion that never ends. The report keeps any
     // success it recorded before the throw; otherwise it is still at its
-    // default, 'refused'. The lines are the ones the global handler prints.
-    const message = error instanceof Error ? error.message : String(error);
-    report.error = message;
+    // default, 'refused'.
+    // The whole error is printed; the stream carries its first line.
+    report.error = firstLine(errorMessage(error));
     ok = false;
-    console.error();
-    log.error('An unexpected error occurred:');
-    console.error(chalk.red(`  ${message}`));
-    if (process.argv.includes('--verbose') && error instanceof Error && error.stack) {
-      console.error();
-      console.error(chalk.gray(error.stack));
-    }
+    reportUnexpectedError(error);
   }
   events.emit({
     type: 'plan',
@@ -578,12 +572,11 @@ async function executePromote(repoName: string, options: PromoteCommandOptions):
     if (code !== 0) process.exit(code);
     return;
   }
-  // stdout is a data channel from here on: one JSON object per line.
+  // stdout is a data channel from here on: one JSON object per line, and
+  // `end` is always the last of them, even after a throw.
   routeHumanOutputToStderr();
   const events = ndjsonSink();
-  const code = await runPromote(repoName, options, events, process.argv.slice(2));
-  events.emit({ type: 'end', exitCode: code });
-  process.exitCode = code;
+  process.exitCode = await streamToEnd(events, () => runPromote(repoName, options, events, process.argv.slice(2)));
 }
 
 export function registerPromoteCommand(program: Command): void {

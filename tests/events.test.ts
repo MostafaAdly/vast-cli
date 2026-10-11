@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { NO_EVENTS, doneEvent, ndjsonSink, type VastEvent } from '../src/utils/events.js';
+import { NO_EVENTS, doneEvent, guardedSink, ndjsonSink, streamToEnd, type VastEvent } from '../src/utils/events.js';
 
 test('the NDJSON sink writes one JSON object per line, stamped with the time', () => {
   const lines: string[] = [];
@@ -24,6 +24,43 @@ test('a done event carries the outcome the summary prints', () => {
     doneEvent({ repo: 'VastMenuPwa', version: '1.6.13-rc1', status: 'failed', detail: 'run 9 failed — url' }),
     { type: 'done', repo: 'VastMenuPwa', version: '1.6.13-rc1', status: 'failed', detail: 'run 9 failed — url' },
   );
+});
+
+test('a done event carries only the first line of a multi-line error', () => {
+  const done = doneEvent({
+    repo: 'VastMenuPwa',
+    version: '1.6.13-rc1',
+    status: 'failed',
+    detail: 'Command failed: gh workflow run build-deploy.yml\nHTTP 422: Unexpected inputs',
+  });
+  assert.ok(done.type === 'done');
+  assert.equal(done.detail, 'Command failed: gh workflow run build-deploy.yml');
+});
+
+test('a guarded sink swallows a write that throws', () => {
+  const sink = guardedSink({
+    emit: () => {
+      throw new Error('EPIPE');
+    },
+  });
+  assert.doesNotThrow(() => sink.emit({ type: 'end', exitCode: 0 }));
+});
+
+test('a stream whose run throws still ends with end, exit code 1', async () => {
+  const seen: VastEvent[] = [];
+  const code = await streamToEnd({ emit: (e) => seen.push(e) }, async () => {
+    seen.push({ type: 'start', command: 'promote', args: [], dryRun: true, repos: ['VastPayPwa'] });
+    throw new Error('boom');
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(seen.map((e) => e.type), ['start', 'end']);
+  assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
+});
+
+test('a stream that returns ends with end carrying its exit code', async () => {
+  const seen: VastEvent[] = [];
+  assert.equal(await streamToEnd({ emit: (e) => seen.push(e) }, async () => 0), 0);
+  assert.deepEqual(seen, [{ type: 'end', exitCode: 0 }]);
 });
 
 // In a real process, because the point is what reaches file descriptor 1.

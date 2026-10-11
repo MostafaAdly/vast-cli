@@ -42,7 +42,17 @@ import {
   type Sweep,
 } from './deploy.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
-import { NO_EVENTS, doneEvent, ndjsonSink, type EventSink, type PromoteState, type VastEvent } from '../utils/events.js';
+import {
+  NO_EVENTS,
+  doneEvent,
+  guardedSink,
+  ndjsonSink,
+  streamToEnd,
+  type EventSink,
+  type PromoteState,
+  type VastEvent,
+} from '../utils/events.js';
+import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
 import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 import { newReport, type PromotionReport } from '../utils/promotion-report.js';
 import { createStatusBoard } from '../utils/status-board.js';
@@ -199,7 +209,23 @@ export async function prepareOne(
         deps.promote ??
         ((r: RepoConfig, d: string, n: boolean, rep: PromotionReport) =>
           promote(r, d, 'staging', n, 'release', undefined, 'changelog', [], false, rep));
-      if (!(await run(repo, dir, options.dryRun, promotion))) {
+      let promoted: boolean;
+      try {
+        promoted = await run(repo, dir, options.dryRun, promotion);
+      } catch (error) {
+        // A fetch, a push or a git call that throws fails this repo, not the
+        // run: the other repos are still prepared and every repo still gets
+        // its plan and done. The whole error is printed; the outcome keeps
+        // its first line.
+        reportUnexpectedError(error);
+        return {
+          repo: repo.name,
+          version: '—',
+          status: 'failed',
+          detail: `promotion failed — ${firstLine(errorMessage(error))}`,
+        };
+      }
+      if (!promoted) {
         const why = promotion.error ? `promotion refused — ${promotion.error}` : 'promotion refused';
         return { repo: repo.name, version: '—', status: 'failed', detail: why };
       }
@@ -229,7 +255,8 @@ export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome
     return {
       type: 'plan',
       repo: repo.name,
-      ok: false,
+      // A benign skip (not cloned in a sweep, no workflow) is not a refusal.
+      ok: prepared.status !== 'failed',
       version: prepared.version,
       commits: null,
       promote: 'not run',
@@ -268,10 +295,19 @@ export async function releaseMany(
   deps: ReleaseManyDeps = {},
 ): Promise<DeployOutcome[]> {
   const prepare = deps.prepare ?? prepareOne;
-  const events = deps.events ?? NO_EVENTS;
+  // A broken stdout costs the event, never the release: see guardedSink.
+  const events = guardedSink(deps.events ?? NO_EVENTS);
   const planned: Array<Deployable | DeployOutcome> = [];
   for (const repo of targets) {
-    const prepared = await prepare(repo, options);
+    let prepared: Deployable | DeployOutcome;
+    try {
+      prepared = await prepare(repo, options);
+    } catch (error) {
+      // prepareOne catches what it knows can throw; anything else still fails
+      // only this repo, so one repo's throw never stops another.
+      reportUnexpectedError(error);
+      prepared = { repo: repo.name, version: '—', status: 'failed', detail: firstLine(errorMessage(error)) };
+    }
     events.emit(planEvent(repo, prepared));
     if (isOutcome(prepared)) {
       // Refused before deploying: this repo's story ends here, so say so now.
@@ -281,7 +317,7 @@ export async function releaseMany(
     }
     planned.push(prepared);
   }
-  return deployMany(planned, 'staging', options.dryRun, deps);
+  return deployMany(planned, 'staging', options.dryRun, { ...deps, events });
 }
 
 /**
@@ -345,14 +381,15 @@ async function executeRelease(repoNames: string[], options: ReleaseOptions): Pro
     if (code !== 0) process.exit(code);
     return;
   }
-  // stdout is a data channel from here on: one JSON object per line.
+  // stdout is a data channel from here on: one JSON object per line, and
+  // `end` is always the last of them, even after a throw.
   routeHumanOutputToStderr();
   const events = ndjsonSink();
-  const code = await runRelease(repoNames, options, events, process.argv.slice(2), {
-    board: (rows) => createStatusBoard(rows, process.stderr),
-  });
-  events.emit({ type: 'end', exitCode: code });
-  process.exitCode = code;
+  process.exitCode = await streamToEnd(events, () =>
+    runRelease(repoNames, options, events, process.argv.slice(2), {
+      board: (rows) => createStatusBoard(rows, process.stderr),
+    }),
+  );
 }
 
 /** The train members, listed from the config so the help can never drift from it. */

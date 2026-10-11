@@ -16,7 +16,7 @@ import {
 import { deployMany, notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
-import type { VastEvent } from '../src/utils/events.js';
+import { streamToEnd, type VastEvent } from '../src/utils/events.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
 function sweep(over: Partial<Sweep> = {}): Sweep {
@@ -587,4 +587,83 @@ test('an unknown repository is exit code 1 with no repo events', async () => {
   const code = await runRelease(['Nope'], MANY_OPTIONS, events, ['release', 'Nope'], {});
   assert.equal(code, 1);
   assert.deepEqual(seen, []);
+});
+
+// --- a throw never cuts the stream ---
+
+test('a prepare that throws fails only its repo: plan and done for both, then end', async () => {
+  const { events, seen } = recorder();
+  const code = await streamToEnd(events, () =>
+    runRelease(['VastPayPwa', 'VastMenuPwa'], MANY_OPTIONS, events, ['release', 'VastPayPwa', 'VastMenuPwa', '--json'], {
+      prepare: async (repo) => {
+        if (repo.name === 'VastPayPwa') throw new Error('Command failed: git fetch --prune origin\nfatal: unable to access');
+        return { repo, version: '1.6.13-rc1' };
+      },
+      deploy: async (repo, _env, version) => released(repo, version),
+      board: () => ({ update: () => {} }),
+    }),
+  );
+  assert.equal(code, 1);
+  assert.deepEqual(
+    seen.map((e) => ('repo' in e ? `${e.type}:${e.repo}` : e.type)),
+    ['start', 'plan:VastPayPwa', 'done:VastPayPwa', 'plan:VastMenuPwa', 'done:VastMenuPwa', 'end'],
+  );
+  const done = seen[2];
+  assert.ok(done.type === 'done');
+  assert.equal(done.status, 'failed');
+  assert.equal(done.detail, 'Command failed: git fetch --prune origin', 'the first line only');
+  assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
+});
+
+test('prepareOne turns a promotion that throws into a failed outcome for that repo', async () => {
+  const out = await prepareOne(getRepo('VastMenuPwa')!, PREP_OPTIONS, {
+    stagingTag: async () => '1.6.13-rc1',
+    readProduction: async () => '1.6.12',
+    promote: async () => {
+      throw new Error('Command failed: git push origin staging\n! [rejected] staging -> staging (fetch first)');
+    },
+  });
+  assert.deepEqual(out, {
+    repo: 'VastMenuPwa',
+    version: '—',
+    status: 'failed',
+    detail: 'promotion failed — Command failed: git push origin staging',
+  });
+});
+
+test('a throw inside runRelease still ends the stream with end, exit code 1', async () => {
+  const { events, seen } = recorder();
+  const code = await streamToEnd(events, () =>
+    runRelease(['VastMenuPwa'], MANY_OPTIONS, events, [], {
+      prepare: async (repo) => ({ repo, version: '1.6.13-rc1' }),
+      deploy: async (repo, _env, version) => released(repo, version),
+      board: () => {
+        throw new Error('no terminal');
+      },
+    }),
+  );
+  assert.equal(code, 1);
+  assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
+});
+
+test('a sink that throws on every event cannot lose any repo of a release', async () => {
+  const outcomes = await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events: {
+      emit: () => {
+        throw new Error('EPIPE');
+      },
+    },
+  });
+  assert.deepEqual(outcomes.map((o) => o.status), ['failed', 'released', 'failed', 'released']);
+});
+
+test('a benign skip plans ok; only a failure is a refusal', () => {
+  const repo = getRepo('VastPayPwa')!;
+  const skipped = planEvent(repo, notClonedOutcome('VastPayPwa', true));
+  assert.ok(skipped.type === 'plan' && skipped.ok === true);
+  const failed = planEvent(repo, notClonedOutcome('VastPayPwa', false));
+  assert.ok(failed.type === 'plan' && failed.ok === false);
 });
