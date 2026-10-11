@@ -1,7 +1,8 @@
 import Foundation
 
-/// Each run is three files: <id>.json (the record), <id>.ndjson (stdout),
-/// <id>.log (stderr). Everything the app knows about a run survives a quit.
+/// Each run is four files: <id>.json (the record), <id>.ndjson (stdout),
+/// <id>.log (stderr) and <id>.pid (written by the detached wrapper).
+/// Everything the app knows about a run survives a quit.
 public struct RunStore: Sendable {
     public let dir: URL
 
@@ -15,6 +16,7 @@ public struct RunStore: Sendable {
     public func recordURL(_ id: String) -> URL { dir.appendingPathComponent("\(id).json") }
     public func ndjsonURL(_ id: String) -> URL { dir.appendingPathComponent("\(id).ndjson") }
     public func logURL(_ id: String) -> URL { dir.appendingPathComponent("\(id).log") }
+    public func pidURL(_ id: String) -> URL { dir.appendingPathComponent("\(id).pid") }
 
     public func ensureDir() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -49,7 +51,7 @@ public struct RunStore: Sendable {
     /// Deletes finished runs older than seven days; a run still going is kept however old.
     public func prune(now: Date = Date(), isFinished: (RunRecord) -> Bool) {
         for record in records() where now.timeIntervalSince(record.startedAt) > 7 * 86_400 && isFinished(record) {
-            for url in [recordURL(record.id), ndjsonURL(record.id), logURL(record.id)] {
+            for url in [recordURL(record.id), ndjsonURL(record.id), logURL(record.id), pidURL(record.id)] {
                 try? FileManager.default.removeItem(at: url)
             }
         }

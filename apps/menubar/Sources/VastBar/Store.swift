@@ -135,7 +135,7 @@ extension Store {
         let id = newRunID()
         do {
             try runStore.ensureDir()
-            let pid = try await Shell.startDetached(command, stdout: runStore.ndjsonURL(id), stderr: runStore.logURL(id))
+            let pid = try await Shell.startDetached(command, stdout: runStore.ndjsonURL(id), stderr: runStore.logURL(id), pidFile: runStore.pidURL(id))
             try runStore.save(RunRecord(id: id, pid: pid, args: command.args, startedAt: Date(), dismissed: false))
         } catch {
             return "Could not start: \(error)"

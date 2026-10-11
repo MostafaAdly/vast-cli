@@ -39,9 +39,12 @@ final class RunStoreTests: XCTestCase {
         for (id, at) in [("oldDone", old), ("oldRunning", old), ("recentDone", recent)] {
             try store.save(RunRecord(id: id, pid: 1, args: [], startedAt: at, dismissed: false))
             try "".write(to: store.ndjsonURL(id), atomically: true, encoding: .utf8)
+            try "1\n".write(to: store.pidURL(id), atomically: true, encoding: .utf8)
         }
         store.prune(now: now, isFinished: { $0.id != "oldRunning" })
         XCTAssertEqual(store.records().map(\.id).sorted(), ["oldRunning", "recentDone"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.ndjsonURL("oldDone").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.pidURL("oldDone").path))
+        XCTAssertEqual(store.pidURL("x").lastPathComponent, "x.pid")
     }
 }
