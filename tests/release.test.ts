@@ -667,3 +667,23 @@ test('a benign skip plans ok; only a failure is a refusal', () => {
   const failed = planEvent(repo, notClonedOutcome('VastPayPwa', false));
   assert.ok(failed.type === 'plan' && failed.ok === false);
 });
+
+// In --json mode the board draws on stderr, so stderr — not stdout — decides
+// whether it is live. The test runner's stdout is a pipe either way.
+test('the board is live when the stream it draws on is a terminal', async () => {
+  const [a] = targetsFor(['VastMenuPwa']);
+  const heartbeats: number[] = [];
+  const written: string[] = [];
+  for (const isTTY of [true, false]) {
+    await deployMany([{ repo: a, version: '1.0.0-rc1' }], 'staging', true, {
+      stream: { isTTY, columns: 80, write: (chunk: string) => written.push(chunk) },
+      deploy: async (repo, _env, version, _dryRun, _slot, timing) => {
+        heartbeats.push(timing.heartbeatMs);
+        return released(repo, version);
+      },
+    });
+  }
+  assert.deepEqual(heartbeats, [pollTimingFor(1, true).heartbeatMs, pollTimingFor(1, false).heartbeatMs]);
+  assert.notEqual(heartbeats[0], heartbeats[1]);
+  assert.ok(written.includes('\n'), 'the live board reserved its row on that stream');
+});

@@ -6,6 +6,7 @@
  * which this leaves alone.
  */
 
+import { Console } from 'console';
 import { format } from 'util';
 
 export function routeHumanOutputToStderr(): void {
@@ -15,4 +16,10 @@ export function routeHumanOutputToStderr(): void {
   console.log = toStderr;
   console.info = toStderr;
   console.warn = toStderr;
+  console.debug = toStderr;
+  // table and dir format their own output, so they keep their formatting and
+  // only change where it goes.
+  const onStderr = new Console({ stdout: process.stderr, stderr: process.stderr });
+  console.table = onStderr.table.bind(onStderr);
+  console.dir = onStderr.dir.bind(onStderr);
 }

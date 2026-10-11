@@ -14,6 +14,7 @@ import { repoDir } from '../config/workspace.js';
 import { deployedTag } from '../utils/deployments.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 
 export interface Row {
   name: string;
@@ -199,12 +200,20 @@ function driftOf(text: string): StatusDrift {
 
 /** The table, as data: built from the same rows, so the two cannot disagree. */
 export function statusJson(targets: RepoConfig[], rows: Row[], generatedAt: Date): StatusJson {
+  // Paired by name, never by position: a row matched to the wrong target would
+  // silently carry another repo's display name and team.
+  const byName = new Map(targets.map((t) => [t.name, t]));
+  const targetOf = (row: Row): RepoConfig => {
+    const target = byName.get(row.name);
+    if (!target) throw new Error(`status row ${row.name} has no matching repository`);
+    return target;
+  };
   return {
     generatedAt: generatedAt.toISOString(),
-    repos: rows.map((r, i) => ({
+    repos: rows.map((r) => ({
       repo: r.name,
-      displayName: targets[i].displayName,
-      releaseTeam: targets[i].releaseTeam,
+      displayName: targetOf(r).displayName,
+      releaseTeam: targetOf(r).releaseTeam,
       staging: cellOf(r.staging),
       production: cellOf(r.production),
       drift: driftOf(r.drift),
@@ -216,6 +225,8 @@ async function executeStatus(
   repoName: string | undefined,
   options: { all: boolean; dir?: string; fetch: boolean; json?: boolean },
 ): Promise<void> {
+  // stdout is one JSON document and nothing else: every human line goes to stderr.
+  if (options.json) routeHumanOutputToStderr();
   const targets = repoName
     ? [getRepo(repoName)].filter((r): r is RepoConfig => Boolean(r))
     : options.all

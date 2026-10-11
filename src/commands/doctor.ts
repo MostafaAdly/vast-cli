@@ -20,6 +20,7 @@ import { runDoctor, tally, type Check, type DoctorDeps } from '../utils/doctor.j
 import { authTest, channelInfo } from '../utils/slack.js';
 import { ORG } from '../utils/remote.js';
 import { colors, createHeader, createSpinner, log } from '../utils/ui.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 import { VERSION } from '../version.js';
 
 const execFileAsync = promisify(execFile);
@@ -112,6 +113,8 @@ export function doctorJson(checks: Check[], generatedAt: Date): { generatedAt: s
 
 async function executeDoctor(options: { json?: boolean } = {}): Promise<void> {
   if (options.json) {
+    // stdout is one JSON document and nothing else: every human line goes to stderr.
+    routeHumanOutputToStderr();
     const checks = await runDoctor(liveDeps());
     process.stdout.write(`${JSON.stringify(doctorJson(checks, new Date()), null, 2)}\n`);
     if (tally(checks).fail > 0) process.exitCode = 1;

@@ -51,7 +51,7 @@ import { announceDone } from '../utils/done-notify.js';
 import { failedStepName, getRunStatus, runUrl, runWorkflow } from '../utils/github.js';
 import { ORG } from '../utils/remote.js';
 import { DEFAULT_TIMING, formatElapsed, pollRun, type PollTiming } from '../utils/run-poll.js';
-import { createStatusBoard, type StatusBoard, type Tone } from '../utils/status-board.js';
+import { createStatusBoard, type BoardStream, type StatusBoard, type Tone } from '../utils/status-board.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { repoDir } from '../config/workspace.js';
 
@@ -610,6 +610,12 @@ export interface DeployManyDeps {
     timing: PollTiming,
   ) => Promise<DeployOutcome>;
   board?: (rows: number) => StatusBoard;
+  /**
+   * Where the board draws: stdout by default, stderr in --json mode. Whether
+   * the board is live (and so how often it heartbeats) is this stream's
+   * TTY-ness, not stdout's.
+   */
+  stream?: BoardStream;
   /** Machine-readable progress; a no-op unless --json. */
   events?: EventSink;
 }
@@ -630,7 +636,8 @@ export async function deployMany(
   dryRun: boolean,
   deps: DeployManyDeps = {},
 ): Promise<DeployOutcome[]> {
-  const live = process.stdout.isTTY === true;
+  const stream = deps.stream ?? process.stdout;
+  const live = stream.isTTY === true;
   const going = planned.filter((p): p is Deployable => !isOutcome(p));
   const timing = pollTimingFor(going.length, live);
   const every = Math.round(timing.pollMs / 1000);
@@ -644,7 +651,7 @@ export async function deployMany(
     );
   }
   const labelWidth = Math.max(...going.map((g) => g.repo.name.length), 0);
-  const board = (deps.board ?? createStatusBoard)(going.length);
+  const board = deps.board ? deps.board(going.length) : createStatusBoard(going.length, stream);
   const run = deps.deploy ?? deployOne;
   // A broken stdout costs the event, never the release: see guardedSink.
   const events = guardedSink(deps.events ?? NO_EVENTS);

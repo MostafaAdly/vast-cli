@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { NO_EVENTS, doneEvent, guardedSink, ndjsonSink, streamToEnd, type VastEvent } from '../src/utils/events.js';
 
 test('the NDJSON sink writes one JSON object per line, stamped with the time', () => {
@@ -71,6 +74,9 @@ test('in --json mode human output goes to stderr and stdout keeps only machine o
     "console.log('human log');",
     "console.info('human info');",
     "console.warn('human warn');",
+    "console.debug('human debug');",
+    "console.table([{ a: 1 }]);",
+    "console.dir({ human: 'dir' });",
     "process.stdout.write('{\"machine\":true}\\n');",
   ].join('\n');
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
@@ -78,5 +84,37 @@ test('in --json mode human output goes to stderr and stdout keeps only machine o
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '{"machine":true}\n');
-  assert.match(r.stderr, /human log\nhuman info\nhuman warn\n/);
+  assert.match(r.stderr, /human log\nhuman info\nhuman warn\nhuman debug\n/);
+  assert.match(r.stderr, /\(index\)/, 'console.table reaches stderr as a table');
+  assert.match(r.stderr, /human: 'dir'/);
+});
+
+// End to end, through the real entry point: an early exit with an update hint
+// pending (the hint is a human line) must leave stdout parseable line by line,
+// ending with `end`. A sandboxed home, so no real config is read and no
+// background update check is spawned (the cached check is fresh).
+test('release/promote --json that exit early print only JSON lines, ending with end', () => {
+  const home = mkdtempSync(join(tmpdir(), 'vast-e2e-home-'));
+  try {
+    writeFileSync(join(home, 'update-check.json'), JSON.stringify({ checkedAt: Date.now(), latest: 'v99.0.0' }));
+    for (const args of [
+      ['release', 'Nope', '--json'],
+      ['release', 'Nope', '--json', '--verbose'],
+      ['promote', 'Nope', '--json'],
+    ]) {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli-entry.ts', ...args], {
+        encoding: 'utf-8',
+        env: { ...process.env, VAST_CLI_HOME: home, HOME: home },
+      });
+      assert.equal(r.status, 1, `${args.join(' ')}: ${r.stderr}`);
+      const lines = r.stdout.split('\n').filter((l) => l !== '');
+      assert.ok(lines.length > 0, `${args.join(' ')} printed nothing on stdout`);
+      const events = lines.map((l) => JSON.parse(l) as { type: string; exitCode?: number });
+      assert.equal(events.at(-1)?.type, 'end');
+      assert.equal(events.at(-1)?.exitCode, 1);
+      assert.match(r.stderr, /newer Vast CLI is available/, 'the hint went to stderr');
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

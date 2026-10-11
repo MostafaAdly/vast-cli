@@ -98,3 +98,16 @@ test('drift is a count when it is one, and a problem otherwise', () => {
     assert.deepEqual(drift(p), { text: p, ahead: null, problem: p });
   }
 });
+
+test('status JSON pairs each row with its repository by name, not by position', () => {
+  const targets = [getRepo('VastPayPwaV2')!, getRepo('VastPay-BackEnd')!];
+  const rows = [row({ name: 'VastPay-BackEnd' }), row({ name: 'VastPayPwaV2' })];
+  const json = statusJson(targets, rows, new Date(0));
+  assert.deepEqual(
+    json.repos.map((r) => [r.repo, r.displayName, r.releaseTeam]),
+    [
+      ['VastPay-BackEnd', getRepo('VastPay-BackEnd')!.displayName, 'backend'],
+      ['VastPayPwaV2', 'Vastpay Pwa V2', 'frontend'],
+    ],
+  );
+});

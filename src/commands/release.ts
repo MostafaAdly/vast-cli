@@ -54,7 +54,6 @@ import {
 import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
 import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 import { newReport, promoteState, type PromotionReport } from '../utils/promotion-report.js';
-import { createStatusBoard } from '../utils/status-board.js';
 
 // `release` and `deploy` must agree on what a sweep flag means and on how fast
 // runs are polled, so both live in deploy.ts and are re-exported here rather
@@ -371,9 +370,7 @@ async function executeRelease(repoNames: string[], options: ReleaseOptions): Pro
   routeHumanOutputToStderr();
   const events = ndjsonSink();
   process.exitCode = await streamToEnd(events, () =>
-    runRelease(repoNames, options, events, process.argv.slice(2), {
-      board: (rows) => createStatusBoard(rows, process.stderr),
-    }),
+    runRelease(repoNames, options, events, process.argv.slice(2), { stream: process.stderr }),
   );
 }
 
