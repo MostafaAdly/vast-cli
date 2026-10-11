@@ -5,10 +5,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { VastEvent } from '../src/utils/events.js';
+import type { AnnounceDeps } from '../src/commands/promote.js';
 
 process.env.VAST_CLI_HOME = mkdtempSync(join(tmpdir(), 'vast-report-home-'));
-const { promote } = await import('../src/commands/promote.js');
-const { runPromote } = await import('../src/commands/promote.js');
+const { promote, runPromote } = await import('../src/commands/promote.js');
+const { streamToEnd } = await import('../src/utils/events.js');
+const { buildReleaseMessage } = await import('../src/utils/release-message.js');
 const { newReport } = await import('../src/utils/promotion-report.js');
 const { getRepo } = await import('../src/config/repos.js');
 
@@ -70,7 +72,7 @@ test('a refused promotion records why', async () => {
     const report = newReport();
     assert.equal(await promote(REPO, f.clone, 'staging', true, 'release', undefined, 'changelog', [], false, report), false);
     assert.equal(report.result, 'refused');
-    assert.equal(report.error, 'VastPayPwa has uncommitted changes — Commit or stash them before promoting.');
+    assert.equal(report.error, 'VastPayPwa has uncommitted changes: Commit or stash them before promoting.');
   } finally {
     f.cleanup();
   }
@@ -124,7 +126,7 @@ test('a refused promotion is done/failed with the reason', async () => {
       repo: 'VastPayPwa',
       version: '—',
       status: 'failed',
-      detail: 'VastPayPwa has uncommitted changes — Commit or stash them before promoting.',
+      detail: 'VastPayPwa has uncommitted changes: Commit or stash them before promoting.',
     });
   } finally {
     f.cleanup();
@@ -200,11 +202,13 @@ test('a production promotion with staging already in production has nothing to p
   }
 });
 
-test('a dry run whose staging → production merge conflicts is a refusal, not a PR it would open', async () => {
+// The exit code of a dry run is unchanged (true, exit 0); the report is what
+// tells the app the real run would refuse.
+test('a dry run whose staging → production merge conflicts reports a refusal, not a PR it would open', async () => {
   const f = productionFixture(1, true);
   try {
     const report = newReport();
-    assert.equal(await promote(REPO, f.clone, 'production', true, 'release', '1.2.3', 'bare', [], false, report), false);
+    assert.equal(await promote(REPO, f.clone, 'production', true, 'release', '1.2.3', 'bare', [], false, report), true);
     assert.equal(report.result, 'refused');
     assert.equal(report.error, 'staging → production conflicts in 1 file(s): f.txt');
     assert.equal(report.url, null);
@@ -243,7 +247,7 @@ test('a real pick run that conflicts names the pick that conflicted', async () =
   }
 });
 
-test('runPromote streams a dry-run conflict as a failed promotion, exit 1', async () => {
+test('runPromote streams a dry-run conflict as a failed promotion, exit code unchanged at 0', async () => {
   const f = productionFixture(1, true);
   try {
     const seen: VastEvent[] = [];
@@ -253,8 +257,11 @@ test('runPromote streams a dry-run conflict as a failed promotion, exit 1', asyn
       { emit: (e) => seen.push(e) },
       [],
     );
-    assert.equal(code, 1);
+    assert.equal(code, 0, 'a dry run exits 0, as it did before --json');
     assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'done'], 'no pr event for a PR that would not open');
+    const plan = seen[1];
+    assert.ok(plan.type === 'plan' && plan.ok === false);
+    assert.equal(plan.detail, 'staging → production conflicts in 1 file(s): f.txt');
     assert.deepEqual(seen.at(-1), {
       type: 'done',
       repo: 'VastPayPwa',
@@ -285,6 +292,159 @@ test('a promotion that throws still ends with plan and done, exit 1', async () =
     assert.ok(done.type === 'done' && done.status === 'failed' && done.detail.length > 0);
     assert.ok(!done.detail.includes('\n'), 'a thrown error reaches done as its first line only');
     assert.match(done.detail, /^Command failed: git/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a production dry run streams the PR it would open', async () => {
+  const f = productionFixture(1);
+  try {
+    const seen: VastEvent[] = [];
+    const code = await streamToEnd({ emit: (e) => seen.push(e) }, () =>
+      runPromote(
+        'VastPayPwa',
+        { to: 'production', changelog: false, dryRun: true, targetVersion: '1.2.3', dir: f.clone },
+        { emit: (e) => seen.push(e) },
+        [],
+      ),
+    );
+    assert.equal(code, 0);
+    assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'pr', 'done', 'end']);
+    assert.deepEqual(seen[1], {
+      type: 'plan',
+      repo: 'VastPayPwa',
+      ok: true,
+      version: '1.2.3',
+      commits: 1,
+      promote: 'not run',
+      notice: null,
+      detail: null,
+    });
+    assert.deepEqual(seen[2], {
+      type: 'pr',
+      repo: 'VastPayPwa',
+      branch: 'release/1.2.3',
+      url: null,
+      version: '1.2.3',
+      slack: null,
+    });
+    assert.deepEqual(seen[3], { type: 'done', repo: 'VastPayPwa', version: '1.2.3', status: 'skipped', detail: 'dry run' });
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a --slack dry run carries the message in pr.slack and posts nothing', async () => {
+  const f = productionFixture(1);
+  try {
+    const posted: string[] = [];
+    const deps: AnnounceDeps = {
+      readSlackToken: () => null,
+      readSlackChannel: () => null,
+      slackUserOverride: () => null,
+      lookupUserByEmail: async () => null,
+      postMessage: async (_token, channel, text) => {
+        posted.push(text);
+        return { ts: '1.2', channel };
+      },
+      shippedPrs: async () => [],
+      summarizePrs: async () => ({}),
+      buildReleaseMessage,
+    };
+    const seen: VastEvent[] = [];
+    const code = await runPromote(
+      'VastPayPwa',
+      { to: 'production', changelog: false, slack: true, dryRun: true, targetVersion: '1.2.3', dir: f.clone },
+      { emit: (e) => seen.push(e) },
+      [],
+      deps,
+    );
+    assert.equal(code, 0);
+    const pr = seen.find((e) => e.type === 'pr');
+    assert.ok(pr && pr.type === 'pr');
+    assert.ok(pr.slack, 'a --slack run has a Slack result');
+    assert.ok(pr.slack.text.length > 0, 'the message text rides in the event');
+    assert.equal(pr.slack.posted, false);
+    assert.equal(pr.slack.error, null);
+    assert.deepEqual(posted, [], 'a dry run never posts');
+  } finally {
+    f.cleanup();
+  }
+});
+
+// The Slack preview is exactly what it was before the report existed: a dry
+// run that would conflict still shows the message it would post.
+test('a --slack dry run that would conflict still prints its preview, exit 0', async () => {
+  const f = productionFixture(1, true);
+  try {
+    let built = 0;
+    const deps: AnnounceDeps = {
+      readSlackToken: () => null,
+      readSlackChannel: () => null,
+      slackUserOverride: () => null,
+      lookupUserByEmail: async () => null,
+      postMessage: async () => {
+        throw new Error('a dry run must not post');
+      },
+      shippedPrs: async () => [],
+      summarizePrs: async () => ({}),
+      buildReleaseMessage: (input) => {
+        built++;
+        return buildReleaseMessage(input);
+      },
+    };
+    const seen: VastEvent[] = [];
+    const code = await runPromote(
+      'VastPayPwa',
+      { to: 'production', changelog: false, slack: true, dryRun: true, targetVersion: '1.2.3', dir: f.clone },
+      { emit: (e) => seen.push(e) },
+      [],
+      deps,
+    );
+    assert.equal(code, 0);
+    assert.equal(built, 1, 'the dry-run preview was built');
+    assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'done']);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// announceRelease catches every Slack failure itself, so this throw comes from
+// an injected dep: what matters is that a throw after the cut was recorded
+// keeps the cut's result, rather than turning a good PR into a refusal.
+test('a throw after the cut keeps the plan ok and the pr event; only the exit code says it threw', async () => {
+  const f = productionFixture(1);
+  try {
+    const deps: AnnounceDeps = {
+      readSlackToken: () => null,
+      readSlackChannel: () => null,
+      slackUserOverride: () => null,
+      lookupUserByEmail: async () => null,
+      postMessage: async () => {
+        throw new Error('a dry run must not post');
+      },
+      shippedPrs: async () => {
+        throw new Error('gh exploded\nwith a second line');
+      },
+      summarizePrs: async () => ({}),
+      buildReleaseMessage,
+    };
+    const seen: VastEvent[] = [];
+    const code = await runPromote(
+      'VastPayPwa',
+      { to: 'production', changelog: false, slack: true, dryRun: true, targetVersion: '1.2.3', dir: f.clone },
+      { emit: (e) => seen.push(e) },
+      [],
+      deps,
+    );
+    assert.equal(code, 1);
+    assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'pr', 'done']);
+    const plan = seen[1];
+    assert.ok(plan.type === 'plan' && plan.ok === true && plan.detail === null);
+    const pr = seen[2];
+    assert.ok(pr.type === 'pr' && pr.branch === 'release/1.2.3' && pr.slack === null);
+    assert.deepEqual(seen[3], { type: 'done', repo: 'VastPayPwa', version: '1.2.3', status: 'skipped', detail: 'dry run' });
   } finally {
     f.cleanup();
   }

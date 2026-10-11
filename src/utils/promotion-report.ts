@@ -4,7 +4,7 @@
  * this is the detail behind it.
  */
 
-import type { SlackResult } from './events.js';
+import type { PromoteState, SlackResult } from './events.js';
 import type { ReleaseKind } from './release-branch.js';
 
 export type PromotionResult =
@@ -32,4 +32,22 @@ export interface PromotionReport {
 /** Starts as refused: a promotion that returns early without saying more has refused. */
 export function newReport(): PromotionReport {
   return { commits: null, result: 'refused' };
+}
+
+/**
+ * Where a promotion stands, as the stream's `plan.promote` says it. One mapping
+ * for `release` and `promote`, so the two can never drift as results grow.
+ * A repo with no develop is the caller's to say: the report cannot know it.
+ */
+export function promoteState(result: PromotionResult | undefined): PromoteState {
+  switch (result) {
+    case 'merged':
+      return 'merged';
+    case 'would merge':
+      return 'will merge';
+    case 'nothing to promote':
+      return 'nothing to promote';
+    default:
+      return 'not run';
+  }
 }

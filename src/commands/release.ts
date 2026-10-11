@@ -49,12 +49,11 @@ import {
   ndjsonSink,
   streamToEnd,
   type EventSink,
-  type PromoteState,
   type VastEvent,
 } from '../utils/events.js';
 import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
 import { routeHumanOutputToStderr } from '../utils/json-mode.js';
-import { newReport, type PromotionReport } from '../utils/promotion-report.js';
+import { newReport, promoteState, type PromotionReport } from '../utils/promotion-report.js';
 import { createStatusBoard } from '../utils/status-board.js';
 
 // `release` and `deploy` must agree on what a sweep flag means and on how fast
@@ -235,20 +234,6 @@ export async function prepareOne(
   return promotion ? { ...planned, promotion } : planned;
 }
 
-function promoteState(repo: RepoConfig, report: PromotionReport | undefined): PromoteState {
-  if (!needsPromotion(repo)) return 'no develop';
-  switch (report?.result) {
-    case 'merged':
-      return 'merged';
-    case 'would merge':
-      return 'will merge';
-    case 'nothing to promote':
-      return 'nothing to promote';
-    default:
-      return 'not run';
-  }
-}
-
 /** One repo's preparation, as the app's preview reads it. */
 export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome): VastEvent {
   if (isOutcome(prepared)) {
@@ -270,7 +255,7 @@ export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome
     ok: true,
     version: prepared.version,
     commits: prepared.promotion?.commits ?? null,
-    promote: promoteState(repo, prepared.promotion),
+    promote: needsPromotion(repo) ? promoteState(prepared.promotion?.result) : 'no develop',
     notice: prepared.notice?.text ?? null,
     detail: prepared.note ?? null,
   };

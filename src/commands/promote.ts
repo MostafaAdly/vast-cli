@@ -50,7 +50,7 @@ import { readSlackToken, readSlackChannel, slackUserOverride } from '../config/s
 import { lookupUserByEmail, postMessage } from '../utils/slack.js';
 import { buildReleaseMessage, releaseContributors } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
-import { newReport, type PromotionReport } from '../utils/promotion-report.js';
+import { newReport, promoteState, type PromotionReport } from '../utils/promotion-report.js';
 import { ndjsonSink, NO_EVENTS, streamToEnd, type EventSink, type SlackResult } from '../utils/events.js';
 import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
 import { routeHumanOutputToStderr } from '../utils/json-mode.js';
@@ -216,6 +216,7 @@ export async function promote(
   pickRefs: string[] = [],
   slack = false,
   report: PromotionReport = newReport(),
+  announceDeps: AnnounceDeps = defaultAnnounceDeps,
 ): Promise<boolean> {
   // Every refusal goes through here so the report always knows why it stopped.
   // The title alone can lose the cause ("cannot derive a release version"), so
@@ -224,18 +225,20 @@ export async function promote(
     console.log(createErrorBox(title, body));
     report.result = 'refused';
     const cause = body.split('\n').find((line) => line.trim() !== '')?.trim();
-    report.error = cause ? `${title} — ${cause}` : title;
+    report.error = cause ? `${title}: ${cause}` : title;
     return false;
   };
 
-  // A cut that names a problem refused, dry run or not: a preview must not
-  // promise a PR the real run would refuse to open.
+  // A cut that names a problem is reported as refused, dry run or not: a
+  // preview must not promise a PR the real run would refuse to open. A dry
+  // run still returns true, as it always has — its exit code and its Slack
+  // preview are unchanged; the report is what says it would refuse.
   const recordCut = (cut: CutResult): boolean => {
     report.url = cut.url;
     if (cut.problem !== null || (cut.url === null && !dryRun)) {
       report.result = 'refused';
       report.error = cut.problem ?? `could not cut ${report.branch} or open its PR`;
-      return false;
+      return dryRun;
     }
     report.result = cut.url !== null ? 'pr opened' : 'would open pr';
     return true;
@@ -322,7 +325,7 @@ export async function promote(
       const url = cut.url;
       // A dry run never returns a URL, but it still has a message to show.
       if (slack && ok) {
-        report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun, picks });
+        report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun, picks }, announceDeps);
       }
       if (url !== null) {
         // Deliberately not a `vast deploy` hint any more: production has not
@@ -368,7 +371,7 @@ export async function promote(
     const cut = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
     const ok = recordCut(cut);
     if (slack && ok) {
-      report.slack = await announceRelease(repo, dir, kind, version, cut.url, { dryRun });
+      report.slack = await announceRelease(repo, dir, kind, version, cut.url, { dryRun }, announceDeps);
     }
     return ok;
   }
@@ -434,13 +437,16 @@ export interface PromoteCommandOptions {
   json?: boolean;
 }
 
-/** What a finished promotion means for the stream's `done`. */
+/**
+ * What a finished promotion means for the stream's `done`, read from the
+ * report rather than from promote's return value: a dry run that would refuse
+ * returns true (exit 0) but its report says refused.
+ */
 function promotionDone(
   report: PromotionReport,
-  ok: boolean,
   dryRun: boolean,
 ): { status: 'released' | 'skipped' | 'failed'; detail: string } {
-  if (!ok) return { status: 'failed', detail: report.error ?? 'promotion refused' };
+  if (report.result === 'refused') return { status: 'failed', detail: report.error ?? 'promotion refused' };
   if (report.result === 'nothing to promote') return { status: 'skipped', detail: 'nothing to promote' };
   if (dryRun) return { status: 'skipped', detail: 'dry run' };
   if (report.result === 'pr opened') return { status: 'released', detail: `PR opened — ${report.url}` };
@@ -452,6 +458,7 @@ export async function runPromote(
   options: PromoteCommandOptions,
   events: EventSink,
   args: string[],
+  announceDeps?: AnnounceDeps,
 ): Promise<number> {
   const repo = getRepo(repoName);
   if (!repo) {
@@ -506,9 +513,9 @@ export async function runPromote(
   events.emit({ type: 'start', command: 'promote', args, dryRun: options.dryRun, repos: [repo.name] });
 
   const report = newReport();
-  let ok: boolean;
+  let succeeded: boolean;
   try {
-    ok = await promote(
+    succeeded = await promote(
       repo,
       dir,
       options.to as 'staging' | 'production',
@@ -519,31 +526,27 @@ export async function runPromote(
       options.pick ?? [],
       options.slack ?? false,
       report,
+      announceDeps,
     );
   } catch (error) {
     // A throw (a push, a git call, gh) must still end the stream with plan and
     // done, or the app shows a promotion that never ends. The report keeps any
-    // success it recorded before the throw; otherwise it is still at its
-    // default, 'refused'.
-    // The whole error is printed; the stream carries its first line.
-    report.error = firstLine(errorMessage(error));
-    ok = false;
+    // success it recorded before the throw — a PR already opened stays opened —
+    // otherwise it is still at its default, 'refused'. The whole error is
+    // printed; the stream carries its first line.
+    if (report.result === 'refused') report.error = firstLine(errorMessage(error));
+    succeeded = false;
     reportUnexpectedError(error);
   }
+  // The stream reads the report; the exit code stays promote's own answer.
+  const ok = report.result !== 'refused';
   events.emit({
     type: 'plan',
     repo: repo.name,
     ok,
     version: report.version ?? '—',
     commits: report.commits,
-    promote:
-      options.to === 'staging' && report.result === 'would merge'
-        ? 'will merge'
-        : options.to === 'staging' && report.result === 'merged'
-          ? 'merged'
-          : report.result === 'nothing to promote'
-            ? 'nothing to promote'
-            : 'not run',
+    promote: promoteState(report.result),
     notice: null,
     detail: ok ? null : (report.error ?? null),
   });
@@ -561,9 +564,9 @@ export async function runPromote(
       slack: report.slack ?? null,
     });
   }
-  const done = promotionDone(report, ok, options.dryRun);
+  const done = promotionDone(report, options.dryRun);
   events.emit({ type: 'done', repo: repo.name, version: report.version ?? '—', status: done.status, detail: done.detail });
-  return ok ? 0 : 1;
+  return succeeded ? 0 : 1;
 }
 
 async function executePromote(repoName: string, options: PromoteCommandOptions): Promise<void> {
