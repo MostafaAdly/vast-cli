@@ -48,7 +48,9 @@ struct PopoverView: View {
             if let panel = store.panel {
                 PanelHost(panel: panel)
             } else {
-                ScrollView {
+                // Not a bare ScrollView: the menu bar window sizes itself to the
+                // content's ideal height, and a bare ScrollView's is zero.
+                CappedScroll(maxHeight: 560) {
                     VStack(spacing: 8) {
                         if let error = store.refreshError {
                             Text(error).font(.caption).foregroundStyle(.orange)
@@ -60,7 +62,6 @@ struct PopoverView: View {
                     }
                     .padding(12)
                 }
-                .frame(maxHeight: 560)
             }
         }
     }
