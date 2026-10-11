@@ -211,3 +211,10 @@ public func teamSections(_ cards: [RepoCard]) -> [TeamSection] {
     if !other.isEmpty { sections.append(TeamSection(team: nil, cards: other)) }
     return sections
 }
+
+/// The run a card shows: the latest real (not dry-run), undismissed run
+/// covering the repo. Before its first event a run covers the repos its
+/// arguments name.
+public func cardRun(_ repo: String, runs: [TrackedRun], status: StatusSnapshot?) -> TrackedRun? {
+    runs.last { !$0.record.dismissed && !$0.summary.dryRun && reposOf($0, status: status).contains(repo) }
+}

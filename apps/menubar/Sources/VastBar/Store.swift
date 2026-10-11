@@ -18,16 +18,24 @@ final class Store: ObservableObject {
     @Published var refreshError: String?
     @Published var runs: [TrackedRun] = []
     @Published var panel: Panel?
+    /// Repos ticked for one several-repo release. Never a running repo.
+    @Published var selection: Set<String> = []
+    /// Staging backend health by endpoint name.
+    @Published var health: [String: HealthState] = [:]
 
     let runStore = RunStore(dir: RunStore.defaultDir())
     private var refreshTimer: Timer?
+    private var healthTimer: Timer?
+    private var checkingHealth = false
     var pollTimer: Timer?
 
     init() {
         Task { await start() }
     }
 
-    var icon: IconState { iconState(doctor: doctor, status: status, runs: runs) }
+    var icon: IconState { iconState(doctor: doctor, status: status, runs: runs, health: health) }
+    var headline: Headline { VastBarCore.headline(icon: icon, doctor: doctor, status: status, runs: runs, health: health) }
+    var tiles: SummaryTiles { summaryTiles(status: status, pending: pending) }
     var cards: [RepoCard] { repoCards(status: status, doctor: doctor, pending: pending, runs: runs) }
     var stale: Bool { isStale(lastSuccess: lastSuccess) }
 
@@ -38,6 +46,30 @@ final class Store: ObservableObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
+        // Cheap and independent of vast: its own minute.
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refreshHealth() }
+        }
+    }
+
+    /// GETs every staging /health URL at once. Nothing else is sent.
+    func refreshHealth() async {
+        guard !checkingHealth else { return }
+        checkingHealth = true
+        defer { checkingHealth = false }
+        let results = await withTaskGroup(of: (String, HealthState).self) { group in
+            for e in StagingHealth.endpoints { group.addTask { (e.name, await checkHealth(e)) } }
+            var all: [String: HealthState] = [:]
+            for await (name, state) in group { all[name] = state }
+            return all
+        }
+        if results != health { health = results }
+    }
+
+    /// Takes out of the selection any repo that is gone or now running.
+    func pruneSelection() {
+        let pruned = prunedSelection(selection, cards: cards)
+        if pruned != selection { selection = pruned }
     }
 
     func checkCLI() async {
@@ -48,6 +80,7 @@ final class Store: ObservableObject {
     /// status, doctor and pending at once. A failed read keeps the last good
     /// data; the header says it is stale.
     func refresh() async {
+        Task { await refreshHealth() }
         guard !refreshing else { return }
         if case .ok = compat {} else { await checkCLI() }
         guard case .ok = compat else { return }
@@ -73,7 +106,7 @@ final class Store: ObservableObject {
             else { errors.append("pending: \(Self.lastLine(pr.stderr))") }
         }
         // The cards are status; doctor and pending only decorate them.
-        if statusRead { lastSuccess = Date() }
+        if statusRead { lastSuccess = Date(); pruneSelection() }
         refreshError = errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
 
@@ -120,7 +153,7 @@ extension Store {
             return TrackedRun(record: record, summary: summary,
                               state: runState(summary: summary, alive: isRunAlive(record)))
         }
-        if fresh != runs { runs = fresh }
+        if fresh != runs { runs = fresh; pruneSelection() }
     }
 
     /// A start whose pid was not known yet: the wrapper may have written its
@@ -183,6 +216,7 @@ extension Store {
             return .unclear("vast may have started, but its pid could not be read. Its card shows it as running for up to 10 minutes — do not start it again.")
         }
         panel = nil
+        selection = []
         return .started
     }
 

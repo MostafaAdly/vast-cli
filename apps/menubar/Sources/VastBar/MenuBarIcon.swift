@@ -21,14 +21,7 @@ struct MenuBarIcon: View {
             }
     }
 
-    static func color(_ state: IconState) -> NSColor {
-        switch state {
-        case .ok: return .systemGreen
-        case .running: return .systemBlue
-        case .attention: return .systemOrange
-        case .failed: return .systemRed
-        }
-    }
+    static func color(_ state: IconState) -> NSColor { Theme.state(state) }
 
     static func image(state: IconState, dim: Bool) -> NSImage {
         let size = NSSize(width: 22, height: 18)

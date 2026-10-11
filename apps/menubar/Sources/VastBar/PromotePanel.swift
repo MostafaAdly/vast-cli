@@ -39,33 +39,40 @@ struct PromotePanel: View {
             CappedScroll(maxHeight: 400) {
                 VStack(alignment: .leading, spacing: 10) {
                     if loading {
-                        HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").foregroundStyle(.secondary) }
+                        HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").font(.system(size: 12)).foregroundStyle(.secondary) }
                     } else if let p = preview {
                         if p.summary.plans.isEmpty {
                             FailureBox(lines: p.stderr.split(whereSeparator: \.isNewline).suffix(8).map(String.init), command: p.command)
                         }
-                        ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo)) }
+                        ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo), env: Theme.production) }
                         ForEach(p.summary.prs, id: \.branch) { pr in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Opens \(pr.branch) → production (\(pr.version))").font(.callout)
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.triangle.pull").foregroundStyle(Theme.production)
+                                    Text("Opens \(pr.branch) → production (\(pr.version))")
+                                }
+                                .font(.system(size: 12))
                                 if let text = pr.slack?.text {
-                                    Text("Slack message").font(.caption).foregroundStyle(.secondary)
-                                    Text(text).font(.caption).textSelection(.enabled)
-                                        .padding(6)
-                                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                                    Text("Slack message").font(.system(size: 11)).foregroundStyle(.secondary)
+                                    Text(text).font(.system(size: 11)).textSelection(.enabled)
+                                        .padding(8)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
                                 }
                             }
                         }
                         Text("The PR is never merged from here, and nothing deploys production.")
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 11)).foregroundStyle(Theme.problem).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Button("Cancel") { store.panel = nil }
                 Spacer()
                 Button("Open PR") { confirm() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!openable || loading || starting)
             }

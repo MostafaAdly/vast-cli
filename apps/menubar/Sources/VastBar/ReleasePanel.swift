@@ -33,7 +33,7 @@ struct ReleasePanel: View {
             CappedScroll(maxHeight: 460) {
                 VStack(alignment: .leading, spacing: 10) {
                     if loading {
-                        HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").foregroundStyle(.secondary) }
+                        HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").font(.system(size: 12)).foregroundStyle(.secondary) }
                     } else if let p = preview {
                         if p.summary.plans.isEmpty {
                             FailureBox(lines: p.stderr.split(whereSeparator: \.isNewline).suffix(8).map(String.init), command: p.command)
@@ -41,16 +41,19 @@ struct ReleasePanel: View {
                         ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo)) }
                         if offersFixVersion || fixVersion {
                             Toggle("Use the first version above production (--fix-version)", isOn: $fixVersion)
+                                .font(.system(size: 12))
                                 .disabled(starting)
                         }
                     }
                 }
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            if let error { Text(error).font(.system(size: 11)).foregroundStyle(Theme.problem).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Button("Cancel") { store.panel = nil }
                 Spacer()
                 Button("Release") { confirm() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!startable || loading || starting)
             }
@@ -92,9 +95,10 @@ struct PanelHeader: View {
     @EnvironmentObject var store: Store
     let title: String
     var body: some View {
-        HStack {
-            Button { store.panel = nil } label: { Image(systemName: "chevron.left") }.buttonStyle(.borderless)
-            Text(title).font(.headline)
+        HStack(spacing: 8) {
+            Button { store.panel = nil } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless).foregroundStyle(.secondary).help("Back")
+            Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
             Spacer()
         }
     }
@@ -102,53 +106,81 @@ struct PanelHeader: View {
 
 /// A scroll view as tall as its content, up to `maxHeight`, so a short
 /// preview stays short and a long one never pushes the buttons off screen.
+///
+/// The height is known on the first layout pass: a hidden copy of the
+/// content is measured beside the scroll view. A height fed back through a
+/// preference arrives a pass late, so a one-shot measure (the menu bar
+/// window's first size, `sizeThatFits`) would see zero.
 struct CappedScroll<Content: View>: View {
     let maxHeight: CGFloat
     @ViewBuilder var content: () -> Content
-    @State private var height: CGFloat = 0
 
     var body: some View {
-        ScrollView {
+        CappedHeight(maxHeight: maxHeight) {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(GeometryReader { g in Color.clear.preference(key: ContentHeightKey.self, value: g.size.height) })
+                .hidden()
+                .accessibilityHidden(true)
+            ScrollView {
+                content().frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .frame(height: min(height, maxHeight))
-        .onPreferenceChange(ContentHeightKey.self) { height = $0 }
     }
 }
 
-private struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+/// Two subviews: the measured content (hidden), then the scroll view, which
+/// gets the content's height up to `maxHeight`.
+private struct CappedHeight: Layout {
+    let maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let measured = subviews.first else { return .zero }
+        let size = measured.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? size.width, height: min(size.height, maxHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: nil))
+        subviews[1].place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+    }
 }
 
 struct PlanRow: View {
     let plan: PlanEvent
     /// Why the dry run says this repo will be skipped, if it does.
     var skip: String? = nil
+    /// The env the version goes to: staging for a release, production for a promote.
+    var env: Color = Theme.staging
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: Theme.rowSpacing) {
                 Image(systemName: plan.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .foregroundStyle(plan.ok ? .green : .red)
-                Text(plan.repo).font(.system(.body, weight: .semibold))
+                    .font(.system(size: 13))
+                    .foregroundStyle(plan.ok ? Theme.done : Theme.problem)
+                    .frame(width: Theme.checkWidth)
+                Text(plan.repo).font(.system(size: 14, weight: .medium)).lineLimit(1)
                 Spacer()
-                Text(plan.version).font(.system(.caption, design: .monospaced))
+                VersionPill(text: plan.version, dot: env, help: "the version it ships")
             }
-            Text(promoteLine).font(.caption).foregroundStyle(.secondary)
-            if let notice = plan.notice { Text(notice).font(.caption).foregroundStyle(.orange) }
-            if let detail = plan.detail {
-                Text(detail).font(.caption).foregroundStyle(plan.ok ? Color.secondary : Color.red)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                if !promoteLine.isEmpty { Text(promoteLine).foregroundStyle(.secondary) }
+                if let notice = plan.notice { Text(notice).foregroundStyle(Theme.waiting) }
+                if let detail = plan.detail {
+                    Text(detail).foregroundStyle(plan.ok ? Color.secondary : Theme.problem)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if plan.ok, let skip {
+                    Text("will be skipped: \(skip)").foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if plan.ok, let skip {
-                Text("will be skipped: \(skip)").font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .font(.system(size: 11))
+            .padding(.leading, Theme.indent)
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.card))
     }
 
     private var promoteLine: String {
@@ -167,7 +199,7 @@ struct FailureBox: View {
     let command: VastCommand
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("vast failed").font(.caption.bold()).foregroundStyle(.red)
+            Label("vast failed", systemImage: "xmark.octagon.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.problem)
             Text(lines.isEmpty ? "No output." : lines.joined(separator: "\n"))
                 .font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -180,6 +212,7 @@ struct FailureBox: View {
             .controlSize(.small)
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.red.opacity(0.08)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.tint(Theme.problem)))
     }
 }

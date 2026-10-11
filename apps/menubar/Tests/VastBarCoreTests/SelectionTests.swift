@@ -80,3 +80,21 @@ final class SelectionTests: XCTestCase {
         XCTAssertEqual(sections[2].cards.map(\.id), ["Lone"])
     }
 }
+
+final class CardRunTests: XCTestCase {
+    private func run(_ args: [String], dryRun: Bool = false, dismissed: Bool = false, id: String) -> TrackedRun {
+        TrackedRun(record: RunRecord(id: id, pid: 1, args: args, startedAt: Date(), dismissed: dismissed),
+                   summary: summarize(dryRun ? [.start(command: "release", args: [], dryRun: true, repos: ["A"])] : []),
+                   state: .running)
+    }
+
+    func testTheCardShowsTheLatestRealUndismissedRunCoveringIt() {
+        let older = run(["release", "A", "B", "--json"], id: "1")
+        let newer = run(["release", "A", "--json"], id: "2")
+        let dry = run(["release", "A", "--dry-run", "--json"], dryRun: true, id: "3")
+        let dismissed = run(["release", "A", "--json"], dismissed: true, id: "4")
+        XCTAssertEqual(cardRun("A", runs: [older, newer, dry, dismissed], status: nil)?.id, "2")
+        XCTAssertEqual(cardRun("B", runs: [older, newer, dry, dismissed], status: nil)?.id, "1")
+        XCTAssertNil(cardRun("C", runs: [older, newer], status: nil))
+    }
+}
