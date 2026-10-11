@@ -17,6 +17,8 @@ public struct RepoProgress: Equatable, Sendable, Identifiable {
     /// Failed by the "ended without finishing" synthesis at `end`, not by a
     /// `done`: the reason is only on stderr.
     public var endedUnfinished = false
+    /// A `rollout` event arrived: a later failure was in the rollout.
+    public var reachedRollout = false
     public var id: String { repo }
     public init(repo: String) { self.repo = repo }
 }
@@ -87,6 +89,7 @@ public func summarize(_ events: [VastEvent]) -> RunSummary {
         case .rollout(let repo, let state, let reason, let elapsedMs):
             let i = index(repo)
             s.repos[i].phase = .rollingOut(state: state, elapsedMs: elapsedMs)
+            s.repos[i].reachedRollout = true
             if let reason { s.repos[i].detail = reason }
         case .pr(let pr):
             s.prs.append(pr)

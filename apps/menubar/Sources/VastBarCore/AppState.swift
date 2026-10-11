@@ -64,6 +64,16 @@ public func iconState(doctor: DoctorSnapshot?, status: StatusSnapshot?, runs: [T
     return .ok
 }
 
+/// One line under a card: `text` is what it shows, `detail` the full words
+/// (its tooltip); `failing` is a doctor fail, red rather than orange.
+public struct CardProblem: Hashable, Sendable {
+    public let text: String
+    public let detail: String
+    public let failing: Bool
+    public init(text: String, detail: String, failing: Bool) { self.text = text; self.detail = detail; self.failing = failing }
+    init(_ text: String) { self.init(text: text, detail: text, failing: false) }
+}
+
 public struct RepoCard: Equatable, Sendable, Identifiable {
     public let id: String
     public let displayName: String
@@ -75,7 +85,7 @@ public struct RepoCard: Equatable, Sendable, Identifiable {
     public let driftAhead: Int?
     public let waitingPRs: Int?
     /// Plain-words problems: unreadable cells and doctor's warn/fail for this repo.
-    public let problems: [String]
+    public let problems: [CardProblem]
     public let isRunning: Bool
     /// The latest real (not dry-run) run's progress for this repo.
     public let progress: RepoProgress?
@@ -84,13 +94,13 @@ public struct RepoCard: Equatable, Sendable, Identifiable {
 public func repoCards(status: StatusSnapshot?, doctor: DoctorSnapshot?, pending: PendingSnapshot?, runs: [TrackedRun]) -> [RepoCard] {
     guard let status else { return [] }
     return status.repos.map { r in
-        var problems: [String] = []
-        if r.staging.problem == "?" { problems.append("staging tag could not be read") }
-        if r.production.problem == "?" { problems.append("production tag could not be read") }
-        if r.drift.problem == "?" { problems.append("drift could not be computed") }
+        var problems: [CardProblem] = []
+        if r.staging.problem == "?" { problems.append(CardProblem("staging tag could not be read")) }
+        if r.production.problem == "?" { problems.append(CardProblem("production tag could not be read")) }
+        if r.drift.problem == "?" { problems.append(CardProblem("drift could not be computed")) }
         problems += (doctor?.checks ?? [])
             .filter { $0.group == "Repos" && $0.label == r.repo && $0.status != .ok }
-            .map(\.detail)
+            .map { CardProblem(text: fixVersionHint($0.detail) ?? $0.detail, detail: $0.detail, failing: $0.status == .fail) }
         let mine = runs.filter { reposOf($0, status: status).contains(r.repo) }
         let latestReal = mine.last { !$0.summary.dryRun && !$0.record.dismissed }
         return RepoCard(

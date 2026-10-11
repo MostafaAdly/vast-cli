@@ -134,7 +134,7 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(cards[0].isRunning)
         XCTAssertEqual(cards[0].progress?.phase, .building(elapsedMs: 0))
         XCTAssertEqual(cards[1].staging, "?")
-        XCTAssertEqual(cards[1].problems, [
+        XCTAssertEqual(cards[1].problems.map(\.detail), [
             "staging tag could not be read",
             "next 1.6.12-rc1 is not above production 1.6.12 — release it with --fix-version (→ 1.6.13-rc1)",
         ])

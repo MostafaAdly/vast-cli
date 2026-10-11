@@ -24,7 +24,7 @@ struct RepoCardView: View {
                 Text(card.drift).font(.caption).foregroundStyle(.secondary)
             }
             ForEach(card.problems, id: \.self) { p in
-                Label(p, systemImage: "exclamationmark.triangle.fill")
+                Label(p.text, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
