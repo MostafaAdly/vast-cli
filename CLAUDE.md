@@ -214,6 +214,25 @@ in `Vast-deployments`:
 - Exit codes are the same with and without `--json`. `--json` never prompts; anything
   added later that would ask must instead fail that repo with a detail naming the input.
 
+## Vast Bar (apps/menubar)
+
+- A Swift package, Apple frameworks only, macOS 13+. `VastBarCore` holds every rule
+  (parsing, run summaries, icon/card state, command building, quoting, the run store) and
+  is tested with `cd apps/menubar && swift test` against **synthetic** fixtures — never
+  paste real CLI output into them (it carries real names and emails; the repo is public).
+  `VastBar` is thin SwiftUI that renders Core's state. `apps/menubar/build.sh` builds,
+  ad-hoc signs and installs to /Applications (`--no-install` to only build).
+- The app never decides anything a release depends on: it runs `vast … --json` through
+  `/bin/zsh -lc` and shows what the CLI says. Every command line comes from `Commands`
+  (quoted with `shellQuote`); repo names come only from `status --json`.
+- Safety it must keep: every action is preview-then-confirm, and the confirm runs
+  `preview.command.withoutDryRun` — never a command rebuilt from the toggles. A repo with
+  a running (or unclear, pid `-1`) run cannot be started again. "Open dry run in Terminal"
+  uses `safeTerminalLine` (dry run, never `--slack`). No production deploy, no merge, no
+  credentials in the app.
+- The app's minimum CLI is 2.9.0 (`CLICompat.minimum`); the event shapes it decodes are
+  `src/utils/events.ts` — change both together.
+
 ## Slack announcements
 
 - `vast promote --to production --slack` posts one message after the release PR

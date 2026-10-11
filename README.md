@@ -590,6 +590,36 @@ channel it posts to.
 For CI or a throwaway shell, `VAST_SLACK_TOKEN` and `VAST_SLACK_CHANNEL` override the
 stored file, with nothing written to disk.
 
+## Vast Bar (menu bar app)
+
+A macOS menu bar app for the same releases, in `apps/menubar/`. The icon's dot says
+whether anything needs you: **green** all good, **blue** a release or promote is running,
+**amber** something to look at (a doctor warning, a version behind production, a tag that
+could not be read), **red** a doctor failure or a run that failed. Click it for one card
+per repo: staging → production versions, drift, how many PRs are waiting for production,
+and any problem in plain words, with doctor's warnings and failures at the bottom.
+
+```bash
+apps/menubar/build.sh     # build, sign for this machine, install to /Applications
+```
+
+It needs macOS 13+, Xcode's Swift toolchain to build, and vast **2.9.0** or newer on your
+login shell's PATH: it runs `vast … --json` through `/bin/zsh -lc` and never decides
+anything itself. It refreshes when you open it and every five minutes.
+
+**Release** and **Promote…** on a card (or **Release frontend** / **Release backend**) are
+always preview-then-confirm: the app runs the `--dry-run --json` form first and shows the
+plan — the version, the commits, a refusal with its reason, for promote the PR branch and
+the exact Slack message — and only the button inside that preview runs it for real, with
+exactly the options you previewed. "Post to Slack" is off by default. A real run is
+started detached and written to `~/Library/Application Support/Vast Bar/runs/`, so
+quitting the app never stops it; the card follows it live (promoting → building → rolling
+out → done) and links the build and the PR. A run that fails shows the CLI's last lines,
+and "Open dry run in Terminal" re-runs it as a dry run — never for real, never posting.
+
+It never merges a PR, never deploys production, and never handles credentials: log in to
+ArgoCD and set up Slack with `vast argocd login` and `vast slack setup` in a terminal.
+
 ## Claude Code skill
 
 The CLI does everything deterministic. The `/release` skill takes over where determinism
@@ -780,6 +810,8 @@ lifecycle hook, so the tag is always self-consistent. The same hook rebuilds and
 - `src/config/` — the repo list, the per-user config, the production lock, ArgoCD hosts and tokens
 - `src/utils/` — git, GitHub, the Vast-deployments reader, the ArgoCD client, version derivation, discovery, UI
 - `tests/` — one file per module, run with Node's built-in test runner
+- `apps/menubar/` — Vast Bar, a Swift package: `VastBarCore` (every rule, tested with
+  `swift test` against synthetic fixtures) and `VastBar` (thin SwiftUI views)
 
 New commands are registered in `src/cli.ts`; anything registered there appears in
 `vast --help`.
