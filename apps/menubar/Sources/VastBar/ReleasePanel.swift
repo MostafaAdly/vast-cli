@@ -15,15 +15,8 @@ struct ReleasePanel: View {
     /// shown, and only it clears `loading`.
     @State private var generation = 0
 
-    private var named: [String] { target.repoName.map { [$0] } ?? [] }
+    private var named: [String] { target.repoNames }
     private var dryRun: VastCommand { Commands.release(target, dryRun: true, fixVersion: fixVersion) }
-
-    private var title: String {
-        switch target {
-        case .repo(let name): return "Release \(name) to staging"
-        case .train(let train): return "Release \(train.rawValue) to staging"
-        }
-    }
 
     private var offersFixVersion: Bool {
         preview?.summary.plans.contains { ($0.detail ?? "").contains("--fix-version") } ?? false
@@ -36,7 +29,7 @@ struct ReleasePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PanelHeader(title: title)
+            PanelHeader(title: target.title)
             CappedScroll(maxHeight: 460) {
                 VStack(alignment: .leading, spacing: 10) {
                     if loading {

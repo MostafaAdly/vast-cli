@@ -5,11 +5,33 @@ public enum Train: String, Sendable, CaseIterable { case frontend, backend }
 public enum ReleaseTarget: Equatable, Sendable, Hashable {
     case repo(String)
     case train(Train)
+    /// Several repos named on one command line, in the given order.
+    case repos([String])
 
-    /// The repo name this target puts on the command line; nil for a train.
+    /// The repo name this target puts on the command line; nil for a train
+    /// or several repos.
     public var repoName: String? {
         if case .repo(let name) = self { return name }
         return nil
+    }
+
+    /// Every repo name this target puts on the command line; none for a train.
+    public var repoNames: [String] {
+        switch self {
+        case .repo(let name): return [name]
+        case .train: return []
+        case .repos(let names): return names
+        }
+    }
+
+    /// The release panel's title.
+    public var title: String {
+        switch self {
+        case .repo(let name): return "Release \(name) to staging"
+        case .train(let train): return "Release \(train.rawValue) to staging"
+        case .repos(let names):
+            return names.count == 1 ? "Release \(names[0]) to staging" : "Release \(names.count) repos to staging"
+        }
     }
 }
 
@@ -62,6 +84,7 @@ public enum Commands {
         switch target {
         case .repo(let name): args.append(name)
         case .train(let train): args.append("--\(train.rawValue)")
+        case .repos(let names): args += names
         }
         if fixVersion { args.append("--fix-version") }
         if dryRun { args.append("--dry-run") }

@@ -68,6 +68,8 @@ public struct RepoCard: Equatable, Sendable, Identifiable {
     public let staging: String
     public let production: String
     public let drift: String
+    /// Commits develop has that staging lacks; nil when unknown.
+    public let driftAhead: Int?
     public let waitingPRs: Int?
     /// Plain-words problems: unreadable cells and doctor's warn/fail for this repo.
     public let problems: [String]
@@ -95,6 +97,7 @@ public func repoCards(status: StatusSnapshot?, doctor: DoctorSnapshot?, pending:
             staging: r.staging.tag ?? r.staging.problem ?? "—",
             production: r.production.tag ?? r.production.problem ?? "—",
             drift: r.drift.text,
+            driftAhead: r.drift.ahead,
             waitingPRs: pending?.repos.first { $0.repo == r.repo }?.waitingCount,
             problems: problems,
             isRunning: mine.contains { $0.state == .running },
@@ -117,20 +120,19 @@ public func trainRepos(_ train: Train, status: StatusSnapshot?) -> [String] {
     (status?.repos ?? []).filter { $0.releaseTeam == train.rawValue }.map(\.repo)
 }
 
-/// The repos a release target works on: its one repo, or the train's.
+/// The repos a release target works on: its named repos, or the train's.
 public func targetRepos(_ target: ReleaseTarget, status: StatusSnapshot?) -> [String] {
     switch target {
-    case .repo(let name): return [name]
+    case .repo, .repos: return target.repoNames
     case .train(let train): return trainRepos(train, status: status)
     }
 }
 
-/// The repos a `vast release|promote` argument list covers: the repo after the
-/// subcommand, or a train flag's repos from status. Used for a run whose
-/// first event has not arrived yet.
+/// The repos a `vast release|promote` argument list covers: the repos named
+/// after the subcommand (up to the first option), or a train flag's repos
+/// from status. Used for a run whose first event has not arrived yet.
 public func reposCovered(args: [String], status: StatusSnapshot?) -> [String] {
-    var repos: [String] = []
-    if args.count > 1, !args[1].hasPrefix("-") { repos.append(args[1]) }
+    var repos = Array(args.dropFirst().prefix { !$0.hasPrefix("-") })
     for train in Train.allCases where args.contains("--\(train.rawValue)") {
         repos += trainRepos(train, status: status)
     }
@@ -155,4 +157,44 @@ public func startRefusal(named: [String], covers: [String], runs: [TrackedRun], 
         }
     }
     return nil
+}
+
+// MARK: - Selection
+
+/// Repos that can be ticked: on screen and not running (an unclear start
+/// reads as running too).
+public func selectableRepos(_ cards: [RepoCard]) -> [String] {
+    cards.filter { !$0.isRunning }.map(\.id)
+}
+
+/// The selection with every repo that is gone or now running taken out.
+public func prunedSelection(_ selection: Set<String>, cards: [RepoCard]) -> Set<String> {
+    selection.intersection(selectableRepos(cards))
+}
+
+/// The selection in the cards' order: the order the command line names them.
+public func orderedSelection(_ selection: Set<String>, cards: [RepoCard]) -> [String] {
+    cards.map(\.id).filter(selection.contains)
+}
+
+public struct TeamSection: Equatable, Sendable, Identifiable {
+    /// The release team; nil for repos without one.
+    public let team: String?
+    public let cards: [RepoCard]
+    public var id: String { team ?? "" }
+    public var title: String { team.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Other" }
+}
+
+/// Cards grouped by team: frontend, backend, any other team in first-seen
+/// order, then the repos with no team as "Other".
+public func teamSections(_ cards: [RepoCard]) -> [TeamSection] {
+    var order = Train.allCases.map(\.rawValue)
+    for team in cards.compactMap(\.releaseTeam) where !order.contains(team) { order.append(team) }
+    var sections = order.compactMap { team -> TeamSection? in
+        let mine = cards.filter { $0.releaseTeam == team }
+        return mine.isEmpty ? nil : TeamSection(team: team, cards: mine)
+    }
+    let other = cards.filter { $0.releaseTeam == nil }
+    if !other.isEmpty { sections.append(TeamSection(team: nil, cards: other)) }
+    return sections
 }
