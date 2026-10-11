@@ -28,6 +28,33 @@ final class EventsTests: XCTestCase {
         XCTAssertEqual(events.count, 3)
     }
 
+    func testAKnownTypeWithABadPayloadIsKeptAsUnknown() {
+        XCTAssertEqual(NDJSON.events(from: "{\"type\":\"end\",\"exitCode\":\"x\"}\n"), [.unknown(type: "end")])
+    }
+
+    func testCRLFLinesSplit() {
+        XCTAssertEqual(NDJSON.events(from: "{\"type\":\"end\",\"exitCode\":0}\r\n"), [.end(exitCode: 0)])
+        let two = "{\"type\":\"end\",\"exitCode\":0}\r\n{\"type\":\"end\",\"exitCode\":1}\r\n"
+        XCTAssertEqual(NDJSON.events(from: two), [.end(exitCode: 0), .end(exitCode: 1)])
+        // a CRLF stream's half-written last line is still left for the next read
+        XCTAssertEqual(NDJSON.events(from: "{\"type\":\"end\",\"exitCode\":0}\r\n{\"type\":\"en"), [.end(exitCode: 0)])
+    }
+
+    func testPRWithNullSlackDecodes() {
+        let line = #"{"type":"pr","repo":"A","branch":"release/1.0.0","url":"https://example.com/pr/1","version":"1.0.0","slack":null}"# + "\n"
+        guard case .pr(let pr) = NDJSON.events(from: line).first else { return XCTFail("pr") }
+        XCTAssertNil(pr.slack)
+        XCTAssertEqual(pr.url, "https://example.com/pr/1")
+    }
+
+    func testPlanWithoutCommitsKeyDecodes() {
+        let line = #"{"type":"plan","repo":"A","ok":true,"version":"1.0.0","promote":"not run"}"# + "\n"
+        guard case .plan(let plan) = NDJSON.events(from: line).first else { return XCTFail("plan") }
+        XCTAssertNil(plan.commits)
+        XCTAssertNil(plan.notice)
+        XCTAssertNil(plan.detail)
+    }
+
     func testGarbageLinesAreSkipped() {
         let text = "not json\n{\"type\":\"end\",\"exitCode\":0}\n\n"
         XCTAssertEqual(NDJSON.events(from: text), [.end(exitCode: 0)])

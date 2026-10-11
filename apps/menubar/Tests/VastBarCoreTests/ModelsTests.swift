@@ -22,6 +22,12 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(d.checks[4].label, "VastMenuPwa")
     }
 
+    func testAnUnknownCheckStatusReadsAsWarn() throws {
+        let json = #"{"generatedAt":"2026-10-11T09:00:00Z","checks":[{"group":"Repos","label":"A","status":"skip","detail":"d"},{"group":"Repos","label":"B","status":"fail","detail":"d"}]}"#
+        let d = try VastJSON.decoder().decode(DoctorSnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(d.checks.map(\.status), [.warn, .fail])
+    }
+
     func testPendingCountsWaitingPRsAndToleratesAProblemRepo() throws {
         let p = try VastJSON.decoder().decode(PendingSnapshot.self, from: fixture("pending.json"))
         XCTAssertEqual(p.repos[0].waitingCount, 2)

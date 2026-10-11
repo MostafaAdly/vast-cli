@@ -9,9 +9,17 @@ public struct CLIVersion: Comparable, Equatable, Sendable, CustomStringConvertib
         self.major = major; self.minor = minor; self.patch = patch
     }
 
+    /// The last line of `text` that parses: a login shell may print a banner
+    /// or profile `echo` before `vast --version` answers.
     public init?(_ text: String) {
-        let first = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        var core = first.trimmingCharacters(in: .whitespaces)
+        guard let v = text.split(whereSeparator: \.isNewline).reversed().lazy.compactMap({ Self(line: String($0)) }).first else {
+            return nil
+        }
+        self = v
+    }
+
+    private init?(line: String) {
+        var core = line.trimmingCharacters(in: .whitespaces)
         if core.hasPrefix("v") { core.removeFirst() }
         core = String(core.prefix { $0 != "-" && $0 != "+" })
         let parts = core.split(separator: ".").map { Int($0) }

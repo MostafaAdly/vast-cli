@@ -35,8 +35,9 @@ public struct DoneEvent: Decodable, Equatable, Sendable {
     public let detail: String
 }
 
-/// One line of `vast release|promote --json`. Unknown types are kept, not
-/// dropped, so a newer CLI never breaks an older app.
+/// One line of `vast release|promote --json`. Unknown types, and known types
+/// whose payload no longer decodes, are kept as `.unknown`, not dropped, so a
+/// newer CLI never breaks an older app.
 public enum VastEvent: Equatable, Sendable {
     case start(command: String, args: [String], dryRun: Bool, repos: [String])
     case plan(PlanEvent)
@@ -59,51 +60,62 @@ extension VastEvent: Decodable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let type = try c.decode(String.self, forKey: .type)
+        do {
+            self = try Self.decode(type: type, c, decoder)
+        } catch {
+            self = .unknown(type: type)
+        }
+    }
+
+    private static func decode(type: String, _ c: KeyedDecodingContainer<Key>, _ decoder: Decoder) throws -> VastEvent {
         switch type {
         case "start":
-            self = .start(
+            return .start(
                 command: try c.decode(String.self, forKey: .command),
                 args: try c.decode([String].self, forKey: .args),
                 dryRun: try c.decode(Bool.self, forKey: .dryRun),
                 repos: try c.decode([String].self, forKey: .repos))
-        case "plan": self = .plan(try PlanEvent(from: decoder))
+        case "plan": return .plan(try PlanEvent(from: decoder))
         case "promoted":
-            self = .promoted(repo: try c.decode(String.self, forKey: .repo), commits: try c.decode(Int.self, forKey: .commits))
+            return .promoted(repo: try c.decode(String.self, forKey: .repo), commits: try c.decode(Int.self, forKey: .commits))
         case "dispatched":
-            self = .dispatched(
+            return .dispatched(
                 repo: try c.decode(String.self, forKey: .repo),
                 version: try c.decode(String.self, forKey: .version),
                 runId: try c.decode(Int.self, forKey: .runId),
                 runUrl: try c.decode(String.self, forKey: .runUrl))
         case "run":
-            self = .run(
+            return .run(
                 repo: try c.decode(String.self, forKey: .repo),
                 status: try c.decode(String.self, forKey: .status),
                 conclusion: try c.decodeIfPresent(String.self, forKey: .conclusion),
                 elapsedMs: try c.decode(Int.self, forKey: .elapsedMs))
         case "rollout":
-            self = .rollout(
+            return .rollout(
                 repo: try c.decode(String.self, forKey: .repo),
                 state: try c.decode(String.self, forKey: .state),
                 reason: try c.decodeIfPresent(String.self, forKey: .reason),
                 elapsedMs: try c.decode(Int.self, forKey: .elapsedMs))
-        case "pr": self = .pr(try PREvent(from: decoder))
-        case "done": self = .done(try DoneEvent(from: decoder))
-        case "end": self = .end(exitCode: try c.decode(Int.self, forKey: .exitCode))
-        default: self = .unknown(type: type)
+        case "pr": return .pr(try PREvent(from: decoder))
+        case "done": return .done(try DoneEvent(from: decoder))
+        case "end": return .end(exitCode: try c.decode(Int.self, forKey: .exitCode))
+        default: return .unknown(type: type)
         }
     }
 }
 
 public enum NDJSON {
     /// Every complete line that parses. A last line without its newline is
-    /// still being written by the CLI and is left for the next read.
+    /// still being written by the CLI and is left for the next read. Lines are
+    /// split on `\n` bytes, not Characters (Swift reads `\r\n` as one), so
+    /// CRLF text splits too; the trailing `\r` is trimmed.
     public static func events(from text: String) -> [VastEvent] {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        if !text.hasSuffix("\n"), !lines.isEmpty { lines.removeLast() }
+        let bytes = Array(text.utf8)
+        var lines = bytes.split(separator: 0x0A, omittingEmptySubsequences: false)
+        if bytes.last != 0x0A, !lines.isEmpty { lines.removeLast() }
         let decoder = VastJSON.decoder()
         return lines.compactMap { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             return try? decoder.decode(VastEvent.self, from: Data(trimmed.utf8))
         }

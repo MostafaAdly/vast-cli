@@ -32,7 +32,16 @@ public struct StatusSnapshot: Decodable, Equatable, Sendable {
 
 // `vast doctor --json`
 
-public enum CheckStatus: String, Decodable, Sendable { case ok, warn, fail }
+public enum CheckStatus: String, Decodable, Sendable {
+    case ok, warn, fail
+
+    /// A status a newer CLI adds (say `skip`) reads as `warn` rather than
+    /// failing the whole doctor snapshot.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = CheckStatus(rawValue: raw) ?? .warn
+    }
+}
 
 public struct DoctorCheck: Decodable, Equatable, Sendable {
     public let group: String

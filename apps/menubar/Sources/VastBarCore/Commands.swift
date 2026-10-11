@@ -50,10 +50,11 @@ public enum Commands {
     }
 }
 
-/// POSIX single-quote unless the word is plainly safe.
+/// POSIX single-quote unless the word is plainly safe. A leading `=` is not
+/// safe: zsh expands `=ls` to the path of `ls`.
 public func shellQuote(_ word: String) -> String {
     let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/=-")
-    if !word.isEmpty, word.unicodeScalars.allSatisfy({ safe.contains($0) }) { return word }
+    if !word.isEmpty, !word.hasPrefix("="), word.unicodeScalars.allSatisfy({ safe.contains($0) }) { return word }
     return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 

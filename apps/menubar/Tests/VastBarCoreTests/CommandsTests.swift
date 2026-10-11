@@ -35,6 +35,9 @@ final class CommandsTests: XCTestCase {
         XCTAssertEqual(shellQuote("x; rm -rf ~"), "'x; rm -rf ~'")
         XCTAssertEqual(shellQuote("it's"), "'it'\\''s'")
         XCTAssertEqual(shellQuote(""), "''")
+        // zsh expands a word that starts with `=` (`=ls` becomes /bin/ls)
+        XCTAssertEqual(shellQuote("=ls"), "'=ls'")
+        XCTAssertEqual(shellQuote("a=b"), "a=b")
         XCTAssertEqual(VastCommand(args: ["status", "$(whoami)"]).shellLine, "vast status '$(whoami)'")
     }
 
