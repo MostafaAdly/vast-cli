@@ -5,6 +5,19 @@ public enum Train: String, Sendable, CaseIterable { case frontend, backend }
 public enum ReleaseTarget: Equatable, Sendable, Hashable {
     case repo(String)
     case train(Train)
+
+    /// The repo name this target puts on the command line; nil for a train.
+    public var repoName: String? {
+        if case .repo(let name) = self { return name }
+        return nil
+    }
+}
+
+/// A repo name the app will put on a command line: non-empty, no leading `-`
+/// (it would parse as an option), and only `[A-Za-z0-9._-]`.
+public func isSafeRepoName(_ name: String) -> Bool {
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    return !name.isEmpty && !name.hasPrefix("-") && name.unicodeScalars.allSatisfy { allowed.contains($0) }
 }
 
 /// A `vast` invocation as a fixed argument list. The only way the app builds

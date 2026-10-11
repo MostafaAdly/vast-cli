@@ -106,3 +106,44 @@ public func attentionLines(doctor: DoctorSnapshot?) -> [DoctorCheck] {
 public func trainRepos(_ train: Train, status: StatusSnapshot?) -> [String] {
     (status?.repos ?? []).filter { $0.releaseTeam == train.rawValue }.map(\.repo)
 }
+
+/// The repos a release target works on: its one repo, or the train's.
+public func targetRepos(_ target: ReleaseTarget, status: StatusSnapshot?) -> [String] {
+    switch target {
+    case .repo(let name): return [name]
+    case .train(let train): return trainRepos(train, status: status)
+    }
+}
+
+/// The repos a `vast release|promote` argument list covers: the repo after the
+/// subcommand, or a train flag's repos from status. Used for a run whose
+/// first event has not arrived yet.
+public func reposCovered(args: [String], status: StatusSnapshot?) -> [String] {
+    var repos: [String] = []
+    if args.count > 1, !args[1].hasPrefix("-") { repos.append(args[1]) }
+    for train in Train.allCases where args.contains("--\(train.rawValue)") {
+        repos += trainRepos(train, status: status)
+    }
+    return repos
+}
+
+/// The first repo name that must not reach a command line, as a message.
+public func repoNameRefusal(_ named: [String]) -> String? {
+    named.first { !isSafeRepoName($0) }.map { "Not a repo name vast can be run with: \($0)" }
+}
+
+/// Why a real run must not start, or nil. `named` are the repo names the
+/// command line carries; `covers` every repo it will work on. A run still
+/// going on one of those repos refuses it: a panel opened before that run
+/// started could otherwise start a second one.
+public func startRefusal(named: [String], covers: [String], runs: [TrackedRun], status: StatusSnapshot?) -> String? {
+    if let refusal = repoNameRefusal(named) { return refusal }
+    let wanted = Set(covers)
+    for run in runs where run.state == .running {
+        let repos = run.summary.repos.isEmpty ? reposCovered(args: run.record.args, status: status) : run.summary.repos.map(\.repo)
+        if let busy = repos.first(where: wanted.contains) {
+            return "\(busy) already has a run in progress — wait for it to finish."
+        }
+    }
+    return nil
+}

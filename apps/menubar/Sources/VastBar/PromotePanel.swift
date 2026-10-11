@@ -9,6 +9,8 @@ struct PromotePanel: View {
     @State private var preview: Preview?
     @State private var loading = false
     @State private var error: String?
+    /// Set on the Open PR click, cleared only if the start failed.
+    @State private var starting = false
 
     private var command: VastCommand { Commands.promote(repo: repo, hotfix: hotfix, slack: slack, dryRun: false) }
     private var dryRun: VastCommand { Commands.promote(repo: repo, hotfix: hotfix, slack: slack, dryRun: true) }
@@ -52,9 +54,17 @@ struct PromotePanel: View {
             HStack {
                 Button("Cancel") { store.panel = nil }
                 Spacer()
-                Button("Open PR") { Task { error = await store.start(command) } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!openable || loading)
+                Button("Open PR") {
+                    starting = true
+                    Task {
+                        if let failure = await store.start(command, named: [repo], covers: [repo]) {
+                            error = failure
+                            starting = false
+                        }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!openable || loading || starting)
             }
         }
         .padding(12)
@@ -62,6 +72,7 @@ struct PromotePanel: View {
     }
 
     private func load() async {
+        if let refusal = repoNameRefusal([repo]) { error = refusal; preview = nil; return }
         loading = true
         preview = await store.preview(dryRun)
         loading = false

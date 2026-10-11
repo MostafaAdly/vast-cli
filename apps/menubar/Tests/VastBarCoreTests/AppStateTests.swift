@@ -31,6 +31,47 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(isRunAlive(young, now: now, pidAlive: { $0 != 42 }), "asks about the record's own pid")
     }
 
+    private func run(args: [String], events: [VastEvent], state: RunState) -> TrackedRun {
+        TrackedRun(record: RunRecord(id: UUID().uuidString, pid: 1, args: args, startedAt: Date(), dismissed: false),
+                   summary: summarize(events), state: state)
+    }
+
+    func testReposCoveredByArgs() throws {
+        let status = try status()
+        XCTAssertEqual(reposCovered(args: ["release", "VastPayPwaV2", "--json"], status: status), ["VastPayPwaV2"])
+        XCTAssertEqual(reposCovered(args: ["promote", "VastMenuPwa", "--to", "production", "--json"], status: status), ["VastMenuPwa"])
+        XCTAssertEqual(reposCovered(args: ["release", "--frontend", "--json"], status: status), ["VastPayPwaV2", "VastMenuPwa"])
+        XCTAssertEqual(reposCovered(args: ["release", "--backend", "--fix-version", "--json"], status: status), ["VastPay-BackEnd"])
+        XCTAssertEqual(reposCovered(args: [], status: status), [])
+    }
+
+    func testStartRefusesAnUnsafeName() {
+        XCTAssertEqual(repoNameRefusal(["A", "--slack"]), "Not a repo name vast can be run with: --slack")
+        XCTAssertNil(repoNameRefusal(["A"]))
+        XCTAssertNotNil(startRefusal(named: ["-x"], covers: ["-x"], runs: [], status: nil))
+        XCTAssertNil(startRefusal(named: ["A"], covers: ["A"], runs: [], status: nil))
+        XCTAssertNil(startRefusal(named: [], covers: ["A", "B"], runs: [], status: nil), "a train names no repo on the command line")
+    }
+
+    func testStartRefusesARepoARunningRunCovers() throws {
+        let status = try status()
+        // after its start event: the summary's repos
+        let started = run(args: ["release", "--frontend", "--json"],
+                          events: [.start(command: "release", args: [], dryRun: false, repos: ["VastPayPwaV2", "VastMenuPwa"])],
+                          state: .running)
+        XCTAssertNotNil(startRefusal(named: ["VastMenuPwa"], covers: ["VastMenuPwa"], runs: [started], status: status))
+        XCTAssertNil(startRefusal(named: ["VastPay-BackEnd"], covers: ["VastPay-BackEnd"], runs: [started], status: status))
+        // before its first event: the record's args, a train mapped through status
+        let fresh = run(args: ["release", "--frontend", "--json"], events: [], state: .running)
+        XCTAssertNotNil(startRefusal(named: ["VastPayPwaV2"], covers: ["VastPayPwaV2"], runs: [fresh], status: status))
+        let freshOne = run(args: ["promote", "VastPay-BackEnd", "--to", "production", "--json"], events: [], state: .running)
+        XCTAssertNotNil(startRefusal(named: [], covers: ["VastPayPwaV2", "VastPay-BackEnd"], runs: [freshOne], status: status))
+        // a finished or died run does not block
+        let finished = run(args: ["release", "VastMenuPwa", "--json"], events: [], state: .finished)
+        let died = run(args: ["release", "VastMenuPwa", "--json"], events: [], state: .died)
+        XCTAssertNil(startRefusal(named: ["VastMenuPwa"], covers: ["VastMenuPwa"], runs: [finished, died], status: status))
+    }
+
     func testIconPrecedenceFailedRunningAttentionOk() throws {
         // doctor fixture has a fail → failed wins over everything
         XCTAssertEqual(iconState(doctor: try doctor(), status: try status(), runs: []), .failed)

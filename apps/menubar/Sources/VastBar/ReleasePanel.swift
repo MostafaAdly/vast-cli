@@ -8,6 +8,11 @@ struct ReleasePanel: View {
     @State private var preview: Preview?
     @State private var loading = false
     @State private var error: String?
+    /// Set on the Release click, cleared only if the start failed: a second
+    /// click while `zsh -lc` starts must not start a second run.
+    @State private var starting = false
+
+    private var named: [String] { target.repoName.map { [$0] } ?? [] }
 
     private var title: String {
         switch target {
@@ -46,10 +51,17 @@ struct ReleasePanel: View {
                 Button("Cancel") { store.panel = nil }
                 Spacer()
                 Button("Release") {
-                    Task { error = await store.start(Commands.release(target, dryRun: false, fixVersion: fixVersion)) }
+                    starting = true
+                    Task {
+                        let command = Commands.release(target, dryRun: false, fixVersion: fixVersion)
+                        if let failure = await store.start(command, named: named, covers: targetRepos(target, status: store.status)) {
+                            error = failure
+                            starting = false
+                        }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!startable || loading)
+                .disabled(!startable || loading || starting)
             }
         }
         .padding(12)
@@ -57,6 +69,7 @@ struct ReleasePanel: View {
     }
 
     private func load() async {
+        if let refusal = repoNameRefusal(named) { error = refusal; preview = nil; return }
         loading = true
         preview = await store.preview(Commands.release(target, dryRun: true, fixVersion: fixVersion))
         loading = false

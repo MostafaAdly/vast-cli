@@ -41,6 +41,26 @@ final class CommandsTests: XCTestCase {
         XCTAssertEqual(VastCommand(args: ["status", "$(whoami)"]).shellLine, "vast status '$(whoami)'")
     }
 
+    func testSafeRepoNames() {
+        XCTAssertTrue(isSafeRepoName("VastPay-BackEnd"))
+        XCTAssertTrue(isSafeRepoName("Vast_deployments.v2"))
+        XCTAssertFalse(isSafeRepoName(""))
+        XCTAssertFalse(isSafeRepoName("-x"), "would parse as an option")
+        XCTAssertFalse(isSafeRepoName("--slack"))
+        XCTAssertFalse(isSafeRepoName("a b"))
+        XCTAssertFalse(isSafeRepoName("a;b"))
+        XCTAssertFalse(isSafeRepoName("a/b"))
+        XCTAssertFalse(isSafeRepoName("é"))
+    }
+
+    func testTargetRepoNameAndCoverage() throws {
+        let status = try VastJSON.decoder().decode(StatusSnapshot.self, from: fixture("status.json"))
+        XCTAssertEqual(ReleaseTarget.repo("A").repoName, "A")
+        XCTAssertNil(ReleaseTarget.train(.frontend).repoName)
+        XCTAssertEqual(targetRepos(.repo("A"), status: status), ["A"])
+        XCTAssertEqual(targetRepos(.train(.frontend), status: status), ["VastPayPwaV2", "VastMenuPwa"])
+    }
+
     func testAppleScriptQuote() {
         XCTAssertEqual(appleScriptQuote(#"vast release "x" \ y"#), #""vast release \"x\" \\ y""#)
     }

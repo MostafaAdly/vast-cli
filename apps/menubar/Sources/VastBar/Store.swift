@@ -127,7 +127,11 @@ extension Store {
     }
 
     /// The real run, detached. Returns an error message, or nil once started.
-    func start(_ command: VastCommand) async -> String? {
+    /// `named` are the repo names on the command line, `covers` every repo the
+    /// run works on; an unsafe name or a repo already running refuses it.
+    func start(_ command: VastCommand, named: [String], covers: [String]) async -> String? {
+        reloadRuns()
+        if let refusal = startRefusal(named: named, covers: covers, runs: runs, status: status) { return refusal }
         let id = newRunID()
         do {
             try runStore.ensureDir()
