@@ -89,7 +89,7 @@ extension Store {
     func loadRuns() {
         let store = runStore
         store.prune(isFinished: { record in
-            summarize(store.events(id: record.id)).isFinished || !Self.isRunAlive(record)
+            summarize(store.events(id: record.id)).isFinished || !isRunAlive(record)
         })
         reloadRuns()
         if runs.contains(where: { $0.state == .running }) { startPolling() }
@@ -99,15 +99,8 @@ extension Store {
         runs = runStore.records().map { record in
             let summary = summarize(runStore.events(id: record.id))
             return TrackedRun(record: record, summary: summary,
-                              state: runState(summary: summary, alive: Self.isRunAlive(record)))
+                              state: runState(summary: summary, alive: isRunAlive(record)))
         }
-    }
-
-    /// A run's process is alive only if its pid is, and only for two hours:
-    /// after that a pid still answering is most likely a reused one, so a run
-    /// with no `end` reads as died instead of running forever.
-    nonisolated static func isRunAlive(_ record: RunRecord, now: Date = Date()) -> Bool {
-        Shell.isAlive(record.pid) && now.timeIntervalSince(record.startedAt) < 2 * 3600
     }
 
     private func startPolling() {

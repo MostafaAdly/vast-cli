@@ -32,6 +32,13 @@ public func runState(summary: RunSummary, alive: Bool) -> RunState {
     return alive ? .running : .died
 }
 
+/// A run's process is alive only if its pid is, and only for two hours: after
+/// that a pid still answering is most likely a reused one, so a run with no
+/// `end` reads as died instead of running forever.
+public func isRunAlive(_ record: RunRecord, now: Date = Date(), pidAlive: (Int32) -> Bool = Shell.isAlive) -> Bool {
+    pidAlive(record.pid) && now.timeIntervalSince(record.startedAt) < 2 * 3600
+}
+
 /// Red beats blue beats amber beats green.
 public func iconState(doctor: DoctorSnapshot?, status: StatusSnapshot?, runs: [TrackedRun]) -> IconState {
     let visible = runs.filter { !$0.record.dismissed }

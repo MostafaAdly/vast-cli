@@ -25,16 +25,16 @@ public struct RunSummary: Equatable, Sendable {
     public var plans: [PlanEvent] = []
     public var prs: [PREvent] = []
     public var exitCode: Int?
+    /// A repo reached `finished` through a real `done` event, not through the
+    /// "ended without finishing" synthesis at `end`.
+    public internal(set) var anyFinishedByDone = false
 
     public var isFinished: Bool { exitCode != nil }
     public var anyFailed: Bool {
         repos.contains { $0.phase == .finished(status: "failed") }
     }
-    private var anyDone: Bool {
-        repos.contains { if case .finished = $0.phase { return true } else { return false } }
-    }
     /// The CLI itself failed: it ended non-zero without finishing any repo.
-    public var cliFailed: Bool { (exitCode ?? 0) != 0 && !anyDone }
+    public var cliFailed: Bool { (exitCode ?? 0) != 0 && !anyFinishedByDone }
 
     public init() {}
 }
@@ -43,6 +43,8 @@ public struct RunSummary: Equatable, Sendable {
 /// listed them, then any repo first seen later.
 public func summarize(_ events: [VastEvent]) -> RunSummary {
     var s = RunSummary()
+    /// Repos the run got to work on: planned or dispatched.
+    var touched: Set<String> = []
     func index(_ repo: String) -> Int {
         if let i = s.repos.firstIndex(where: { $0.repo == repo }) { return i }
         s.repos.append(RepoProgress(repo: repo))
@@ -56,12 +58,14 @@ public func summarize(_ events: [VastEvent]) -> RunSummary {
             for r in repos { _ = index(r) }
         case .plan(let p):
             s.plans.append(p)
+            touched.insert(p.repo)
             let i = index(p.repo)
             s.repos[i].version = p.version
             s.repos[i].detail = p.detail
         case .promoted(let repo, _):
             _ = index(repo)
         case .dispatched(let repo, let version, _, let runUrl):
+            touched.insert(repo)
             let i = index(repo)
             s.repos[i].version = version
             s.repos[i].runUrl = runUrl
@@ -83,8 +87,17 @@ public func summarize(_ events: [VastEvent]) -> RunSummary {
             s.repos[i].phase = .finished(status: d.status)
             s.repos[i].detail = d.detail
             s.repos[i].version = d.version
+            s.anyFinishedByDone = true
         case .end(let code):
             s.exitCode = code
+            // A run that ended with a repo it worked on (or any repo, if it
+            // ended non-zero) still unfinished: that repo failed.
+            for i in s.repos.indices {
+                if case .finished = s.repos[i].phase { continue }
+                guard code != 0 || touched.contains(s.repos[i].repo) else { continue }
+                s.repos[i].phase = .finished(status: "failed")
+                s.repos[i].detail = "ended without finishing"
+            }
         case .unknown:
             break
         }

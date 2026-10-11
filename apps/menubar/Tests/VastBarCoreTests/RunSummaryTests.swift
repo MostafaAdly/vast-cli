@@ -39,6 +39,49 @@ final class RunSummaryTests: XCTestCase {
         XCTAssertTrue(s.cliFailed)
     }
 
+    func testEndWithoutDoneKeepsCliFailedAndFailsTheRepo() throws {
+        let s = try summary("cli-failed.ndjson")
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "failed"))
+        XCTAssertEqual(s.repos[0].detail, "ended without finishing")
+        XCTAssertTrue(s.cliFailed, "no repo finished by a real done")
+    }
+
+    func testARepoLeftUnfinishedAtEndIsFailed() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A", "B"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .plan(PlanEvent(repo: "B", ok: true, version: "2.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "released", detail: "deployed")),
+            .end(exitCode: 1),
+        ])
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "released"))
+        XCTAssertEqual(s.repos[1].phase, .finished(status: "failed"))
+        XCTAssertEqual(s.repos[1].detail, "ended without finishing")
+        XCTAssertTrue(s.anyFailed)
+        XCTAssertFalse(s.cliFailed, "A finished by a real done")
+    }
+
+    func testADispatchedRepoLeftUnfinishedAtAZeroEndIsFailed() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A"]),
+            .dispatched(repo: "A", version: "1.0.0", runId: 1, runUrl: "https://example.com/runs/1"),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "failed"))
+        XCTAssertFalse(s.cliFailed)
+    }
+
+    func testAnUntouchedRepoAtAZeroEndIsLeftAlone() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A", "B"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "released", detail: "deployed")),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(s.repos[1].phase, .preparing)
+        XCTAssertFalse(s.anyFailed)
+    }
+
     func testPromotePreviewCarriesThePR() throws {
         let s = try summary("promote-dry-run.ndjson")
         XCTAssertEqual(s.command, "promote")

@@ -21,6 +21,16 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(runState(summary: done, alive: false), .finished)
     }
 
+    func testIsRunAliveNeedsALivePidAndAYoungRun() {
+        let now = Date()
+        let young = RunRecord(id: "a", pid: 42, args: [], startedAt: now.addingTimeInterval(-60), dismissed: false)
+        let old = RunRecord(id: "b", pid: 42, args: [], startedAt: now.addingTimeInterval(-3 * 3600), dismissed: false)
+        XCTAssertTrue(isRunAlive(young, now: now, pidAlive: { _ in true }))
+        XCTAssertFalse(isRunAlive(old, now: now, pidAlive: { _ in true }), "a pid answering after 2h is most likely reused")
+        XCTAssertFalse(isRunAlive(young, now: now, pidAlive: { _ in false }))
+        XCTAssertFalse(isRunAlive(young, now: now, pidAlive: { $0 != 42 }), "asks about the record's own pid")
+    }
+
     func testIconPrecedenceFailedRunningAttentionOk() throws {
         // doctor fixture has a fail → failed wins over everything
         XCTAssertEqual(iconState(doctor: try doctor(), status: try status(), runs: []), .failed)
