@@ -105,7 +105,19 @@ export function renderChecks(checks: Check[]): string[] {
   return lines;
 }
 
-async function executeDoctor(): Promise<void> {
+/** The check list, as data — the same list the terminal output is drawn from. */
+export function doctorJson(checks: Check[], generatedAt: Date): { generatedAt: string; checks: Check[] } {
+  return { generatedAt: generatedAt.toISOString(), checks };
+}
+
+async function executeDoctor(options: { json?: boolean } = {}): Promise<void> {
+  if (options.json) {
+    const checks = await runDoctor(liveDeps());
+    process.stdout.write(`${JSON.stringify(doctorJson(checks, new Date()), null, 2)}\n`);
+    if (tally(checks).fail > 0) process.exitCode = 1;
+    return;
+  }
+
   console.log(createHeader('Doctor', 'will a release work from here?'));
   const spinner = process.stdout.isTTY ? createSpinner('Checking tools, ArgoCD, every repo and Slack...').start() : null;
   const checks = await runDoctor(liveDeps());
@@ -127,6 +139,7 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Check that a release will work from this machine')
+    .option('--json', 'Print the checks as JSON and nothing else', false)
     .addHelpText(
       'after',
       `
@@ -134,6 +147,7 @@ Reads only — it checks and reports, and changes nothing. Exits 1 when anything
 would stop a release.
 
   $ vast doctor
+  $ vast doctor --json        the same, as JSON (exit 1 when a check fails)
 
 What it checks:
   Tools      node 18+, git, gh installed and authenticated
