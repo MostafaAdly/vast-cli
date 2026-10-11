@@ -8,11 +8,15 @@ struct ReleasePanel: View {
     @State private var preview: Preview?
     @State private var loading = false
     @State private var error: String?
-    /// Set on the Release click, cleared only if the start failed: a second
-    /// click while `zsh -lc` starts must not start a second run.
+    /// Set on the Release click, cleared only if the start was refused: a
+    /// second click while `zsh -lc` starts must not start a second run.
     @State private var starting = false
+    /// Bumped by every preview request; only the latest request's result is
+    /// shown, and only it clears `loading`.
+    @State private var generation = 0
 
     private var named: [String] { target.repoName.map { [$0] } ?? [] }
+    private var dryRun: VastCommand { Commands.release(target, dryRun: true, fixVersion: fixVersion) }
 
     private var title: String {
         switch target {
@@ -26,52 +30,64 @@ struct ReleasePanel: View {
     }
 
     private var startable: Bool {
-        guard let p = preview else { return false }
+        guard let p = preview, p.command == dryRun else { return false }
         return p.summary.plans.contains(where: \.ok) && !p.summary.cliFailed
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             PanelHeader(title: title)
-            if loading {
-                HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").foregroundStyle(.secondary) }
-            } else if let p = preview {
-                if p.summary.plans.isEmpty {
-                    FailureBox(lines: p.stderr.split(whereSeparator: \.isNewline).suffix(8).map(String.init),
-                               command: Commands.release(target, dryRun: true, fixVersion: fixVersion))
-                }
-                ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0) }
-                if offersFixVersion || fixVersion {
-                    Toggle("Use the first version above production (--fix-version)", isOn: $fixVersion)
-                        .onChange(of: fixVersion) { _ in Task { await load() } }
-                }
-            }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack {
-                Button("Cancel") { store.panel = nil }
-                Spacer()
-                Button("Release") {
-                    starting = true
-                    Task {
-                        let command = Commands.release(target, dryRun: false, fixVersion: fixVersion)
-                        if let failure = await store.start(command, named: named, covers: targetRepos(target, status: store.status)) {
-                            error = failure
-                            starting = false
+            CappedScroll(maxHeight: 460) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if loading {
+                        HStack { ProgressView().controlSize(.small); Text("Preparing a dry run…").foregroundStyle(.secondary) }
+                    } else if let p = preview {
+                        if p.summary.plans.isEmpty {
+                            FailureBox(lines: p.stderr.split(whereSeparator: \.isNewline).suffix(8).map(String.init), command: p.command)
+                        }
+                        ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo)) }
+                        if offersFixVersion || fixVersion {
+                            Toggle("Use the first version above production (--fix-version)", isOn: $fixVersion)
                         }
                     }
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!startable || loading || starting)
+            }
+            if let error { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Button("Cancel") { store.panel = nil }
+                Spacer()
+                Button("Release") { confirm() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!startable || loading || starting)
             }
         }
         .padding(12)
-        .task { await load() }
+        .task(id: fixVersion) { await load() }
+    }
+
+    /// Runs the previewed command for real — never one rebuilt from the toggles.
+    private func confirm() {
+        guard let p = preview else { return }
+        starting = true
+        error = nil
+        Task {
+            switch await store.start(p.command.withoutDryRun, named: named, covers: targetRepos(target, status: store.status)) {
+            case .started: break
+            case .refused(let message): error = message; starting = false
+            case .unclear(let message): error = message
+            }
+        }
     }
 
     private func load() async {
-        if let refusal = repoNameRefusal(named) { error = refusal; preview = nil; return }
+        generation += 1
+        let mine = generation
+        error = nil
+        if let refusal = repoNameRefusal(named) { error = refusal; preview = nil; loading = false; return }
         loading = true
-        preview = await store.preview(Commands.release(target, dryRun: true, fixVersion: fixVersion))
+        let result = await store.preview(dryRun)
+        guard mine == generation, !Task.isCancelled else { return }
+        preview = result
         loading = false
     }
 }
@@ -88,8 +104,33 @@ struct PanelHeader: View {
     }
 }
 
+/// A scroll view as tall as its content, up to `maxHeight`, so a short
+/// preview stays short and a long one never pushes the buttons off screen.
+struct CappedScroll<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GeometryReader { g in Color.clear.preference(key: ContentHeightKey.self, value: g.size.height) })
+        }
+        .frame(height: min(height, maxHeight))
+        .onPreferenceChange(ContentHeightKey.self) { height = $0 }
+    }
+}
+
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct PlanRow: View {
     let plan: PlanEvent
+    /// Why the dry run says this repo will be skipped, if it does.
+    var skip: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
@@ -103,6 +144,10 @@ struct PlanRow: View {
             if let notice = plan.notice { Text(notice).font(.caption).foregroundStyle(.orange) }
             if let detail = plan.detail {
                 Text(detail).font(.caption).foregroundStyle(plan.ok ? Color.secondary : Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if plan.ok, let skip {
+                Text("will be skipped: \(skip)").font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -131,8 +176,10 @@ struct FailureBox: View {
                 .font(.system(.caption2, design: .monospaced)).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
+                // Pasting is a deliberate act: the full command.
                 Button("Copy command") { Terminal.copy(command.terminalLine) }
-                Button("Open in Terminal") { Terminal.open(command.terminalLine) }
+                // Terminal runs it at once: only ever a dry run, never --slack.
+                Button("Open dry run in Terminal") { Terminal.open(command.safeTerminalLine) }
             }
             .controlSize(.small)
         }

@@ -53,7 +53,9 @@ final class Store: ObservableObject {
         guard case .ok = compat else { return }
         refreshing = true
         defer { refreshing = false }
-        async let s = Shell.run(Commands.status, timeout: 120)
+        // No git fetch under a release running in the same checkouts.
+        let busy = runs.contains { $0.state == .running }
+        async let s = Shell.run(busy ? Commands.statusNoFetch : Commands.status, timeout: 120)
         async let d = Shell.run(Commands.doctor, timeout: 120)
         async let p = Shell.run(Commands.pending, timeout: 180)
         let (sr, dr, pr) = await (s, d, p)
@@ -77,7 +79,18 @@ final class Store: ObservableObject {
     }
 }
 
+enum StartOutcome: Equatable {
+    case started
+    /// Nothing was launched; the panel may try again.
+    case refused(String)
+    /// It may be running: the panel keeps its confirm disabled.
+    case unclear(String)
+}
+
 struct Preview: Equatable {
+    /// The dry run that produced this preview; the confirm runs its
+    /// `withoutDryRun`, never a command rebuilt from the panel's toggles.
+    let command: VastCommand
     let summary: RunSummary
     let stderr: String
     let exitCode: Int32
@@ -95,12 +108,25 @@ extension Store {
         if runs.contains(where: { $0.state == .running }) { startPolling() }
     }
 
+    /// Assigns `runs` only when something changed: polling every second must
+    /// not re-render the popover and the menu bar label for nothing.
     func reloadRuns() {
-        runs = runStore.records().map { record in
+        let fresh = runStore.records().map { stored -> TrackedRun in
+            let record = resolvePendingPid(stored)
             let summary = summarize(runStore.events(id: record.id))
             return TrackedRun(record: record, summary: summary,
                               state: runState(summary: summary, alive: isRunAlive(record)))
         }
+        if fresh != runs { runs = fresh }
+    }
+
+    /// A start whose pid was not known yet: the wrapper may have written its
+    /// pid file since. Once it has, the record keeps the pid.
+    private func resolvePendingPid(_ record: RunRecord) -> RunRecord {
+        guard record.pid == RunRecord.pendingPID, let pid = Shell.readPid(runStore.pidURL(record.id)) else { return record }
+        let known = RunRecord(id: record.id, pid: pid, args: record.args, startedAt: record.startedAt, dismissed: record.dismissed)
+        try? runStore.save(known)
+        return known
     }
 
     private func startPolling() {
@@ -123,27 +149,38 @@ extension Store {
     /// A dry run, synchronously: the preview the user confirms.
     func preview(_ command: VastCommand) async -> Preview {
         let r = await Shell.run(command, timeout: 300)
-        return Preview(summary: summarize(NDJSON.events(from: r.stdout)), stderr: r.stderr, exitCode: r.exitCode)
+        return Preview(command: command, summary: summarize(NDJSON.events(from: r.stdout)), stderr: r.stderr, exitCode: r.exitCode)
     }
 
-    /// The real run, detached. Returns an error message, or nil once started.
-    /// `named` are the repo names on the command line, `covers` every repo the
-    /// run works on; an unsafe name or a repo already running refuses it.
-    func start(_ command: VastCommand, named: [String], covers: [String]) async -> String? {
+    /// The real run, detached. `named` are the repo names on the command
+    /// line, `covers` every repo the run works on; an unsafe name or a repo
+    /// already running refuses it.
+    ///
+    /// A provisional record (pid unknown) is saved before the launch, so a
+    /// start whose outcome is unclear still reads as running and refuses a
+    /// second start; it is never forgotten.
+    func start(_ command: VastCommand, named: [String], covers: [String]) async -> StartOutcome {
         reloadRuns()
-        if let refusal = startRefusal(named: named, covers: covers, runs: runs, status: status) { return refusal }
-        let id = newRunID()
+        if let refusal = startRefusal(named: named, covers: covers, runs: runs, status: status) { return .refused(refusal) }
+        let provisional = RunRecord(id: newRunID(), pid: RunRecord.pendingPID, args: command.args, startedAt: Date(), dismissed: false)
+        let id = provisional.id
         do {
-            try runStore.ensureDir()
-            let pid = try await Shell.startDetached(command, stdout: runStore.ndjsonURL(id), stderr: runStore.logURL(id), pidFile: runStore.pidURL(id))
-            try runStore.save(RunRecord(id: id, pid: pid, args: command.args, startedAt: Date(), dismissed: false))
+            try runStore.save(provisional)
         } catch {
-            return "Could not start: \(error)"
+            return .refused("Could not start: \(error)")  // nothing was launched
         }
-        panel = nil
+        let pid = try? await Shell.startDetached(command, stdout: runStore.ndjsonURL(id), stderr: runStore.logURL(id),
+                                                 pidFile: runStore.pidURL(id))
+        if let pid {
+            try? runStore.save(RunRecord(id: id, pid: pid, args: provisional.args, startedAt: provisional.startedAt, dismissed: false))
+        }
         reloadRuns()
         startPolling()
-        return nil
+        guard pid != nil else {
+            return .unclear("vast may have started, but its pid could not be read. Its card shows it as running for up to 10 minutes — do not start it again.")
+        }
+        panel = nil
+        return .started
     }
 
     func dismiss(_ id: String) {

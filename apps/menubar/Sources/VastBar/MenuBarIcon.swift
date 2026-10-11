@@ -7,11 +7,18 @@ import VastBarCore
 struct MenuBarIcon: View {
     let state: IconState
     @State private var dim = false
-    private let pulse = Timer.publish(every: 0.7, on: .main, in: .common).autoconnect()
 
+    /// The pulse ticks only while running; any other state has no timer.
     var body: some View {
         Image(nsImage: Self.image(state: state, dim: state == .running && dim))
-            .onReceive(pulse) { _ in if state == .running { dim.toggle() } else { dim = false } }
+            .task(id: state) {
+                dim = false
+                guard state == .running else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    if !Task.isCancelled { dim.toggle() }
+                }
+            }
     }
 
     static func color(_ state: IconState) -> NSColor {

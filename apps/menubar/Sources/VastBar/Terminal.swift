@@ -2,8 +2,9 @@ import AppKit
 import VastBarCore
 
 enum Terminal {
-    /// Opens Terminal and types `line` into a new window. `line` is always a
-    /// `VastCommand.terminalLine`, never free text.
+    /// Opens Terminal and runs `line` in a new window at once. `line` is
+    /// always a `VastCommand.safeTerminalLine` (a dry run, never --slack),
+    /// never free text.
     static func open(_ line: String) {
         let script = "tell application \"Terminal\" to do script \(appleScriptQuote(line))\ntell application \"Terminal\" to activate"
         let p = Process()
