@@ -50,7 +50,8 @@ import { lookupUserByEmail, postMessage } from '../utils/slack.js';
 import { buildReleaseMessage, releaseContributors } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
 import { newReport, type PromotionReport } from '../utils/promotion-report.js';
-import type { SlackResult } from '../utils/events.js';
+import { ndjsonSink, NO_EVENTS, type EventSink, type SlackResult } from '../utils/events.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 
 /**
  * Fast-forward the local branches this promotion reads, and say what came in.
@@ -402,49 +403,67 @@ export async function promote(
   return true;
 }
 
-async function executePromote(
+export interface PromoteCommandOptions {
+  to: string;
+  as?: ReleaseKind;
+  pick?: string[];
+  dir?: string;
+  targetVersion?: string;
+  /** Commander sets this false when --no-changelog is passed. */
+  changelog: boolean;
+  summarize?: boolean;
+  /** Hidden alias for --summarize. */
+  llm?: boolean;
+  slack?: boolean;
+  dryRun: boolean;
+  json?: boolean;
+}
+
+/** What a finished promotion means for the stream's `done`. */
+function promotionDone(
+  report: PromotionReport,
+  ok: boolean,
+  dryRun: boolean,
+): { status: 'released' | 'skipped' | 'failed'; detail: string } {
+  if (!ok) return { status: 'failed', detail: report.error ?? 'promotion refused' };
+  if (report.result === 'nothing to promote') return { status: 'skipped', detail: 'nothing to promote' };
+  if (dryRun) return { status: 'skipped', detail: 'dry run' };
+  if (report.result === 'pr opened') return { status: 'released', detail: `PR opened — ${report.url}` };
+  return { status: 'released', detail: 'promoted' };
+}
+
+export async function runPromote(
   repoName: string,
-  options: {
-    to: 'staging' | 'production';
-    as?: ReleaseKind;
-    pick?: string[];
-    dir?: string;
-    targetVersion?: string;
-    /** Commander sets this false when --no-changelog is passed. */
-    changelog: boolean;
-    summarize?: boolean;
-    /** Hidden alias for --summarize. */
-    llm?: boolean;
-    slack?: boolean;
-    dryRun: boolean;
-  },
-): Promise<void> {
+  options: PromoteCommandOptions,
+  events: EventSink,
+  args: string[],
+): Promise<number> {
   const repo = getRepo(repoName);
   if (!repo) {
     log.error(`Unknown repository: ${repoName}`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.to !== 'staging' && options.to !== 'production') {
     log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.as !== undefined && !RELEASE_KINDS.includes(options.as)) {
     log.error(`Invalid --as value: ${options.as}. Use ${RELEASE_KINDS.join(' or ')}.`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.pick?.length && options.to !== 'production') {
     log.error('--pick is production-only. Staging always promotes all of develop.');
-    process.exit(1);
+    return 1;
   }
 
   // There is nothing to announce about a staging promotion: it opens no PR,
   // and staging moves many times a day.
   if (options.slack && options.to !== 'production') {
     log.error('--slack is production-only. A staging promotion opens no release PR to announce.');
-    process.exit(1);
+    return 1;
   }
 
   // A selective promotion is definitionally a hotfix, so --pick flips the
@@ -466,21 +485,71 @@ async function executePromote(
     console.log(
       createErrorBox(`${repo.name} is not cloned`, 'Run `vast init`, or clone it with `vast clone`.'),
     );
-    process.exit(1);
+    return 1;
   }
 
+  events.emit({ type: 'start', command: 'promote', args, dryRun: options.dryRun, repos: [repo.name] });
+
+  const report = newReport();
   const ok = await promote(
     repo,
     dir,
-    options.to,
+    options.to as 'staging' | 'production',
     options.dryRun,
     kind,
     options.targetVersion,
     bodyMode,
     options.pick ?? [],
     options.slack ?? false,
+    report,
   );
-  if (!ok) process.exit(1);
+  events.emit({
+    type: 'plan',
+    repo: repo.name,
+    ok,
+    version: report.version ?? '—',
+    commits: report.commits,
+    promote:
+      options.to === 'staging' && report.result === 'would merge'
+        ? 'will merge'
+        : options.to === 'staging' && report.result === 'merged'
+          ? 'merged'
+          : report.result === 'nothing to promote'
+            ? 'nothing to promote'
+            : 'not run',
+    notice: null,
+    detail: ok ? null : (report.error ?? null),
+  });
+  if (options.to === 'staging' && report.result === 'merged') {
+    events.emit({ type: 'promoted', repo: repo.name, commits: report.commits ?? 0 });
+  }
+  if (report.branch && report.version) {
+    events.emit({
+      type: 'pr',
+      repo: repo.name,
+      branch: report.branch,
+      url: report.url ?? null,
+      version: report.version,
+      slack: report.slack ?? null,
+    });
+  }
+  const done = promotionDone(report, ok, options.dryRun);
+  events.emit({ type: 'done', repo: repo.name, version: report.version ?? '—', status: done.status, detail: done.detail });
+  return ok ? 0 : 1;
+}
+
+async function executePromote(repoName: string, options: PromoteCommandOptions): Promise<void> {
+  if (!options.json) {
+    const code = await runPromote(repoName, options, NO_EVENTS, process.argv.slice(2));
+    if (code !== 0) process.exit(code);
+    return;
+  }
+  // stdout is a data channel from here on: one JSON object per line.
+  routeHumanOutputToStderr();
+  const events = ndjsonSink();
+  const code = await runPromote(repoName, options, events, process.argv.slice(2));
+  events.emit({ type: 'end', exitCode: code });
+  process.exitCode = code;
 }
 
 export function registerPromoteCommand(program: Command): void {
@@ -501,6 +570,7 @@ export function registerPromoteCommand(program: Command): void {
     .addOption(new Option('--llm').hideHelp())
     .option('--dir <path>', 'Override the local checkout path')
     .option('-n, --dry-run', 'Report what would happen without merging', false)
+    .option('--json', 'Stream the result as JSON lines on stdout (human output goes to stderr)', false)
     .addHelpText(
       'after',
       `
@@ -512,6 +582,7 @@ Examples:
   $ vast promote VastPayPwa --to production --no-changelog   bare PR description
   $ vast promote VastPayPwa --to production --slack     cut the PR, announce it
   $ vast promote VastPayPwa --to production --slack -n  print the message only
+  $ vast promote VastPayPwa --to production -n --json   the PR it would open, as JSON
 
 Slack announcement (--slack, production only):
   Runs after the release PR is open and posts one Slack bullet naming what
