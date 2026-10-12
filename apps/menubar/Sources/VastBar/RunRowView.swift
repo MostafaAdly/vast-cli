@@ -14,7 +14,7 @@ struct RunProgressSlot: View {
         let steps = trackerStates(progress: progress, command: run.summary.command ?? run.record.args.first, state: run.state)
         VStack(alignment: .leading, spacing: 6) {
             if let steps { Tracker(states: steps) }
-            HStack(spacing: 8) {
+            if showsRunLine(run, repo: card.id) { HStack(spacing: 8) {
                 if let text = line(progress, steps: steps) {
                     Text(text).font(.system(size: 11)).foregroundStyle(color(progress))
                         .fixedSize(horizontal: false, vertical: true)
@@ -26,7 +26,7 @@ struct RunProgressSlot: View {
                     Button { store.dismiss(run.id) } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless).font(.system(size: 10)).foregroundStyle(.secondary).help("Dismiss")
                 }
-            }
+            } }
             // The why is only on stderr: the CLI failed, the process died,
             // or this repo was left unfinished when the run ended.
             if run.summary.cliFailed || run.state == .died || progress?.endedUnfinished == true {

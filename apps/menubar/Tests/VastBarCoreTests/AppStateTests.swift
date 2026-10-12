@@ -175,3 +175,39 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(trainRepos(.backend, status: try status()), ["VastPay-BackEnd"])
     }
 }
+
+final class CardRunLifetimeTests: XCTestCase {
+    private func run(_ fixtureName: String, state: RunState, startedAt: Date) throws -> TrackedRun {
+        TrackedRun(
+            record: RunRecord(id: fixtureName, pid: 1, args: [], startedAt: startedAt, dismissed: false),
+            summary: summarize(NDJSON.events(from: try fixtureText(fixtureName))),
+            state: state)
+    }
+
+    // A clean release has no × any more, so it clears itself an hour after it started.
+    func testASuccessfulRunLeavesTheCardAfterAnHour() throws {
+        let now = Date()
+        let recent = try run("release-real.ndjson", state: .finished, startedAt: now.addingTimeInterval(-30 * 60))
+        let old = try run("release-real.ndjson", state: .finished, startedAt: now.addingTimeInterval(-61 * 60))
+        XCTAssertNotNil(cardRun("VastPayPwaV2", runs: [recent], status: nil, now: now))
+        XCTAssertNil(cardRun("VastPayPwaV2", runs: [old], status: nil, now: now))
+    }
+
+    // A failure stays until it is dismissed, however old; so does a run still going.
+    func testFailedAndRunningRunsStay() throws {
+        let now = Date(), old = now.addingTimeInterval(-5 * 3600)
+        let failed = try run("cli-failed.ndjson", state: .finished, startedAt: old)
+        let running = try run("release-partial.ndjson", state: .running, startedAt: now.addingTimeInterval(-90 * 60))
+        XCTAssertNotNil(cardRun("VastPayPwaV2", runs: [failed], status: nil, now: now))
+        XCTAssertNotNil(cardRun("VastPayPwaV2", runs: [running], status: nil, now: now))
+    }
+
+    // The card shows no line under a clean release: the green tracker says it all.
+    func testOnlyACleanSuccessHasNoDetailLine() throws {
+        let now = Date()
+        XCTAssertFalse(showsRunLine(try run("release-real.ndjson", state: .finished, startedAt: now), repo: "VastPayPwaV2"))
+        XCTAssertTrue(showsRunLine(try run("cli-failed.ndjson", state: .finished, startedAt: now), repo: "VastPayPwaV2"))
+        XCTAssertTrue(showsRunLine(try run("release-partial.ndjson", state: .running, startedAt: now), repo: "VastPayPwaV2"))
+        XCTAssertTrue(showsRunLine(try run("release-partial.ndjson", state: .died, startedAt: now), repo: "VastPayPwaV2"))
+    }
+}

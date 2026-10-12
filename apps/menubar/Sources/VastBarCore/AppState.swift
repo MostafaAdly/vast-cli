@@ -102,7 +102,7 @@ public func repoCards(status: StatusSnapshot?, doctor: DoctorSnapshot?, pending:
             .filter { $0.group == "Repos" && $0.label == r.repo && $0.status != .ok }
             .map { CardProblem(text: fixVersionHint($0.detail) ?? $0.detail, detail: $0.detail, failing: $0.status == .fail) }
         let mine = runs.filter { reposOf($0, status: status).contains(r.repo) }
-        let latestReal = mine.last { !$0.summary.dryRun && !$0.record.dismissed }
+        let latestReal = cardRun(r.repo, runs: runs, status: status)
         return RepoCard(
             id: r.repo,
             displayName: r.displayName,
@@ -219,7 +219,21 @@ public func teamSections(_ cards: [RepoCard]) -> [TeamSection] {
 
 /// The run a card shows: the latest real (not dry-run), undismissed run
 /// covering the repo. Before its first event a run covers the repos its
-/// arguments name.
-public func cardRun(_ repo: String, runs: [TrackedRun], status: StatusSnapshot?) -> TrackedRun? {
-    runs.last { !$0.record.dismissed && !$0.summary.dryRun && reposOf($0, status: status).contains(repo) }
+/// arguments name. A clean success has nothing to dismiss it with, so it
+/// leaves the card an hour after it started; failures stay until dismissed.
+public func cardRun(_ repo: String, runs: [TrackedRun], status: StatusSnapshot?, now: Date = Date()) -> TrackedRun? {
+    runs.last { run in
+        guard !run.record.dismissed, !run.summary.dryRun, reposOf(run, status: status).contains(repo) else { return false }
+        let cleanSuccess = run.state == .finished && !run.failed
+        return !(cleanSuccess && now.timeIntervalSince(run.record.startedAt) > 3600)
+    }
+}
+
+/// Whether the card shows a line under the tracker. A clean success does not:
+/// four green steps already say it went live.
+public func showsRunLine(_ run: TrackedRun, repo: String) -> Bool {
+    guard run.state == .finished, !run.failed else { return true }
+    let progress = run.summary.repos.first { $0.repo == repo }
+    if case .finished(let status)? = progress?.phase, status != "failed", progress?.endedUnfinished != true { return false }
+    return true
 }

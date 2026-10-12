@@ -617,7 +617,8 @@ the exact Slack message — and only the button inside that preview runs it for 
 exactly the options you previewed. "Post to Slack" is off by default. A real run is
 started detached and written to `~/Library/Application Support/Vast Bar/runs/`, so
 quitting the app never stops it; the card follows it live (Promote → Build → Roll out →
-Live) and links the build and the PR. A run that fails shows the CLI's last lines,
+Live), linking the build and the PR while it runs; a clean release is just the four green steps,
+which clear themselves an hour after it started. A run that fails shows the CLI's last lines,
 and "Open dry run in Terminal" re-runs it as a dry run — never for real, never posting.
 
 It never merges a PR, never deploys production, and never handles credentials: log in to
