@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import { renderRootHelp } from './utils/help.js';
 import { pendingHint, isDue, readState, refreshInBackground } from './utils/update-check.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerBarCommand } from './commands/bar.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerCloneCommand } from './commands/clone.js';
 import { registerWorkflowCommand } from './commands/workflow.js';
@@ -106,6 +107,7 @@ export class VastCli {
     registerProductionCommand(this.program);
     registerArgocdCommand(this.program);
     registerSlackCommand(this.program);
+    registerBarCommand(this.program);
     registerUpgradeCommand(this.program);
 
     // Internal: refreshes the update cache and exits. Spawned detached by
