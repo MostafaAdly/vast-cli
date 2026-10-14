@@ -26,16 +26,10 @@ struct MenuBarIcon: View {
     static func image(state: IconState, dim: Bool) -> NSImage {
         let size = NSSize(width: 22, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-            if let mark = NSImage(systemSymbolName: "shippingbox.fill", accessibilityDescription: "Vast Bar")?
-                .withSymbolConfiguration(config) {
-                let tinted = mark.copy() as! NSImage
-                tinted.lockFocus()
-                NSColor.labelColor.set()
-                NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
-                tinted.unlockFocus()
-                tinted.draw(in: NSRect(x: 0, y: 2, width: 16, height: 14))
-            }
+            // The Vast "V" in the menu bar's own text colour (resolved at draw time,
+            // so it follows a light or dark menu bar).
+            NSColor.labelColor.setFill()
+            VastMark.path(in: NSRect(x: 1, y: 3, width: 14, height: 13)).fill()
             let dot = NSBezierPath(ovalIn: NSRect(x: 13, y: 1, width: 8, height: 8))
             color(state).withAlphaComponent(dim ? 0.35 : 1).setFill()
             dot.fill()

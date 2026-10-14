@@ -239,6 +239,9 @@ in `Vast-deployments`:
   and same-hue tints, one filled button per screen. Colours live in `Theme.swift` only.
   Any scrollable area uses `CappedScroll` — a bare `ScrollView` collapses to zero height
   in the menu bar window (it shipped blank once).
+- The app icon and the menu bar mark are one drawing, `VastMark.swift`, traced from the
+  brand logo (vastgroup-web-v2 `public/vastgroup-logo-white.svg`). `Resources/AppIcon.icns`
+  is generated and committed; change the mark, then run `apps/menubar/scripts/make-icon.sh`.
 
 ## Slack announcements
 

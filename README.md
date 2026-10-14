@@ -601,13 +601,49 @@ API, pinged at `/health` every minute), and one card per repo grouped by team: s
 production versions, drift, how many PRs are waiting for production, and any problem in
 plain words. Doctor's machine-wide warnings and failures sit at the bottom.
 
-```bash
-apps/menubar/build.sh     # build, sign for this machine, install to /Applications
-```
+### Setting it up
 
-It needs macOS 13+, Xcode's Swift toolchain to build, and vast **2.9.0** or newer on your
-login shell's PATH: it runs `vast … --json` through `/bin/zsh -lc` and never decides
-anything itself. It refreshes when you open it and every five minutes.
+It is built on your own Mac from this repo — there is no download yet (signing and an
+installer are a later step). You need macOS 13 or newer and Xcode 16 or newer (built and
+tested with Xcode 26.2).
+
+1. **Get the CLI working first.** Vast Bar runs `vast … --json` through your login shell
+   (`/bin/zsh -lc`), so it sees exactly what your terminal sees and never decides anything
+   itself. It needs vast **2.9.0** or newer:
+
+   ```bash
+   vast upgrade
+   vast init
+   vast doctor
+   ```
+
+   `vast init` finds your checkouts, and `vast doctor` should show no ✗. `vast argocd
+   login` is needed for releases to confirm their rollout, and `vast slack setup` only if
+   you want promote to post. The app never asks for either.
+
+2. **Build and install it** from a clone of this repo:
+
+   ```bash
+   git clone https://github.com/MostafaAdly/vast-cli.git
+   cd vast-cli
+   apps/menubar/build.sh
+   open "/Applications/Vast Bar.app"
+   ```
+
+   `build.sh` builds the app, signs it for this Mac only, and installs it to
+   `/Applications` (`--no-install` to just build). An app built on another Mac and copied
+   over will be blocked by Gatekeeper — build it on yours. To update, `git pull` and run
+   `build.sh` again.
+
+3. **Start it at login** (optional): System Settings → General → Login Items → **+** →
+   Vast Bar.
+
+The first time you use "Open dry run in Terminal", macOS asks to let Vast Bar control
+Terminal. That is the only permission it ever needs. It refreshes when you open it and
+every five minutes. To remove it, quit it from the power button and delete
+`/Applications/Vast Bar.app`; its run logs are in `~/Library/Application Support/Vast Bar/`.
+
+### Using it
 
 To release, tick one or more repos (or **Select all** on a team) and press **Preview
 release**: one `vast release A B C` covers them all. Promote is the paper-plane button on a
