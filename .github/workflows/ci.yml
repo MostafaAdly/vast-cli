@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A new push to the same PR or branch replaces the run still going for the old one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cli:
     runs-on: ubuntu-latest

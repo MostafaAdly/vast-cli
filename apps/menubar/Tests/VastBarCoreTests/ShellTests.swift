@@ -1,6 +1,20 @@
 import XCTest
 @testable import VastBarCore
 
+/// Checks `condition` every 100 ms; true as soon as it holds, false after `timeout`
+/// seconds. A cold login shell on a loaded CI runner can take seconds to start, so
+/// these tests wait for what they need rather than for a fixed time.
+private func eventually(within timeout: TimeInterval = 10, _ condition: () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        if Date() >= deadline { return false }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+    }
+    return true
+}
+
+private func contents(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
+
 final class ShellTests: XCTestCase {
     func testRunCapturesBothStreamsAndExitCode() async {
         let r = await Shell.runLine("printf 'out\\n'; printf 'err\\n' >&2; exit 3", timeout: 30)
@@ -30,8 +44,8 @@ final class ShellTests: XCTestCase {
             pidFile: dir.appendingPathComponent("r.pid"))
         XCTAssertGreaterThan(pid, 0)
         XCTAssertTrue(Shell.isAlive(pid))
-        try await Task.sleep(nanoseconds: 2_500_000_000)
-        XCTAssertFalse(Shell.isAlive(pid))
+        let finished = await eventually { !Shell.isAlive(pid) }
+        XCTAssertTrue(finished, "the detached run finished")
         XCTAssertEqual(try String(contentsOf: out, encoding: .utf8), "{\"type\":\"end\",\"exitCode\":0}\n")
         XCTAssertEqual(try String(contentsOf: err, encoding: .utf8), "bye\n")
     }
@@ -42,8 +56,8 @@ final class ShellTests: XCTestCase {
         let out = dir.appendingPathComponent("a b.ndjson"), err = dir.appendingPathComponent("a b.log")
         let pidFile = dir.appendingPathComponent("a b.pid")
         let pid = try await Shell.startDetachedLine("echo hi", stdout: out, stderr: err, pidFile: pidFile)
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-        XCTAssertEqual(try String(contentsOf: out, encoding: .utf8), "hi\n")
+        let written = await eventually { contents(out) == "hi\n" }
+        XCTAssertTrue(written, "got \(contents(out) ?? "no file")")
         XCTAssertEqual(Shell.readPid(pidFile), pid)
     }
 
@@ -94,13 +108,18 @@ final class ShellTests: XCTestCase {
     }
 
     // A superseded preview must not leave its dry run going beside the new one.
-    func testCancellingARunStopsItsProcess() async {
-        let started = Date()
-        let task = Task { await Shell.runLine("sleep 20", timeout: 60) }
-        try? await Task.sleep(nanoseconds: 500_000_000)
+    func testCancellingARunStopsItsProcess() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let marker = dir.appendingPathComponent("started")
+        let task = Task { await Shell.runLine("touch \(shellQuote(marker.path)); sleep 20", timeout: 60) }
+        // Cancel a run that is really going, however long the login shell took to start.
+        let started = await eventually { FileManager.default.fileExists(atPath: marker.path) }
+        XCTAssertTrue(started, "the run started")
+        let cancelled = Date()
         task.cancel()
         let r = await task.value
         XCTAssertNotEqual(r.exitCode, 0)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+        XCTAssertLessThan(Date().timeIntervalSince(cancelled), 10)
     }
 }
