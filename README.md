@@ -675,7 +675,7 @@ which.
 The first time you use "Open dry run in Terminal", macOS asks to let Vast Bar control
 Terminal. That is the only permission the app itself needs. Updating a running copy can
 also ask once to let your terminal control Vast Bar (that is how it is asked to quit);
-if the prompt is left unanswered, the install stops waiting after ten seconds and quits
+if the prompt is left unanswered, the install stops waiting after about fifteen seconds and quits
 the app directly. It refreshes when you open it and
 every five minutes. Its run logs are in `~/Library/Application Support/Vast Bar/`;
 `vast bar uninstall --purge` deletes them with the app.

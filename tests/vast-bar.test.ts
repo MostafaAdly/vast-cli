@@ -296,7 +296,8 @@ test('a failed restore keeps the previous app and names it', async () => {
   });
   assert.ok(mac.files.has(PREVIOUS), 'the only good copy survives');
   assert.ok(!mac.calls.includes(`remove ${PREVIOUS}`));
-  assert.ok(!mac.calls.some((c) => c.startsWith('open')), 'nothing at the target to open');
+  // It was running: reopen it where it is kept rather than leave it closed.
+  assert.ok(mac.calls.includes(`open ${PREVIOUS}`), mac.calls.join('\n'));
 });
 
 test('a failed move-aside reopens the app that was running', async () => {
@@ -386,6 +387,42 @@ test('an app that installs but will not open is reported plainly, not as a crash
   assert.ok(mac.files.has(SYSTEM), 'the new app stays installed');
 });
 
+test('a stale staged copy that cannot be removed is refused plainly, before anything is quit', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.files.add(STAGED);
+  mac.running = true;
+  failRemoves(mac, (p) => p === STAGED);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /An earlier install left \/Applications\/\.Vast Bar\.new\.app and it can't be removed/);
+    return true;
+  });
+  assert.ok(!mac.calls.includes('quit'));
+  assert.ok(mac.files.has(SYSTEM));
+});
+
+test('a failed stage whose cleanup also fails still reports the stage error', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  failMoves(mac, (_from, to) => to === STAGED);
+  failRemoves(mac, (p) => p === STAGED);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), /Could not stage Vast Bar in \/Applications: EACCES/);
+});
+
+test('uninstall also removes the hidden leftovers of an earlier install', async () => {
+  const mac = new FakeMac();
+  for (const p of [SYSTEM, PREVIOUS, USER_STAGED]) mac.files.add(p);
+  assert.deepEqual(await uninstallBar({ purge: false }, mac), [SYSTEM, PREVIOUS, USER_STAGED]);
+  assert.equal(barStatusLine(mac, '2.9.0'), 'Vast Bar is not installed — run vast bar install');
+});
+
+test('uninstall removes a lone leftover copy', async () => {
+  const mac = new FakeMac();
+  mac.files.add(USER_PREVIOUS);
+  assert.deepEqual(await uninstallBar({ purge: false }, mac), [USER_PREVIOUS]);
+});
+
 test('uninstall refuses to remove an app that will not quit', async () => {
   const mac = new FakeMac();
   mac.files.add(SYSTEM);
@@ -450,7 +487,9 @@ test('a previous copy that cannot be removed after the swap is a warning: the ne
     path: SYSTEM,
     version: '2.9.0',
     opened: true,
-    warning: `The previous Vast Bar is left at ${PREVIOUS}; remove it when convenient.`,
+    warning:
+      `The previous Vast Bar is left at ${PREVIOUS} and could not be removed (it may need admin rights). ` +
+      'Remove it, or the next update will refuse.',
   });
   assert.deepEqual(mac.calls.slice(4), [
     `move ${FRESH} -> ${STAGED}`,

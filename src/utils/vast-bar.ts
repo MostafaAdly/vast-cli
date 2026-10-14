@@ -198,11 +198,24 @@ export async function installBar(
     // Stage the new app beside the old one, so the swap below is two renames
     // within one folder: they cannot cross volumes or run out of disk halfway.
     // Anything that goes wrong here has touched nothing installed.
-    if (deps.exists(staged)) deps.remove(staged);
+    if (deps.exists(staged)) {
+      try {
+        deps.remove(staged);
+      } catch {
+        throw new BarError(
+          `An earlier install left ${staged} and it can't be removed (it may need admin rights). ` +
+            'Remove it, then run vast bar install again.',
+        );
+      }
+    }
     try {
       deps.move(fresh, staged);
     } catch (error) {
-      deps.remove(staged);
+      try {
+        deps.remove(staged);
+      } catch {
+        // The stage error below is the one that matters.
+      }
       throw new BarError(`Could not stage Vast Bar in ${dir}: ${message(error)}`);
     }
 
@@ -232,9 +245,12 @@ export async function installBar(
             kept = `. Your previous Vast Bar is kept at ${previous}`;
           }
         }
-        if (wasRunning && deps.exists(target)) {
+        // Reopen what was running: from its place, or, when the restore
+        // failed, from where it is kept, rather than leave it closed.
+        const reopen = deps.exists(target) ? target : kept ? previous : null;
+        if (wasRunning && reopen) {
           try {
-            await deps.open(target);
+            await deps.open(reopen);
           } catch {
             // The error below is the one that matters.
           }
@@ -246,7 +262,9 @@ export async function installBar(
           deps.remove(previous);
         } catch {
           // The new app is in place; an old copy we can't delete must not stop it opening.
-          warning = `The previous Vast Bar is left at ${previous}; remove it when convenient.`;
+          warning =
+            `The previous Vast Bar is left at ${previous} and could not be removed (it may need admin rights). ` +
+            'Remove it, or the next update will refuse.';
         }
       }
     } finally {
@@ -280,11 +298,14 @@ export async function installBar(
 export async function uninstallBar(opts: { purge: boolean }, deps: BarDeps): Promise<string[]> {
   assertMac(deps);
   const removed: string[] = [];
+  // The app, then any hidden copy an earlier install left beside it.
   const app = installedBar(deps);
-  if (app) {
-    if ((await deps.isRunning()) && !(await deps.quit())) throw new BarError(NOT_QUIT);
-    deps.remove(app);
-    removed.push(app);
+  const leftovers = APP_DIRS(deps).flatMap((dir) => [PREVIOUS, STAGED].map((name) => join(dir, name)));
+  const doomed = [...(app ? [app] : []), ...leftovers.filter((p) => deps.exists(p))];
+  if (doomed.length > 0 && (await deps.isRunning()) && !(await deps.quit())) throw new BarError(NOT_QUIT);
+  for (const path of doomed) {
+    deps.remove(path);
+    removed.push(path);
   }
   if (opts.purge) {
     const support = join(deps.home, 'Library', 'Application Support', 'Vast Bar');
