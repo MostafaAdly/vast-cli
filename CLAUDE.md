@@ -197,6 +197,17 @@ in `Vast-deployments`:
   cannot post. Never run it live while developing: `~/.vast-cli/slack.json`
   exists and it would post to the team channel.
 
+## Several repos in one release
+
+- `vast release` with several repos is all or nothing (`releaseMany`): every repo is
+  checked first (version guard, plus a trial promotion when more than one repo is
+  named), and one refusal stops the run before anything is promoted or deployed. A
+  sweep's not-cloned skip is not a refusal. Once deploys start, each repo stands alone.
+  Mostafa chose this on 2026-10-14 after a three-repo release quietly shipped two.
+- Tests of `releaseMany` must pass both `check` and `promote` fakes: a missing one
+  falls through to the real `checkOne`/`promoteOne`, which read Vast-deployments and
+  can merge and push in a real checkout.
+
 ## Machine-readable output (--json)
 
 - `status --json` and `doctor --json` print one JSON document; `release --json` and

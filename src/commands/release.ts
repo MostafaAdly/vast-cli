@@ -8,8 +8,9 @@
  *
  * Several repos at once behave like one terminal per repo: each is promoted in
  * turn — seconds of local git — and then every deploy runs concurrently, so the
- * whole thing takes about one build rather than one per repo. One repo refusing
- * never stops another.
+ * whole thing takes about one build rather than one per repo. Every repo is
+ * checked before any is touched, and one that cannot go ahead stops the whole
+ * release: it ships all of the repos named, or none of them.
  *
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one — and its deploy is blocked
@@ -125,13 +126,6 @@ export function releaseTargets(
   return sweepTargets(names, sweep);
 }
 
-/**
- * Everything before the deploy: resolve the checkout, promote, derive the
- * version. Returns an outcome instead when the repo cannot go further.
- *
- * Async because the deployed tag now comes from Vast-deployments over the API,
- * not from a file in the local checkout.
- */
 /** The network and git calls in `prepareOne`, injectable so tests never touch either. */
 export interface PrepareDeps {
   stagingTag?: (repo: RepoConfig) => Promise<string>;
@@ -139,7 +133,15 @@ export interface PrepareDeps {
   readProduction?: ReadProduction;
 }
 
-export async function prepareOne(
+/**
+ * Everything before the deploy that changes nothing: resolve the checkout,
+ * derive the version, check it against production. Returns an outcome instead
+ * when the repo cannot go further.
+ *
+ * Async because the deployed tag comes from Vast-deployments over the API, not
+ * from a file in the local checkout.
+ */
+export async function checkOne(
   repo: RepoConfig,
   options: ReleaseOptions,
   deps: PrepareDeps = {},
@@ -183,54 +185,74 @@ export async function prepareOne(
     }
   }
 
-  const planned = await guardedStaging(
+  return guardedStaging(
     repo,
     dir,
     candidate,
     { explicit: Boolean(options.targetVersion), fixVersion: Boolean(options.fixVersion) },
     deps.readProduction,
   );
-  if ('status' in planned) return planned;
+}
 
-  let promotion: PromotionReport | undefined;
-  if (!options.skipPromote) {
-    if (!needsPromotion(repo)) {
-      // The backend repos have no usable develop — human PRs there target
-      // staging directly. Failing the release for a promotion that cannot
-      // exist made the everyday command unusable for that team and turned
-      // every `release --all` sweep red. Skipping is not a policy change:
-      // there is nothing to promote.
-      log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
-    } else {
-      promotion = newReport();
-      const run =
-        deps.promote ??
-        ((r: RepoConfig, d: string, n: boolean, rep: PromotionReport) =>
-          promote(r, d, 'staging', n, 'release', undefined, 'changelog', [], false, rep));
-      let promoted: boolean;
-      try {
-        promoted = await run(repo, dir, options.dryRun, promotion);
-      } catch (error) {
-        // A fetch, a push or a git call that throws fails this repo, not the
-        // run: the other repos are still prepared and every repo still gets
-        // its plan and done. The whole error is printed; the outcome keeps
-        // its first line.
-        reportUnexpectedError(error);
-        return {
-          repo: repo.name,
-          version: '—',
-          status: 'failed',
-          detail: `promotion failed — ${firstLine(errorMessage(error))}`,
-        };
-      }
-      if (!promoted) {
-        const why = promotion.error ? `promotion refused — ${promotion.error}` : 'promotion refused';
-        return { repo: repo.name, version: '—', status: 'failed', detail: why };
-      }
-    }
+/**
+ * Promote develop into staging for a repo that passed its check. `dryRun` is
+ * its own argument, not the option: a multi-repo release runs it as a trial
+ * (fetch and trial merge, nothing pushed) before promoting anything for real.
+ */
+export async function promoteOne(
+  planned: Deployable,
+  options: ReleaseOptions,
+  dryRun: boolean,
+  deps: PrepareDeps = {},
+): Promise<Deployable | DeployOutcome> {
+  const repo = planned.repo;
+  if (options.skipPromote) return planned;
+  if (!needsPromotion(repo)) {
+    // The backend repos have no usable develop — human PRs there target
+    // staging directly. Failing the release for a promotion that cannot
+    // exist made the everyday command unusable for that team and turned
+    // every `release --all` sweep red. Skipping is not a policy change:
+    // there is nothing to promote.
+    log.muted(`  ${repo.name}: no develop to promote — deploying what is on staging`);
+    return planned;
   }
+  // checkOne has already found the checkout.
+  const dir = repoDir(repo, options.dir) as string;
+  const promotion = newReport();
+  const run =
+    deps.promote ??
+    ((r: RepoConfig, d: string, n: boolean, rep: PromotionReport) =>
+      promote(r, d, 'staging', n, 'release', undefined, 'changelog', [], false, rep));
+  let promoted: boolean;
+  try {
+    promoted = await run(repo, dir, dryRun, promotion);
+  } catch (error) {
+    // A fetch, a push or a git call that throws fails this repo with a
+    // readable outcome. The whole error is printed; the outcome keeps its
+    // first line.
+    reportUnexpectedError(error);
+    return {
+      repo: repo.name,
+      version: '—',
+      status: 'failed',
+      detail: `promotion failed — ${firstLine(errorMessage(error))}`,
+    };
+  }
+  if (!promoted) {
+    const why = promotion.error ? `promotion refused — ${promotion.error}` : 'promotion refused';
+    return { repo: repo.name, version: '—', status: 'failed', detail: why };
+  }
+  return { ...planned, promotion };
+}
 
-  return promotion ? { ...planned, promotion } : planned;
+/** One repo, checked then promoted: what a single-repo release does before deploying. */
+export async function prepareOne(
+  repo: RepoConfig,
+  options: ReleaseOptions,
+  deps: PrepareDeps = {},
+): Promise<Deployable | DeployOutcome> {
+  const checked = await checkOne(repo, options, deps);
+  return isOutcome(checked) ? checked : promoteOne(checked, options, options.dryRun, deps);
 }
 
 /** One repo's preparation, as the app's preview reads it. */
@@ -261,15 +283,32 @@ export function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome
   };
 }
 
-/** The two halves of a release, injectable so they can be faked in tests. */
+/** The parts of a release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps extends DeployManyDeps {
-  prepare?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
+  check?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
+  promote?: (planned: Deployable, options: ReleaseOptions, dryRun: boolean) => Promise<Deployable | DeployOutcome>;
 }
 
+/** A repo that cannot go ahead. A benign skip (not cloned in a sweep, no workflow) is not one. */
+function refused(p: Deployable | DeployOutcome): p is DeployOutcome {
+  return isOutcome(p) && p.status === 'failed';
+}
+
+const listed = (names: string[]): string =>
+  names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+
 /**
- * Every repo, like one terminal per repo. Promote and derive each in turn
- * (seconds of local git), then deploy them all concurrently on one shared
- * board (minutes of CI and ArgoCD).
+ * Every repo, like one terminal per repo, and all or nothing.
+ *
+ * 1. Check every repo before touching any: checkout, version, the production
+ *    guard and, when more than one repo is named, a trial promotion (fetch and
+ *    trial merge, nothing pushed). A dry run's promotion is this trial.
+ * 2. If any repo cannot go ahead, stop: nothing is promoted or deployed. A
+ *    release of three repos that quietly ships two is the surprise this
+ *    prevents; the refusal is printed the moment it is found.
+ * 3. Promote each for real, in turn (seconds of local git). A promotion that
+ *    fails here (a push rejected since the trial) stops the deploys too.
+ * 4. Deploy them all concurrently on one shared board (minutes of CI and ArgoCD).
  *
  * One repo takes the same path with a single-row board: a second code path for
  * the common case is a second place for the ArgoCD wait to be forgotten.
@@ -279,29 +318,93 @@ export async function releaseMany(
   options: ReleaseOptions,
   deps: ReleaseManyDeps = {},
 ): Promise<DeployOutcome[]> {
-  const prepare = deps.prepare ?? prepareOne;
+  const check = deps.check ?? ((repo: RepoConfig, o: ReleaseOptions) => checkOne(repo, o));
+  const promoteStep =
+    deps.promote ?? ((p: Deployable, o: ReleaseOptions, dryRun: boolean) => promoteOne(p, o, dryRun));
   // A broken stdout costs the event, never the release: see guardedSink.
   const events = guardedSink(deps.events ?? NO_EVENTS);
-  const planned: Array<Deployable | DeployOutcome> = [];
-  for (const repo of targets) {
-    let prepared: Deployable | DeployOutcome;
+  // What check and promote do not catch still fails only that repo's step: it
+  // becomes a refusal like any other, so every repo still gets its plan and done.
+  const safely = async (
+    repo: RepoConfig,
+    step: () => Promise<Deployable | DeployOutcome>,
+  ): Promise<Deployable | DeployOutcome> => {
     try {
-      prepared = await prepare(repo, options);
+      return await step();
     } catch (error) {
-      // prepareOne catches what it knows can throw; anything else still fails
-      // only this repo, so one repo's throw never stops another.
       reportUnexpectedError(error);
-      prepared = { repo: repo.name, version: '—', status: 'failed', detail: firstLine(errorMessage(error)) };
+      return { repo: repo.name, version: '—', status: 'failed', detail: firstLine(errorMessage(error)) };
     }
-    events.emit(planEvent(repo, prepared));
-    if (isOutcome(prepared)) {
-      // Refused before deploying: this repo's story ends here, so say so now.
-      events.emit(doneEvent(prepared));
-    } else if (prepared.promotion?.result === 'merged') {
-      events.emit({ type: 'promoted', repo: repo.name, commits: prepared.promotion.commits ?? 0 });
+  };
+  const announce = (repo: RepoConfig, p: Deployable | DeployOutcome): void => {
+    events.emit(planEvent(repo, p));
+    if (isOutcome(p)) events.emit(doneEvent(p));
+    else if (p.promotion?.result === 'merged') {
+      events.emit({ type: 'promoted', repo: repo.name, commits: p.promotion.commits ?? 0 });
     }
-    planned.push(prepared);
+  };
+  const several = targets.length > 1;
+
+  // 1. Check everything first.
+  if (several) log.info(`Checking all ${targets.length} repos before changing anything`);
+  const trial = !options.skipPromote && (options.dryRun || several);
+  const checked: Array<Deployable | DeployOutcome> = [];
+  for (const repo of targets) {
+    let c = await safely(repo, () => check(repo, options));
+    if (trial && !isOutcome(c) && needsPromotion(repo)) {
+      const ready = c;
+      c = await safely(repo, () => promoteStep(ready, options, true));
+    }
+    if (refused(c)) log.error(`${repo.name} cannot be released: ${c.detail}`);
+    checked.push(c);
   }
+
+  // 2. Anything refused stops everything.
+  const culprits = checked.filter(refused).map((c) => c.repo);
+  if (culprits.length > 0) {
+    checked.forEach((c, i) => announce(targets[i], c));
+    if (several) {
+      log.newline();
+      log.error(
+        options.dryRun
+          ? `${listed(culprits)} cannot be released, so the real run would stop before promoting or deploying anything.`
+          : `Stopped: ${listed(culprits)} cannot be released, so nothing was promoted or deployed. ` +
+              'Fix it, or leave it out, and run the release again.',
+      );
+    }
+    return stopped(checked, [], culprits, options.dryRun, events);
+  }
+
+  // 3. Promote for real (a dry run's trial was its promotion).
+  let planned: Array<Deployable | DeployOutcome> = checked;
+  if (!options.dryRun) {
+    planned = [];
+    for (const [i, repo] of targets.entries()) {
+      const c = checked[i];
+      const p = isOutcome(c) || options.skipPromote ? c : await safely(repo, () => promoteStep(c, options, false));
+      announce(repo, p);
+      planned.push(p);
+      if (!refused(p)) continue;
+      const rest = checked.slice(i + 1);
+      rest.forEach((r, j) => events.emit(planEvent(targets[i + 1 + j], r)));
+      const promoted = planned
+        .filter((q): q is Deployable => !isOutcome(q) && q.promotion?.result === 'merged')
+        .map((q) => q.repo.name);
+      if (several) {
+        log.newline();
+        log.error(
+          `Stopped: ${repo.name}'s promotion failed, so nothing was deployed.` +
+            (promoted.length > 0 ? ` ${listed(promoted)} ${promoted.length === 1 ? 'is' : 'are'} promoted but not deployed.` : '') +
+            ' Run the release again once it is fixed.',
+        );
+      }
+      return stopped([...planned, ...rest], promoted, [repo.name], false, events);
+    }
+  } else {
+    checked.forEach((c, i) => announce(targets[i], c));
+  }
+
+  // 4. Deploy.
   try {
     return await deployMany(planned, 'staging', options.dryRun, { ...deps, events });
   } catch (error) {
@@ -316,6 +419,32 @@ export async function releaseMany(
       return failed;
     });
   }
+}
+
+/**
+ * The outcomes of a release that stopped before deploying: each refusal as it
+ * was, every other ready repo skipped with the reason, and a done for each of
+ * those (a refusal or a skip already had its done when it was announced).
+ */
+function stopped(
+  results: Array<Deployable | DeployOutcome>,
+  promoted: string[],
+  culprits: string[],
+  dryRun: boolean,
+  events: EventSink,
+): DeployOutcome[] {
+  const by = `stopped by ${culprits.join(', ')}`;
+  return results.map((r) => {
+    if (isOutcome(r)) return r;
+    const detail = dryRun
+      ? `would not deploy — ${by}`
+      : promoted.includes(r.repo.name)
+        ? `promoted, not deployed — ${by}`
+        : `not deployed — ${by}`;
+    const outcome: DeployOutcome = { repo: r.repo.name, version: r.version, status: 'skipped', detail };
+    events.emit(doneEvent(outcome));
+    return outcome;
+  });
 }
 
 /**
@@ -462,8 +591,12 @@ confirmation.
 
 Several repos release side by side, as if each had its own terminal: each is
 promoted in turn, then every deploy runs at the same time, each on its own line
-that updates in place (one line per change when output is piped). One repo
-refusing never stops another.
+that updates in place (one line per change when output is piped).
+
+Several repos are all or nothing. Every repo is checked first (its version
+against production, and a trial merge of develop into staging), and if any one
+cannot be released the whole release stops before anything is promoted or
+deployed. Fix that repo, or leave it out, and run it again.
 
 Release trains (--all is both):
   --frontend   ${trainNames('frontend')}

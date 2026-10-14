@@ -8,8 +8,9 @@
  *
  * Several repos at once behave like one terminal per repo: each is promoted in
  * turn — seconds of local git — and then every deploy runs concurrently, so the
- * whole thing takes about one build rather than one per repo. One repo refusing
- * never stops another.
+ * whole thing takes about one build rather than one per repo. Every repo is
+ * checked before any is touched, and one that cannot go ahead stops the whole
+ * release: it ships all of the repos named, or none of them.
  *
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one — and its deploy is blocked
@@ -71,30 +72,48 @@ export declare function releaseTargets(names: string[], sweep: Sweep): {
     repos: RepoConfig[];
     unknown: string[];
 };
-/**
- * Everything before the deploy: resolve the checkout, promote, derive the
- * version. Returns an outcome instead when the repo cannot go further.
- *
- * Async because the deployed tag now comes from Vast-deployments over the API,
- * not from a file in the local checkout.
- */
 /** The network and git calls in `prepareOne`, injectable so tests never touch either. */
 export interface PrepareDeps {
     stagingTag?: (repo: RepoConfig) => Promise<string>;
     promote?: (repo: RepoConfig, dir: string, dryRun: boolean, report: PromotionReport) => Promise<boolean>;
     readProduction?: ReadProduction;
 }
+/**
+ * Everything before the deploy that changes nothing: resolve the checkout,
+ * derive the version, check it against production. Returns an outcome instead
+ * when the repo cannot go further.
+ *
+ * Async because the deployed tag comes from Vast-deployments over the API, not
+ * from a file in the local checkout.
+ */
+export declare function checkOne(repo: RepoConfig, options: ReleaseOptions, deps?: PrepareDeps): Promise<Deployable | DeployOutcome>;
+/**
+ * Promote develop into staging for a repo that passed its check. `dryRun` is
+ * its own argument, not the option: a multi-repo release runs it as a trial
+ * (fetch and trial merge, nothing pushed) before promoting anything for real.
+ */
+export declare function promoteOne(planned: Deployable, options: ReleaseOptions, dryRun: boolean, deps?: PrepareDeps): Promise<Deployable | DeployOutcome>;
+/** One repo, checked then promoted: what a single-repo release does before deploying. */
 export declare function prepareOne(repo: RepoConfig, options: ReleaseOptions, deps?: PrepareDeps): Promise<Deployable | DeployOutcome>;
 /** One repo's preparation, as the app's preview reads it. */
 export declare function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome): VastEvent;
-/** The two halves of a release, injectable so they can be faked in tests. */
+/** The parts of a release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps extends DeployManyDeps {
-    prepare?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
+    check?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
+    promote?: (planned: Deployable, options: ReleaseOptions, dryRun: boolean) => Promise<Deployable | DeployOutcome>;
 }
 /**
- * Every repo, like one terminal per repo. Promote and derive each in turn
- * (seconds of local git), then deploy them all concurrently on one shared
- * board (minutes of CI and ArgoCD).
+ * Every repo, like one terminal per repo, and all or nothing.
+ *
+ * 1. Check every repo before touching any: checkout, version, the production
+ *    guard and, when more than one repo is named, a trial promotion (fetch and
+ *    trial merge, nothing pushed). A dry run's promotion is this trial.
+ * 2. If any repo cannot go ahead, stop: nothing is promoted or deployed. A
+ *    release of three repos that quietly ships two is the surprise this
+ *    prevents; the refusal is printed the moment it is found.
+ * 3. Promote each for real, in turn (seconds of local git). A promotion that
+ *    fails here (a push rejected since the trial) stops the deploys too.
+ * 4. Deploy them all concurrently on one shared board (minutes of CI and ArgoCD).
  *
  * One repo takes the same path with a single-row board: a second code path for
  * the common case is a second place for the ArgoCD wait to be forgotten.

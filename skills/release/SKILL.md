@@ -214,9 +214,12 @@ has not cloned is skipped by a sweep rather than failing it.
 same time, each repo moving on to its own ArgoCD wait as its build finishes.
 Because this skill's output is piped, `vast` prints one line per repo
 whenever its run changes status, with a heartbeat every 30 seconds; a human at a
-terminal instead sees each repo's line update in place. One repo refusing never
-stops the others: report each repo's outcome from the summary separately, and
-handle a conflict (§2) or a failed run (§4) for just that repo. A failed run's
+terminal instead sees each repo's line update in place. Several repos are all or
+nothing: every repo is checked first (version against production, trial merge), and
+if one cannot be released `vast` stops before promoting or deploying any of them.
+Tell the user which repo stopped it and why, then rerun once it is fixed (a conflict,
+§2; a version behind production, `--fix-version`), or without that repo if the user
+says so. Once deploys start, a failed run (§4) fails only its own repo. A failed run's
 summary line carries its run URL; a `status read failed, retrying` line is a
 transient read, not a failed run. `--target-version` and `--dir` are per-repo,
 so `vast` refuses them with a sweep flag or with more than one repo — release that
