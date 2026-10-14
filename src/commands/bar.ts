@@ -12,7 +12,7 @@ import { accessSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, rena
 import { homedir, tmpdir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { BAR_BUNDLE_ID, BarError, barStatusLine, installBar, uninstallBar, type BarDeps } from '../utils/vast-bar.js';
+import { BAR_BUNDLE_ID, BAR_DOWNLOAD_MAX_SECONDS, BarError, barStatusLine, installBar, uninstallBar, type BarDeps } from '../utils/vast-bar.js';
 import { log } from '../utils/ui.js';
 import { VERSION } from '../version.js';
 
@@ -71,7 +71,7 @@ export function liveBarDeps(): BarDeps {
           '--connect-timeout',
           '15',
           '--max-time',
-          '600',
+          String(BAR_DOWNLOAD_MAX_SECONDS),
           '-o',
           to,
           '-w',
@@ -119,9 +119,11 @@ export function liveBarDeps(): BarDeps {
     isRunning: running,
     quit: async () => {
       try {
-        await execFileAsync('osascript', ['-e', `quit app id "${BAR_BUNDLE_ID}"`]);
+        // Bounded: an unanswered Automation prompt ("Terminal wants to control
+        // Vast Bar") would otherwise hold osascript for about two minutes.
+        await execFileAsync('osascript', ['-e', `quit app id "${BAR_BUNDLE_ID}"`], { timeout: 10_000 });
       } catch {
-        // Not running, or Apple Events refused: the wait below decides.
+        // Not running, Apple Events refused, or timed out: the wait below decides.
       }
       if (await gone(5000)) return true;
       // Automation denied, Apple Events failing, or the app hung: SIGTERM it.
@@ -198,14 +200,16 @@ Xcode. vast upgrade updates it too when it is installed.
     .command('install')
     .description("Install Vast Bar, or update it to this CLI's version")
     .option('-v, --version <tag>', 'Install the app from this release instead')
-    .option('--if-installed', 'Only update an installed app (what vast upgrade runs)', false)
+    .option('--if-installed', 'Only update an installed app, and only to a different version (what vast upgrade runs)', false)
     .action((options: { version?: string; ifInstalled: boolean }) =>
       run(async () => {
         const result = await installBar(
           { cliVersion: VERSION, version: options.version, ifInstalled: options.ifInstalled },
           liveBarDeps(),
         );
-        if (result) log.success(`Vast Bar ${result.version} installed in ${result.path.replace(/\/Vast Bar\.app$/, '')}`);
+        if (!result) return;
+        log.success(`Vast Bar ${result.version} installed in ${result.path.replace(/\/Vast Bar\.app$/, '')}`);
+        if (result.warning) log.warn(result.warning);
       }),
     );
 

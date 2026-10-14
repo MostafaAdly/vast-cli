@@ -32,7 +32,10 @@ class FakeMac implements Deps {
   quitWorks = true;
   applicationsWritable = true;
   downloadResult: 'ok' | 'not-found' = 'ok';
+  /** The downloaded app's Info.plist. */
   bundle: { id: string | null; version: string | null } = { id: BAR_BUNDLE_ID, version: '2.9.0' };
+  /** The installed app's Info.plist (anything outside the temp dir). */
+  installedBundle: { id: string | null; version: string | null } = { id: BAR_BUNDLE_ID, version: '2.8.0' };
   signatureOk = true;
   unzipsApp = true;
 
@@ -49,7 +52,7 @@ class FakeMac implements Deps {
     this.calls.push('unzip');
     if (this.unzipsApp) this.files.add(join(into, BAR_APP));
   };
-  plist = (_app: string) => this.bundle;
+  plist = (app: string) => (app.startsWith('/tmp/vb/') ? this.bundle : this.installedBundle);
   verifySignature = async (_app: string) => {
     this.calls.push('verify');
     return this.signatureOk;
@@ -90,6 +93,7 @@ test('status: not installed, current, older than the CLI', () => {
   const mac = new FakeMac();
   assert.equal(barStatusLine(mac, '2.9.0'), 'Vast Bar is not installed — run vast bar install');
   mac.files.add(SYSTEM);
+  mac.installedBundle.version = '2.9.0';
   assert.equal(barStatusLine(mac, '2.9.0'), 'Vast Bar 2.9.0 installed in /Applications · CLI 2.9.0');
   assert.equal(
     barStatusLine(mac, '2.10.0'),
@@ -392,4 +396,145 @@ test('uninstall refuses to remove an app that will not quit', async () => {
   });
   assert.deepEqual(mac.calls, ['quit']);
   assert.ok(mac.files.has(SYSTEM));
+});
+
+/** Makes `mac.remove` throw for the paths `fails` picks, leaving them in place. */
+function failRemoves(mac: FakeMac, fails: (path: string) => boolean): void {
+  const remove = mac.remove;
+  mac.remove = (p) => {
+    if (fails(p)) {
+      mac.calls.push(`remove ${p} FAILED`);
+      throw new Error('EACCES: permission denied');
+    }
+    remove(p);
+  };
+}
+
+test('a leftover previous copy that cannot be removed is refused before anything is quit or moved', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.files.add(PREVIOUS);
+  mac.running = true;
+  failRemoves(mac, (p) => p === PREVIOUS);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.equal(
+      e.message,
+      `An earlier install left ${PREVIOUS} and it can't be removed (it may need admin rights). ` +
+        'Remove it, then run vast bar install again.',
+    );
+    return true;
+  });
+  assert.equal(mac.running, true, 'not quit');
+  assert.ok(!mac.calls.includes('quit'));
+  assert.ok(!mac.calls.some((c) => c.startsWith('move')), mac.calls.join('\n'));
+  assert.ok(!mac.calls.includes(`remove ${SYSTEM}`), 'the installed app is never removed');
+  assert.ok(mac.files.has(SYSTEM));
+  assert.ok(!mac.calls.some((c) => c.startsWith('open')));
+});
+
+test('a previous copy that cannot be removed after the swap is a warning: the new app is cleared and opened', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  // Removable until the swap moves the installed app there (say it was installed with sudo).
+  let swapped = false;
+  const move = mac.move;
+  mac.move = (from, to) => {
+    move(from, to);
+    if (to === PREVIOUS) swapped = true;
+  };
+  failRemoves(mac, (p) => p === PREVIOUS && swapped);
+  const result = await installBar({ cliVersion: '2.9.0' }, mac);
+  assert.deepEqual(result, {
+    path: SYSTEM,
+    version: '2.9.0',
+    opened: true,
+    warning: `The previous Vast Bar is left at ${PREVIOUS}; remove it when convenient.`,
+  });
+  assert.deepEqual(mac.calls.slice(4), [
+    `move ${FRESH} -> ${STAGED}`,
+    'quit',
+    `move ${SYSTEM} -> ${PREVIOUS}`,
+    `move ${STAGED} -> ${SYSTEM}`,
+    `remove ${PREVIOUS} FAILED`,
+    `clear ${SYSTEM}`,
+    `open ${SYSTEM}`,
+    'remove /tmp/vb',
+  ]);
+});
+
+test('the restore only undoes a move-aside this run made, never a previous copy it found', async () => {
+  // A leftover previous copy that "removes" without going (a partial delete),
+  // then the installed app cannot step aside: nothing may be restored over it.
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.files.add(PREVIOUS);
+  mac.running = true;
+  const remove = mac.remove;
+  mac.remove = (p) => (p === PREVIOUS ? void mac.calls.push(`remove ${p}`) : remove(p));
+  failMoves(mac, (from) => from === SYSTEM);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), { message: /^Could not install into \/Applications: EACCES/ });
+  assert.ok(!mac.calls.includes(`remove ${SYSTEM}`), mac.calls.join('\n'));
+  assert.ok(!mac.calls.includes(`move ${PREVIOUS} -> ${SYSTEM}`), mac.calls.join('\n'));
+  assert.ok(mac.files.has(SYSTEM), 'the installed app is untouched');
+  assert.ok(mac.calls.includes(`open ${SYSTEM}`), 'and reopened');
+});
+
+test('a failing temp-dir cleanup never replaces the real error', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  mac.quitWorks = false;
+  failRemoves(mac, (p) => p === '/tmp/vb' || p === STAGED);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), {
+    message: 'Vast Bar did not quit. Quit it from its … menu and run the command again.',
+  });
+});
+
+test('a failing temp-dir cleanup never fails a good install', async () => {
+  const mac = new FakeMac();
+  failRemoves(mac, (p) => p === '/tmp/vb');
+  const result = await installBar({ cliVersion: '2.9.0' }, mac);
+  assert.equal(result?.path, SYSTEM);
+});
+
+test('status: an interrupted install that left only the previous copy says where it is', () => {
+  for (const previous of [PREVIOUS, USER_PREVIOUS]) {
+    const mac = new FakeMac();
+    mac.files.add(previous);
+    assert.equal(
+      barStatusLine(mac, '2.9.0'),
+      `Vast Bar is not installed, but an interrupted install left it at ${previous} — ` +
+        'rename it to "Vast Bar.app" or run vast bar install',
+    );
+  }
+});
+
+test('an install after an interrupted one goes back where the app was', async () => {
+  const mac = new FakeMac();
+  mac.files.add(USER_PREVIOUS);
+  const result = await installBar({ cliVersion: '2.9.0' }, mac);
+  assert.equal(result?.path, USER);
+  assert.ok(mac.calls.includes(`move ${USER_STAGED} -> ${USER}`));
+  assert.ok(!mac.files.has(USER_PREVIOUS), 'the leftover is cleared');
+  assert.ok(!mac.files.has(SYSTEM));
+});
+
+test('--if-installed does nothing when the installed app is already this version', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.installedBundle.version = '2.9.0';
+  mac.running = true;
+  assert.equal(await installBar({ cliVersion: '2.9.0', ifInstalled: true }, mac), null);
+  assert.deepEqual(mac.calls, []);
+});
+
+test('a plain install reinstalls even the same version: it was asked for', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.installedBundle.version = '2.9.0';
+  const result = await installBar({ cliVersion: '2.9.0' }, mac);
+  assert.equal(result?.opened, true);
+  assert.equal(mac.calls[0], `download ${URL_290}`);
 });

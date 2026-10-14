@@ -11,6 +11,8 @@
 export declare const BAR_ASSET = "VastBar.zip";
 export declare const BAR_APP = "Vast Bar.app";
 export declare const BAR_BUNDLE_ID = "com.vastgroup.vastbar";
+/** curl's --max-time for the download; vast upgrade's wait for the app step must exceed it. */
+export declare const BAR_DOWNLOAD_MAX_SECONDS = 600;
 export declare class BarError extends Error {
 }
 export interface BarDeps {
@@ -41,10 +43,12 @@ export interface BarInstalled {
     path: string;
     version: string;
     opened: boolean;
+    /** Something the install could not tidy up, for the command to print. */
+    warning?: string;
 }
 export declare function barUrl(version: string, env: Record<string, string | undefined>): string;
 /** Where the app is installed now: /Applications first, then ~/Applications. */
-export declare function installedBar(deps: BarDeps): string | null;
+export declare function installedBar(deps: Pick<BarDeps, 'home' | 'exists'>): string | null;
 export declare function barStatusLine(deps: BarDeps, cliVersion: string): string;
 export declare function installBar(opts: {
     cliVersion: string;
