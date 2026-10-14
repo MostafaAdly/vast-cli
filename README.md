@@ -640,6 +640,8 @@ as your CLI, so no Xcode, no clone and no Apple Developer account.
    existing copy is replaced in place and reopened only if it was running. No Gatekeeper
    warning appears, because the download is not quarantined; an organisation security tool
    that blocks unsigned apps can still block it, and that is outside the CLI's control.
+   The signature check proves the download is intact, not who built it: it comes over
+   HTTPS from this repo's GitHub releases, built by its release workflow.
 
 3. **Start it at login** (optional): in the app, open the **…** menu in the header and
    choose **Open at login** (a checkmark means it is on). Choose it again to turn it off.

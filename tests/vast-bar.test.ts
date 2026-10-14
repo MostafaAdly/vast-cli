@@ -14,6 +14,11 @@ type Deps = import('../src/utils/vast-bar.js').BarDeps;
 const SYSTEM = `/Applications/${BAR_APP}`;
 const USER = `/Users/eng/Applications/${BAR_APP}`;
 const URL_290 = 'https://github.com/MostafaAdly/vast-cli/releases/download/v2.9.0/VastBar.zip';
+const FRESH = `/tmp/vb/unpacked/${BAR_APP}`;
+const STAGED = '/Applications/.Vast Bar.new.app';
+const PREVIOUS = '/Applications/.Vast Bar.previous.app';
+const USER_STAGED = '/Users/eng/Applications/.Vast Bar.new.app';
+const USER_PREVIOUS = '/Users/eng/Applications/.Vast Bar.previous.app';
 
 /** A Mac where nothing real happens: every step is recorded in `calls`. */
 class FakeMac implements Deps {
@@ -23,13 +28,16 @@ class FakeMac implements Deps {
   files = new Set<string>();
   calls: string[] = [];
   running = false;
+  /** Whether quit() gets the app to go. */
+  quitWorks = true;
   applicationsWritable = true;
   downloadResult: 'ok' | 'not-found' = 'ok';
   bundle: { id: string | null; version: string | null } = { id: BAR_BUNDLE_ID, version: '2.9.0' };
   signatureOk = true;
   unzipsApp = true;
 
-  exists = (p: string) => this.files.has(p);
+  /** A directory exists when something is inside it. */
+  exists = (p: string) => this.files.has(p) || [...this.files].some((f) => f.startsWith(`${p}/`));
   writable = (dir: string) => (dir === '/Applications' ? this.applicationsWritable : true);
   makeTempDir = () => '/tmp/vb';
   mkdirp = (dir: string) => void this.calls.push(`mkdir ${dir}`);
@@ -49,7 +57,8 @@ class FakeMac implements Deps {
   isRunning = async () => this.running;
   quit = async () => {
     this.calls.push('quit');
-    this.running = false;
+    if (this.quitWorks) this.running = false;
+    return this.quitWorks;
   };
   move = (from: string, to: string) => {
     this.calls.push(`move ${from} -> ${to}`);
@@ -97,7 +106,8 @@ test('a fresh install downloads, verifies, moves into /Applications, clears quar
     'mkdir /tmp/vb/unpacked',
     'unzip',
     'verify',
-    `move /tmp/vb/unpacked/${BAR_APP} -> ${SYSTEM}`,
+    `move ${FRESH} -> ${STAGED}`,
+    `move ${STAGED} -> ${SYSTEM}`,
     `clear ${SYSTEM}`,
     `open ${SYSTEM}`,
     'remove /tmp/vb',
@@ -111,10 +121,11 @@ test('an existing install is replaced where it is, quitting it first', async () 
   const result = await installBar({ cliVersion: '2.9.0' }, mac);
   assert.equal(result?.path, USER);
   assert.deepEqual(mac.calls.slice(4), [
+    `move ${FRESH} -> ${USER_STAGED}`,
     'quit',
-    `move ${USER} -> /tmp/vb/previous.app`,
-    `move /tmp/vb/unpacked/${BAR_APP} -> ${USER}`,
-    'remove /tmp/vb/previous.app',
+    `move ${USER} -> ${USER_PREVIOUS}`,
+    `move ${USER_STAGED} -> ${USER}`,
+    `remove ${USER_PREVIOUS}`,
     `clear ${USER}`,
     `open ${USER}`,
     'remove /tmp/vb',
@@ -174,26 +185,154 @@ for (const [name, setup, message] of [
   });
 }
 
-test('a failed swap puts the old app back and reopens it if it was running', async () => {
-  const mac = new FakeMac();
-  mac.files.add(SYSTEM);
-  mac.running = true;
-  // Moving the new app INTO /Applications fails once; the restore (also into
-  // /Applications) must then succeed.
+/** Makes `mac.move` throw for the moves `fails` picks, recording them like real ones. */
+function failMoves(mac: FakeMac, fails: (from: string, to: string) => boolean): void {
   const move = mac.move;
-  let failed = false;
   mac.move = (from, to) => {
-    if (to === SYSTEM && !failed) {
-      failed = true;
+    if (fails(from, to)) {
+      mac.calls.push(`move ${from} -> ${to} FAILED`);
       throw new Error('EACCES: permission denied');
     }
     move(from, to);
   };
-  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), /Could not install into \/Applications/);
-  assert.ok(mac.files.has(SYSTEM), 'the old app is back');
-  assert.ok(mac.calls.includes(`move /tmp/vb/previous.app -> ${SYSTEM}`));
-  assert.ok(mac.calls.includes(`open ${SYSTEM}`), 'reopened because it was running');
+}
+
+test('an install folder you cannot write is refused before quitting or moving anything', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  mac.applicationsWritable = false;
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.equal(
+      e.message,
+      "/Applications is not writable for you, so Vast Bar can't be installed or updated there without admin rights. " +
+        'Remove it with admin rights, or install to ~/Applications by removing the copy in /Applications first.',
+    );
+    return true;
+  });
+  assert.equal(mac.running, true, 'not quit');
+  assert.ok(!mac.calls.includes('quit'));
+  assert.ok(!mac.calls.some((c) => c.startsWith('move')));
+  assert.ok(mac.files.has(SYSTEM));
 });
+
+test('a staging failure leaves the installed app untouched and running', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  failMoves(mac, (_from, to) => to === STAGED);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /^Could not stage Vast Bar in \/Applications: EACCES/);
+    return true;
+  });
+  assert.ok(mac.files.has(SYSTEM));
+  assert.equal(mac.running, true, 'not quit');
+  assert.ok(!mac.calls.includes('quit'));
+  assert.ok(mac.calls.includes(`remove ${STAGED}`), 'the partial stage is cleaned up');
+  assert.ok(!mac.calls.some((c) => c.includes(`${SYSTEM} ->`) || c === `remove ${SYSTEM}`));
+});
+
+test('a leftover staged copy is removed before staging', async () => {
+  const mac = new FakeMac();
+  mac.files.add(STAGED);
+  await installBar({ cliVersion: '2.9.0' }, mac);
+  const removed = mac.calls.indexOf(`remove ${STAGED}`);
+  assert.ok(removed >= 0);
+  assert.ok(removed < mac.calls.indexOf(`move ${FRESH} -> ${STAGED}`));
+});
+
+test('a leftover previous copy is cleared before the installed app steps aside', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.files.add(PREVIOUS);
+  await installBar({ cliVersion: '2.9.0' }, mac);
+  const removed = mac.calls.indexOf(`remove ${PREVIOUS}`);
+  assert.ok(removed >= 0);
+  assert.ok(removed < mac.calls.indexOf(`move ${SYSTEM} -> ${PREVIOUS}`));
+  assert.ok(mac.files.has(SYSTEM));
+});
+
+test('a failed final rename restores the previous app and reopens it', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  failMoves(mac, (from, to) => from === STAGED && to === SYSTEM);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /^Could not install into \/Applications: EACCES/);
+    return true;
+  });
+  assert.deepEqual(mac.calls.slice(4), [
+    `move ${FRESH} -> ${STAGED}`,
+    'quit',
+    `move ${SYSTEM} -> ${PREVIOUS}`,
+    `move ${STAGED} -> ${SYSTEM} FAILED`,
+    `remove ${SYSTEM}`,
+    `move ${PREVIOUS} -> ${SYSTEM}`,
+    `open ${SYSTEM}`,
+    `remove ${STAGED}`,
+    'remove /tmp/vb',
+  ]);
+  assert.ok(mac.files.has(SYSTEM), 'the old app is back');
+  assert.ok(!mac.files.has(PREVIOUS));
+});
+
+test('a failed restore keeps the previous app and names it', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  failMoves(mac, (from, to) => to === SYSTEM && (from === STAGED || from === PREVIOUS));
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /^Could not install into \/Applications: EACCES/);
+    assert.ok(e.message.includes(`Your previous Vast Bar is kept at ${PREVIOUS}`), e.message);
+    return true;
+  });
+  assert.ok(mac.files.has(PREVIOUS), 'the only good copy survives');
+  assert.ok(!mac.calls.includes(`remove ${PREVIOUS}`));
+  assert.ok(!mac.calls.some((c) => c.startsWith('open')), 'nothing at the target to open');
+});
+
+test('a failed move-aside reopens the app that was running', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  failMoves(mac, (from) => from === SYSTEM);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), { message: /^Could not install into \/Applications: EACCES/ });
+  assert.ok(mac.files.has(SYSTEM));
+  assert.ok(mac.calls.includes(`open ${SYSTEM}`));
+  assert.ok(!mac.calls.includes(`remove ${SYSTEM}`));
+  assert.ok(!mac.files.has(STAGED), 'the staged copy is cleaned up');
+});
+
+test('an app that will not quit is never swapped', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  mac.quitWorks = false;
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.equal(e.message, 'Vast Bar did not quit. Quit it from its … menu and run the command again.');
+    return true;
+  });
+  assert.ok(mac.files.has(SYSTEM));
+  assert.ok(!mac.calls.some((c) => c.includes(`${SYSTEM} ->`) || c.endsWith(`-> ${SYSTEM}`) || c === `remove ${SYSTEM}`));
+  assert.ok(!mac.files.has(STAGED), 'the staged copy is cleaned up');
+});
+
+for (const version of ['latest', '2.9', 'v2.9.0.1', '2.9.0/../../x']) {
+  test(`--version ${version} is refused before any download`, async () => {
+    const mac = new FakeMac();
+    await assert.rejects(installBar({ cliVersion: '2.9.0', version }, mac), (e: Error) => {
+      assert.ok(e instanceof BarError);
+      assert.equal(e.message, `--version must look like 2.9.0 (got ${version.replace(/^v/, '')}).`);
+      return true;
+    });
+    assert.deepEqual(mac.calls, []);
+  });
+}
 
 test('--if-installed does nothing when the app is not installed', async () => {
   const mac = new FakeMac();
@@ -241,4 +380,16 @@ test('an app that installs but will not open is reported plainly, not as a crash
     return true;
   });
   assert.ok(mac.files.has(SYSTEM), 'the new app stays installed');
+});
+
+test('uninstall refuses to remove an app that will not quit', async () => {
+  const mac = new FakeMac();
+  mac.files.add(SYSTEM);
+  mac.running = true;
+  mac.quitWorks = false;
+  await assert.rejects(uninstallBar({ purge: true }, mac), {
+    message: 'Vast Bar did not quit. Quit it from its … menu and run the command again.',
+  });
+  assert.deepEqual(mac.calls, ['quit']);
+  assert.ok(mac.files.has(SYSTEM));
 });

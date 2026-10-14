@@ -19,13 +19,31 @@ import { VERSION } from '../version.js';
 const execFileAsync = promisify(execFile);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** This user's processes only: not another login's copy, not a dev binary named differently. */
+const mine = (): string[] => ['-x', '-U', String(process.getuid?.() ?? '')];
+
 async function running(): Promise<boolean> {
   try {
-    await execFileAsync('pgrep', ['-x', 'VastBar']);
+    await execFileAsync('pgrep', [...mine(), 'VastBar']);
     return true;
   } catch {
     return false;
   }
+}
+
+/** Polls for up to `ms` for the app to go; true once it has. */
+async function gone(ms: number): Promise<boolean> {
+  for (let waited = 0; await running(); waited += 100) {
+    if (waited >= ms) return false;
+    await sleep(100);
+  }
+  return true;
+}
+
+/** The first line a failed command printed, for a readable BarError. */
+function firstLine(error: unknown): string {
+  const { stderr, message } = error as { stderr?: string; message?: string };
+  return (stderr?.trim() || message || String(error)).split('\n')[0].trim();
 }
 
 export function liveBarDeps(): BarDeps {
@@ -46,14 +64,36 @@ export function liveBarDeps(): BarDeps {
     mkdirp: (dir) => mkdirSync(dir, { recursive: true }),
     download: async (url, to) => {
       // No -f: the status code tells a missing release (404) from a failure.
-      const { stdout } = await execFileAsync('curl', ['-sSL', '-o', to, '-w', '%{http_code}', url]);
-      const code = stdout.trim();
+      let code: string;
+      try {
+        const { stdout } = await execFileAsync('curl', [
+          '-sSL',
+          '--connect-timeout',
+          '15',
+          '--max-time',
+          '600',
+          '-o',
+          to,
+          '-w',
+          '%{http_code}',
+          url,
+        ]);
+        code = stdout.trim();
+      } catch (error) {
+        // No network, a timeout, a missing file:// path.
+        throw new BarError(`Download failed: ${firstLine(error)}: ${url}`);
+      }
       if (url.startsWith('file:') || code === '200') return 'ok';
       if (code === '404') return 'not-found';
       throw new BarError(`Download failed (HTTP ${code}): ${url}`);
     },
     unzip: async (zip, into) => {
-      await execFileAsync('ditto', ['-x', '-k', zip, into]);
+      try {
+        await execFileAsync('ditto', ['-x', '-k', zip, into]);
+      } catch (error) {
+        // Typically an HTML error page saved as the zip.
+        throw new BarError(`The download is not a valid zip: ${firstLine(error)}`);
+      }
     },
     plist: (app) => {
       const read = (key: string): string | null => {
@@ -83,7 +123,14 @@ export function liveBarDeps(): BarDeps {
       } catch {
         // Not running, or Apple Events refused: the wait below decides.
       }
-      for (let i = 0; i < 50 && (await running()); i++) await sleep(100);
+      if (await gone(5000)) return true;
+      // Automation denied, Apple Events failing, or the app hung: SIGTERM it.
+      try {
+        await execFileAsync('pkill', [...mine(), 'VastBar']);
+      } catch {
+        // Already gone, or not ours to signal: the wait decides.
+      }
+      return gone(2000);
     },
     move: (from, to) => {
       try {

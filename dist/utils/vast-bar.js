@@ -21,6 +21,8 @@ function assertMac(deps) {
         throw new BarError('Vast Bar is a macOS app.');
 }
 const bare = (v) => v.trim().replace(/^v/, '');
+const message = (error) => (error instanceof Error ? error.message : String(error));
+const NOT_QUIT = 'Vast Bar did not quit. Quit it from its … menu and run the command again.';
 export function barUrl(version, env) {
     return env.VAST_BAR_URL || `https://github.com/${REPO}/releases/download/v${bare(version)}/${BAR_ASSET}`;
 }
@@ -55,6 +57,11 @@ export async function installBar(opts, deps) {
         throw new BarError(`This CLI (${version}) is a development build, so there is no released Vast Bar for it.\n` +
             'Build it from the repo: apps/menubar/build.sh');
     }
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+        throw new BarError(`--version must look like 2.9.0 (got ${version}).`);
+    }
+    // The temp dir holds only the zip and the unpacked copy; the swap itself
+    // happens inside the install dir.
     const tmp = deps.makeTempDir();
     try {
         const url = barUrl(version, deps.env);
@@ -84,30 +91,70 @@ export async function installBar(opts, deps) {
             dir = join(deps.home, 'Applications');
             deps.mkdirp(dir);
         }
-        const target = join(dir, BAR_APP);
-        const wasRunning = await deps.isRunning();
-        if (wasRunning)
-            await deps.quit();
-        // Swap with no gap: the old app steps aside, the new one moves in, and only
-        // then is the old one deleted — so a failure can put it back.
-        let previous = null;
-        if (deps.exists(target)) {
-            previous = join(tmp, 'previous.app');
-            deps.move(target, previous);
+        // Checked before anything is quit, so a folder we can't write never
+        // strands the app closed.
+        if (deps.exists(dir) && !deps.writable(dir)) {
+            throw new BarError(`${dir} is not writable for you, so Vast Bar can't be installed or updated there without admin rights. ` +
+                'Remove it with admin rights, or install to ~/Applications by removing the copy in /Applications first.');
         }
+        const target = join(dir, BAR_APP);
+        const staged = join(dir, '.Vast Bar.new.app');
+        const previous = join(dir, '.Vast Bar.previous.app');
+        // Stage the new app beside the old one, so the swap below is two renames
+        // within one folder: they cannot cross volumes or run out of disk halfway.
+        // Anything that goes wrong here has touched nothing installed.
+        if (deps.exists(staged))
+            deps.remove(staged);
         try {
-            deps.move(fresh, target);
+            deps.move(fresh, staged);
         }
         catch (error) {
-            if (previous) {
-                deps.move(previous, target);
-                if (wasRunning)
-                    await deps.open(target);
-            }
-            throw new BarError(`Could not install into ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+            deps.remove(staged);
+            throw new BarError(`Could not stage Vast Bar in ${dir}: ${message(error)}`);
         }
-        if (previous)
-            deps.remove(previous);
+        let wasRunning = false;
+        try {
+            wasRunning = await deps.isRunning();
+            // Never swap the bundle a running app is executing from.
+            if (wasRunning && !(await deps.quit()))
+                throw new BarError(NOT_QUIT);
+            const hadApp = deps.exists(target);
+            try {
+                if (hadApp) {
+                    if (deps.exists(previous))
+                        deps.remove(previous); // a stale one from a failed run
+                    deps.move(target, previous);
+                }
+                deps.move(staged, target);
+            }
+            catch (error) {
+                let kept = '';
+                if (hadApp && deps.exists(previous)) {
+                    try {
+                        deps.remove(target);
+                        deps.move(previous, target);
+                    }
+                    catch {
+                        kept = `. Your previous Vast Bar is kept at ${previous}`;
+                    }
+                }
+                if (wasRunning && deps.exists(target)) {
+                    try {
+                        await deps.open(target);
+                    }
+                    catch {
+                        // The error below is the one that matters.
+                    }
+                }
+                throw new BarError(`Could not install into ${dir}: ${message(error)}${kept}`);
+            }
+            if (hadApp)
+                deps.remove(previous);
+        }
+        finally {
+            if (deps.exists(staged))
+                deps.remove(staged);
+        }
         await deps.clearQuarantine(target);
         const opened = !opts.ifInstalled || wasRunning;
         if (opened) {
@@ -130,8 +177,8 @@ export async function uninstallBar(opts, deps) {
     const removed = [];
     const app = installedBar(deps);
     if (app) {
-        if (await deps.isRunning())
-            await deps.quit();
+        if ((await deps.isRunning()) && !(await deps.quit()))
+            throw new BarError(NOT_QUIT);
         deps.remove(app);
         removed.push(app);
     }

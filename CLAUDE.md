@@ -229,7 +229,10 @@ in `Vast-deployments`:
 - `vast bar install` (`src/commands/bar.ts`, `src/utils/vast-bar.ts`) downloads the
   release's `VastBar.zip` with curl (so it is not quarantined), verifies bundle id,
   version and signature before touching anything, and swaps it in place; the old copy
-  comes back if the swap fails. `vast upgrade` runs the new CLI's
+  comes back if the swap fails. The new app is staged inside the install folder
+  (`.Vast Bar.new.app`) so the swap is same-folder renames, never a copy; an unwritable
+  folder is refused before the app is quit, and an app that will not quit is never
+  swapped or removed. A failed restore keeps `.Vast Bar.previous.app` and names it. `vast upgrade` runs the new CLI's
   `bar install --if-installed`, and a failure there only warns. `VAST_BAR_URL`
   overrides the download URL for live checks only — never document it for users.
 - The app never decides anything a release depends on: it runs `vast … --json` through

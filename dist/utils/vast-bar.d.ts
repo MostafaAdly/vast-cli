@@ -30,8 +30,8 @@ export interface BarDeps {
     };
     verifySignature(app: string): Promise<boolean>;
     isRunning(): Promise<boolean>;
-    /** Asks the app to quit and waits (up to ~5 s) for it to go. */
-    quit(): Promise<void>;
+    /** Asks the app to quit, then forces it; true once it is gone. */
+    quit(): Promise<boolean>;
     move(from: string, to: string): void;
     remove(path: string): void;
     clearQuarantine(app: string): Promise<void>;

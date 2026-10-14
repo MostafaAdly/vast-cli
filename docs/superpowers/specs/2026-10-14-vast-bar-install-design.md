@@ -85,11 +85,17 @@ or the docs.
 4. **Where.** If the app is already installed (`/Applications/Vast Bar.app`, else
    `~/Applications/Vast Bar.app`), replace it there. Otherwise `/Applications` if
    writable, else `~/Applications` (created). Never `sudo`.
+   If that directory exists and is not writable, refuse before quitting anything.
+   **Stage** the verified app inside it as `.Vast Bar.new.app`; a failure there
+   touches nothing installed.
 5. **Quit** a running copy: `osascript -e 'quit app id "com.vastgroup.vastbar"'`,
-   then wait up to 5 s for the process to go.
-6. **Replace** without a gap: move the old bundle into the temp dir, move the new
-   one into place, then delete the old one. If the move-in fails, move the old
-   one back.
+   wait up to 5 s, then `pkill -x -U <uid> VastBar` and wait up to 2 s. If it is
+   still running, refuse: a running app is never swapped.
+6. **Replace** without a gap, with same-folder renames only: the old bundle to
+   `.Vast Bar.previous.app`, the staged one into place, then delete the old one.
+   If the move-in fails, remove whatever is at the target and move the old one
+   back (reopening it if it was running); if even that fails, keep
+   `.Vast Bar.previous.app` and name it in the error.
 7. **Clear** `com.apple.quarantine` recursively (`xattr -dr`), defensively.
 8. **Open** it with `open`, except under `--if-installed` when it was not running.
    Print `Vast Bar <ver> installed in <dir>`.
