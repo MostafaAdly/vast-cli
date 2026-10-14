@@ -54,7 +54,10 @@ export class VastCli {
   private configure(): void {
     this.program
       .name('vast')
-      .version(VERSION, '-V, --version', 'Display version number')
+      // No Commander .version(): a root-level version option is parsed anywhere
+      // on the line and swallowed subcommands' own --version (`vast bar install
+      // --version 2.9.0` printed the version and installed nothing). run()
+      // answers `vast -V|-v|--version` itself.
       .description(DESCRIPTION)
       .helpOption('-h, --help', 'Display help for command')
       .usage('[command] [options]')
@@ -159,12 +162,12 @@ export class VastCli {
         return;
       }
 
-      // `vast -v` answers with the version. It is handled here rather than as
-      // a Commander option because a root-level `-v` is parsed anywhere on the
-      // line, which would swallow the `-v` that release/deploy/promote use for
-      // --target-version. Only a bare `vast -v` qualifies; `-V` and --version
-      // stay as Commander's own.
-      if (process.argv.length === 3 && process.argv[2] === '-v') {
+      // `vast -v`, `-V` and `--version` answer with the version. They are
+      // handled here rather than as Commander options because a root-level
+      // option is parsed anywhere on the line, which would swallow the `-v`
+      // and `--version` that subcommands use for their own (--target-version,
+      // upgrade and bar install's --version). Only the bare form qualifies.
+      if (process.argv.length === 3 && ['-v', '-V', '--version'].includes(process.argv[2])) {
         process.stdout.write(`${VERSION}\n`);
         return;
       }
