@@ -115,14 +115,24 @@ vast upgrade           # install the latest release
 vast upgrade --check   # say what is available, change nothing
 ```
 
-On macOS, if Vast Bar is installed, `vast upgrade` updates it to the new version too. If
-that part fails it prints a warning and the CLI upgrade still succeeds; run
+On macOS, if Vast Bar is installed, `vast upgrade` updates it to the new version too (an
+app already at that version is left alone, and one that was not running is not opened).
+If that part fails it prints a warning and the CLI upgrade still succeeds; run
 `vast bar install` to retry.
 
 The CLI checks for new releases once a day, in a detached background process, and shows
 a one-line hint on your next command. It never delays anything.
 
 ## Uninstall
+
+On macOS, remove Vast Bar first if you installed it, while `vast` still exists
+(`--purge` also deletes its run logs):
+
+```bash
+vast bar uninstall [--purge]
+```
+
+Then remove the CLI:
 
 ```bash
 rm -rf ~/.vast-cli ~/.local/bin/vast
@@ -637,7 +647,8 @@ as your CLI, so no Xcode, no clone and no Apple Developer account.
    It downloads the Vast Bar that matches your CLI's version, checks it is the right app
    (bundle id, version, signature) before touching anything, puts it in `/Applications`
    (or `~/Applications` if that is not writable — it never uses `sudo`), and opens it. An
-   existing copy is replaced in place and reopened only if it was running. No Gatekeeper
+   existing copy is replaced in place (quit first if it is running) and opened; only the
+   update `vast upgrade` runs leaves a closed app closed. No Gatekeeper
    warning appears, because the download is not quarantined; an organisation security tool
    that blocks unsigned apps can still block it, and that is outside the CLI's control.
    The signature check proves the download is intact, not who built it: it comes over
@@ -662,7 +673,10 @@ older than 2.9.0 has no app, and a development build of the CLI (a version like
 which.
 
 The first time you use "Open dry run in Terminal", macOS asks to let Vast Bar control
-Terminal. That is the only permission it ever needs. It refreshes when you open it and
+Terminal. That is the only permission the app itself needs. Updating a running copy can
+also ask once to let your terminal control Vast Bar (that is how it is asked to quit);
+if the prompt is left unanswered, the install stops waiting after ten seconds and quits
+the app directly. It refreshes when you open it and
 every five minutes. Its run logs are in `~/Library/Application Support/Vast Bar/`;
 `vast bar uninstall --purge` deletes them with the app.
 
@@ -856,7 +870,7 @@ Still stuck? `vast <command> --help` carries worked examples for every command.
 ## Development
 
 ```bash
-npm test          # node:test suite (718 tests)
+npm test          # the full node:test suite
 npm run typecheck # tsc --noEmit
 npm run build     # regenerate src/version.ts, then tsc
 npm run bundle    # single-file ESM bundle for a release

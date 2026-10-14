@@ -232,8 +232,15 @@ in `Vast-deployments`:
   comes back if the swap fails. The new app is staged inside the install folder
   (`.Vast Bar.new.app`) so the swap is same-folder renames, never a copy; an unwritable
   folder is refused before the app is quit, and an app that will not quit is never
-  swapped or removed. A failed restore keeps `.Vast Bar.previous.app` and names it. `vast upgrade` runs the new CLI's
-  `bar install --if-installed`, and a failure there only warns. `VAST_BAR_URL`
+  swapped or removed. A failed restore keeps `.Vast Bar.previous.app` and names it.
+  Whether to restore is decided by a `movedAside` flag this run sets, never by
+  `exists(previous)`: a leftover previous copy is removed before anything is quit, and
+  one that cannot be removed refuses the install. Removing it after a good swap, and the
+  temp-dir cleanup, are best effort (a leftover is a printed warning, never a failure).
+  A lone `.Vast Bar.previous.app` (an interrupted swap) shows in `vast bar` and is where
+  the next install goes. `vast upgrade` runs the new CLI's `bar install --if-installed`
+  only when an app exists in /Applications or ~/Applications; that is a no-op when the
+  app is already at the version, and a failure there only warns. `VAST_BAR_URL`
   overrides the download URL for live checks only — never document it for users.
 - The app never decides anything a release depends on: it runs `vast … --json` through
   `/bin/zsh -lc` and shows what the CLI says. Every command line comes from `Commands`
