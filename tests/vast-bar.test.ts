@@ -229,3 +229,16 @@ test('uninstall quits and removes the app; --purge also removes its run logs', a
   assert.deepEqual(await uninstallBar({ purge: true }, mac), [SYSTEM, support]);
   assert.deepEqual(await uninstallBar({ purge: true }, new FakeMac()), []);
 });
+
+test('an app that installs but will not open is reported plainly, not as a crash', async () => {
+  const mac = new FakeMac();
+  mac.open = async () => {
+    throw new Error('Command failed: open /Applications/Vast Bar.app (-600)');
+  };
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /Vast Bar 2\.9\.0 is installed in \/Applications, but macOS would not open it/);
+    return true;
+  });
+  assert.ok(mac.files.has(SYSTEM), 'the new app stays installed');
+});

@@ -144,7 +144,14 @@ export async function installBar(
     await deps.clearQuarantine(target);
 
     const opened = !opts.ifInstalled || wasRunning;
-    if (opened) await deps.open(target);
+    if (opened) {
+      try {
+        await deps.open(target);
+      } catch {
+        // The install itself succeeded; only the launch did not.
+        throw new BarError(`Vast Bar ${version} is installed in ${dir}, but macOS would not open it yet — open it from Applications.`);
+      }
+    }
     return { path: target, version, opened };
   } finally {
     deps.remove(tmp);

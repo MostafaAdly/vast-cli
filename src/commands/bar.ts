@@ -104,7 +104,17 @@ export function liveBarDeps(): BarDeps {
       }
     },
     open: async (app) => {
-      await execFileAsync('open', [app]);
+      // Right after the old copy quits, LaunchServices can still be letting go
+      // of it and `open` fails with -600; it clears within a second or two.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await execFileAsync('open', [app]);
+          return;
+        } catch (error) {
+          if (attempt === 8) throw error;
+          await sleep(500);
+        }
+      }
     },
   };
 }
