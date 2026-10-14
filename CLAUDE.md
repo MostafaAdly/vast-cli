@@ -242,6 +242,11 @@ in `Vast-deployments`:
   paste real CLI output into them (it carries real names and emails; the repo is public).
   `VastBar` is thin SwiftUI that renders Core's state. `apps/menubar/build.sh` builds,
   ad-hoc signs and installs to /Applications (`--no-install` to only build).
+  `--universal` (the release build) compiles arm64 and x86_64 separately and joins them
+  with `lipo`: one `swift build` with two `--arch` flags uses Xcode's build system, which
+  Swift 6.1 rejects for VastBar's Swift 5 language mode. That failed v2.9.0's release, so
+  v2.9.0 is a tag with no release and the app first shipped in 2.9.1. CI runs the
+  universal build on every PR.
 - `vast bar install` (`src/commands/bar.ts`, `src/utils/vast-bar.ts`) downloads the
   release's `VastBar.zip` with curl (so it is not quarantined), verifies bundle id,
   version and signature before touching anything, and swaps it in place; the old copy

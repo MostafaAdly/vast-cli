@@ -43,3 +43,5 @@ jobs:
       - run: swift --version
       - run: swift build
       - run: swift test
+      # The release's own build, so a universal-only failure shows on the PR, not the tag.
+      - run: ./build.sh --no-install --universal

@@ -637,7 +637,7 @@ as your CLI, so no Xcode, no clone and no Apple Developer account.
 
 1. **Get the CLI working first.** Vast Bar runs `vast … --json` through your login shell
    (`/bin/zsh -lc`), so it sees exactly what your terminal sees and never decides anything
-   itself. It needs vast **2.9.0** or newer. Install it as described in
+   itself. It needs vast **2.9.1** or newer. Install it as described in
    [Install](#install) (or run `vast upgrade` if you already have it), then:
 
    ```bash
@@ -679,7 +679,7 @@ vast bar uninstall --purge    # ...and its run logs too
 ```
 
 `vast bar install --version <tag>` installs the app from that release instead. A release
-older than 2.9.0 has no app, and a development build of the CLI (a version like
+older than 2.9.1 has no app (v2.9.0 was tagged but never released), and a development build of the CLI (a version like
 `2.9.0-dev`) has no release at all, so `vast bar install` refuses with a message saying
 which.
 

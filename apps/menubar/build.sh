@@ -18,12 +18,24 @@ for arg in "$@"; do
 done
 
 VERSION="$(node -p "require('../../package.json').version")"
-ARCHS=()
-if [ "$UNIVERSAL" = 1 ]; then ARCHS=(--arch arm64 --arch x86_64); fi
 
-# ${ARCHS[@]+...}: macOS's bash 3.2 treats an empty array as unbound under set -u.
-swift build -c release --product VastBar ${ARCHS[@]+"${ARCHS[@]}"}
-BIN="$(swift build -c release ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)/VastBar"
+if [ "$UNIVERSAL" = 1 ]; then
+  # One build per architecture, joined with lipo. A single `swift build` with
+  # two --arch flags switches to Xcode's build system, which Swift 6.1 (the
+  # macos-15 runner) rejects for VastBar's Swift 5 language mode; v2.9.0's
+  # release failed on exactly that.
+  BIN="build/VastBar-universal"
+  mkdir -p build
+  SLICES=()
+  for ARCH in arm64 x86_64; do
+    swift build -c release --product VastBar --triple "$ARCH-apple-macosx13.0"
+    SLICES+=("$(swift build -c release --triple "$ARCH-apple-macosx13.0" --show-bin-path)/VastBar")
+  done
+  lipo -create "${SLICES[@]}" -output "$BIN"
+else
+  swift build -c release --product VastBar
+  BIN="$(swift build -c release --show-bin-path)/VastBar"
+fi
 
 APP="build/Vast Bar.app"
 rm -rf "$APP"

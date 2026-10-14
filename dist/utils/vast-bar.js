@@ -90,7 +90,7 @@ export async function installBar(opts, deps) {
         const url = barUrl(version, deps.env);
         const zip = join(tmp, BAR_ASSET);
         if ((await deps.download(url, zip)) === 'not-found') {
-            throw new BarError(`Release v${version} has no Vast Bar (it shipped from 2.9.0). Run vast upgrade first.`);
+            throw new BarError(`Release v${version} has no Vast Bar (it shipped from 2.9.1). Run vast upgrade first.`);
         }
         const unpacked = join(tmp, 'unpacked');
         deps.mkdirp(unpacked);

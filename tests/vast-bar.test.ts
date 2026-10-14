@@ -166,7 +166,7 @@ test('a release without the app says to upgrade first', async () => {
   const mac = new FakeMac();
   mac.downloadResult = 'not-found';
   await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), {
-    message: 'Release v2.9.0 has no Vast Bar (it shipped from 2.9.0). Run vast upgrade first.',
+    message: 'Release v2.9.0 has no Vast Bar (it shipped from 2.9.1). Run vast upgrade first.',
   });
 });
 
