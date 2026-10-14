@@ -96,13 +96,13 @@ final class Store: ObservableObject {
         let decoder = VastJSON.decoder()
         var errors: [String] = []
         var statusRead = false
-        if let v = try? decoder.decode(StatusSnapshot.self, from: Data(sr.stdout.utf8)) { status = v; statusRead = true }
+        if let v = try? decoder.decode(StatusSnapshot.self, from: Data(sr.stdout.utf8)) { status = v.hiding(HiddenRepos.names); statusRead = true }
         else { errors.append("status: \(Self.lastLine(sr.stderr))") }
         // doctor exits 1 when a check fails; its JSON is still the answer.
-        if let v = try? decoder.decode(DoctorSnapshot.self, from: Data(dr.stdout.utf8)) { doctor = v }
+        if let v = try? decoder.decode(DoctorSnapshot.self, from: Data(dr.stdout.utf8)) { doctor = v.hiding(HiddenRepos.names) }
         else { errors.append("doctor: \(Self.lastLine(dr.stderr))") }
         if let pr {
-            if let v = try? decoder.decode(PendingSnapshot.self, from: Data(pr.stdout.utf8)) { pending = v }
+            if let v = try? decoder.decode(PendingSnapshot.self, from: Data(pr.stdout.utf8)) { pending = v.hiding(HiddenRepos.names) }
             else { errors.append("pending: \(Self.lastLine(pr.stderr))") }
         }
         // The cards are status; doctor and pending only decorate them.
