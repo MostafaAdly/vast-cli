@@ -3,10 +3,16 @@ import VastBarCore
 
 struct PopoverView: View {
     @EnvironmentObject var store: Store
+    /// Held here, not read in the menu's binding: nothing observable changes when
+    /// it is toggled, so the checkmark would otherwise go stale.
+    @State private var openAtLogin = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HeaderView()
+            HeaderView(openAtLogin: Binding(get: { openAtLogin }, set: { on in
+                LoginItem.set(on)
+                openAtLogin = LoginItem.isEnabled
+            }))
             Divider()
             content
             if store.panel == nil, !store.selection.isEmpty, case .ok? = store.compat {
@@ -14,7 +20,10 @@ struct PopoverView: View {
             }
         }
         // Not .task: closing the popover would cancel the refresh and kill its vast commands.
-        .onAppear { Task { await store.refresh() } }
+        .onAppear {
+            openAtLogin = LoginItem.isEnabled // a change made in System Settings shows
+            Task { await store.refresh() }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -51,6 +60,7 @@ struct PopoverView: View {
 
 struct HeaderView: View {
     @EnvironmentObject var store: Store
+    @Binding var openAtLogin: Bool
 
     var body: some View {
         let state = store.icon
@@ -82,7 +92,7 @@ struct HeaderView: View {
                     }
                     .frame(width: 18, height: 18)
                     Menu {
-                        Toggle("Open at login", isOn: Binding(get: { LoginItem.isEnabled }, set: { LoginItem.set($0) }))
+                        Toggle("Open at login", isOn: $openAtLogin)
                         Divider()
                         Button("Quit Vast Bar") { NSApplication.shared.terminate(nil) }
                     } label: {

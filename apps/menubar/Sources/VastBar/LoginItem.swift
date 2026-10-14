@@ -8,7 +8,16 @@ enum LoginItem {
 
     static func set(_ on: Bool) {
         do {
-            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            if on {
+                try SMAppService.mainApp.register()
+                // Registered but switched off in System Settings: only the user can
+                // allow it there, so take them to it rather than do nothing visible.
+                if SMAppService.mainApp.status == .requiresApproval {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
         } catch {
             NSLog("Vast Bar: could not change Open at login: \(error)")
         }
