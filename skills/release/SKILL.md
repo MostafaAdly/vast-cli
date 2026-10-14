@@ -87,9 +87,10 @@ first (see the newer-release bullet below). What each finding means:
   tool under your own feet.
 
 - **A repo warns `next <v> is not above production <tag>`.** Its staging series
-  has fallen behind production, so `vast release` will refuse it. Not a stop
-  condition for the other repos. Tell the user before releasing, and ask before
-  adding `--fix-version` for that repo (see §1).
+  has fallen behind production, so `vast release` will refuse it, and a release
+  that names it alongside other repos stops before touching any of them. Tell the
+  user before releasing, and ask before adding `--fix-version` for that repo
+  (see §1), or before leaving it out.
 - **A repo fails on `build-deploy.yml`.** The workflow is missing on staging or no
   longer takes a `version` input, so that repo cannot deploy at all — the
   2026-09-24 rename was this shape. Stop for that repo and report the line.
@@ -214,9 +215,12 @@ has not cloned is skipped by a sweep rather than failing it.
 same time, each repo moving on to its own ArgoCD wait as its build finishes.
 Because this skill's output is piped, `vast` prints one line per repo
 whenever its run changes status, with a heartbeat every 30 seconds; a human at a
-terminal instead sees each repo's line update in place. One repo refusing never
-stops the others: report each repo's outcome from the summary separately, and
-handle a conflict (§2) or a failed run (§4) for just that repo. A failed run's
+terminal instead sees each repo's line update in place. Several repos are all or
+nothing: every repo is checked first (version against production, trial merge), and
+if one cannot be released `vast` stops before promoting or deploying any of them.
+Tell the user which repo stopped it and why, then rerun once it is fixed (a conflict,
+§2; a version behind production, `--fix-version` only after the user agrees, §1), or
+without that repo if the user says so. Once deploys start, a failed run (§4) fails only its own repo. A failed run's
 summary line carries its run URL; a `status read failed, retrying` line is a
 transient read, not a failed run. `--target-version` and `--dir` are per-repo,
 so `vast` refuses them with a sweep flag or with more than one repo — release that

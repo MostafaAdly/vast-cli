@@ -380,8 +380,19 @@ you name it.
 Each repo is promoted and dispatched in turn — seconds of local `git` and `gh` — and
 then every CI run is watched **at the same time**, so the whole thing takes about one
 build instead of one per repo. Whichever build finishes first moves straight on to its
-own ArgoCD wait. One repo refusing (a conflict, a dirty tree) never stops the others; the
-summary lists every outcome and the command exits non-zero if any failed.
+own ArgoCD wait.
+
+**Several repos are all or nothing.** Before anything is promoted, every repo is checked:
+its version against production and, for repos with a develop to promote, a trial merge
+into staging (a conflict or a dirty tree shows up here). If any repo is refused, it is
+printed in red the moment it is found, and the whole release stops with nothing promoted
+and nothing deployed. Fix that repo, or leave it out, and run it again. A repo with
+nothing to deploy (not cloned during a sweep, or no deploy workflow) is skipped, not
+refused, and stops nothing. In the rare case a promotion fails
+after its trial passed (a push rejected in between), the rest are not promoted and
+nothing is deployed; the summary names any repo already promoted. Once the deploys
+start, each one stands alone: a failed build fails only its own repo. The command exits
+non-zero if any repo failed.
 
 Every release, one repo or eight, runs on the same status block. Each watched repo owns
 one line, rewritten in place as it goes:
@@ -451,7 +462,7 @@ Every event has `type` and `at` (ISO time):
 | `type` | Fields | When |
 |---|---|---|
 | `start` | `command`, `args`, `dryRun`, `repos` | first |
-| `plan` | `repo`, `ok`, `version`, `commits`, `promote`, `notice`, `detail` | a repo is prepared; `ok: false` means it was refused, `detail` says why |
+| `plan` | `repo`, `ok`, `version`, `commits`, `promote`, `notice`, `detail` | a repo is prepared; `ok: false` means it was refused, `detail` says why. In `release`, one refused repo stops the rest: they plan `ok: true` and end `skipped` with `not deployed — stopped by <repo>` |
 | `promoted` | `repo`, `commits` | develop merged into staging |
 | `dispatched` | `repo`, `version`, `runId`, `runUrl` | the Pipeline run started |
 | `run` | `repo`, `status`, `conclusion`, `elapsedMs` | the build's status changed |
@@ -461,7 +472,7 @@ Every event has `type` and `at` (ISO time):
 | `end` | `exitCode` | last, always — even when something throws |
 
 Every repo in a stream gets a `plan` and a `done`, including one refused before it
-deploys or one whose preparation fails outright; the rest of a train carries on.
+deploys or one whose preparation fails outright; in `release` the other repos then end `skipped`, stopped by it.
 
 Two refusals a dry run cannot see, so a preview can look clean and the real run still
 refuse: a `--pick` whose cherry-pick conflicts, and a staging `package.json` whose

@@ -41,6 +41,13 @@ public struct RunSummary: Equatable, Sendable {
     /// The CLI itself failed: it ended non-zero without finishing any repo.
     public var cliFailed: Bool { (exitCode ?? 0) != 0 && !anyFinishedByDone }
 
+    /// A previewed release can go ahead: something would ship and nothing is
+    /// refused. Several repos are all or nothing in the CLI, so one refused
+    /// repo means the real run would stop before changing anything.
+    public var releasable: Bool {
+        plans.contains(where: \.ok) && !plans.contains(where: { !$0.ok }) && !cliFailed
+    }
+
     public init() {}
 
     /// Why a dry run says `repo` will be skipped, or nil. "dry run" is the
