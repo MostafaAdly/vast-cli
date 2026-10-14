@@ -29,7 +29,7 @@ struct PopoverView: View {
     @ViewBuilder private var content: some View {
         switch store.compat {
         case .missing?:
-            CompatCard(title: "vast not found", message: "Vast Bar runs the vast CLI through your login shell and could not find it.", command: "curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/install.sh | bash")
+            CompatCard(title: "vast not found", message: "Vast Bar looks for vast on your terminal's PATH and could not find it. If vast --version works in a new terminal, quit and reopen Vast Bar; otherwise install it:", command: "curl -fsSL https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/install.sh | bash")
         case .tooOld(let v)?:
             CompatCard(title: "vast \(v) is too old", message: "Vast Bar needs vast \(CLICompat.minimum) or newer.", command: "vast upgrade")
         default:

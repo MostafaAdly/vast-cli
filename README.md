@@ -636,8 +636,10 @@ You need macOS 13 or newer. There is nothing to build: the app comes from the sa
 as your CLI, so no Xcode, no clone and no Apple Developer account.
 
 1. **Get the CLI working first.** Vast Bar runs `vast … --json` through your login shell
-   (`/bin/zsh -lc`), so it sees exactly what your terminal sees and never decides anything
-   itself. It needs vast **2.9.1** or newer. Install it as described in
+   (`/bin/zsh -lc`) with the PATH your terminal has (read once from an interactive zsh, so
+   a PATH line in `~/.zshrc` counts), so it finds what your terminal finds and never
+   decides anything itself. If `vast --version` works in a new terminal, Vast Bar finds it
+   too, however you open the app. It needs vast **2.9.1** or newer. Install it as described in
    [Install](#install) (or run `vast upgrade` if you already have it), then:
 
    ```bash
