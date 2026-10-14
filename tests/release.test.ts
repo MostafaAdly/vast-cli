@@ -1,10 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// A releaseMany test that forgets a fake falls through to the real check and
+// promote. With HOME and VAST_CLI_HOME empty, no repo resolves to a checkout,
+// so that can never fetch, merge or push in a developer's real clone.
+const SANDBOX = mkdtempSync(join(tmpdir(), 'vast-release-test-'));
+process.env.HOME = SANDBOX;
+process.env.VAST_CLI_HOME = join(SANDBOX, '.vast-cli');
 import {
   isSweep,
   planEvent,
   pollIntervalFor,
   prepareOne,
+  promoteOne,
   pollTimingFor,
   releaseMany,
   releaseTargets,
@@ -438,6 +449,114 @@ test('a real promotion that fails stops the remaining promotions and every deplo
     assert.equal(types.filter((t) => t === 'plan').length, 1, name);
     assert.equal(types.filter((t) => t === 'done').length, 1, name);
   }
+});
+
+// Every repo still gets its done when a real promotion fails, including a
+// benign skip after the failing repo (Vast Bar reads a missing done as a
+// failure: "ended without finishing").
+test('a failed real promotion still gives a later skipped repo its done', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastMenuPwa', 'VastPayPwa']), MANY_OPTIONS, {
+    check: async (repo) => (repo.name === 'VastPayPwa' ? notClonedOutcome(repo.name, true) : { repo, version: '2.0.0-rc1' }),
+    promote: async (p, _o, dryRun) =>
+      dryRun ? p : { repo: p.repo.name, version: '—', status: 'failed', detail: 'promotion failed — push rejected' },
+    deploy: async () => assert.fail('nothing deploys'),
+    events,
+  });
+  const types = seen.filter((e) => 'repo' in e && e.repo === 'VastPayPwa').map((e) => e.type);
+  assert.deepEqual(types, ['plan', 'done']);
+});
+
+test('repos after a failed real promotion plan as not promoted', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastMenuPwa', 'VastPayPwa']), MANY_OPTIONS, {
+    check: allReady.check,
+    promote: async (p, _o, dryRun) =>
+      dryRun
+        ? { ...p, promotion: { commits: 2, result: 'would merge' } }
+        : { repo: p.repo.name, version: '—', status: 'failed', detail: 'promotion failed — push rejected' },
+    deploy: async () => assert.fail('nothing deploys'),
+    events,
+  });
+  const plan = seen.find((e) => e.type === 'plan' && e.repo === 'VastPayPwa');
+  assert.ok(plan?.type === 'plan');
+  assert.equal(plan.promote, 'not run');
+});
+
+test('a dry run never promotes for real', async () => {
+  const calls: boolean[] = [];
+  for (const names of [['VastMenuPwa'], ['VastMenuPwa', 'VastPayPwa']]) {
+    await releaseMany(targetsFor(names), { ...MANY_OPTIONS, dryRun: true }, {
+      check: allReady.check,
+      promote: async (p, _o, dryRun) => {
+        calls.push(dryRun);
+        return p;
+      },
+      deploy: async (repo, _env, version) => ({ repo: repo.name, version, status: 'skipped', detail: 'dry run' }),
+    });
+  }
+  assert.deepEqual(calls, [true, true, true]);
+});
+
+// The push guard: the trial must reach promote() as a dry run whatever the
+// release's own --dry-run says, or a real release would push during its check.
+test('promoteOne passes its own dryRun through, not the option', async () => {
+  const seenDry: boolean[] = [];
+  const deps = {
+    promote: async (_r: RepoConfig, _d: string, dryRun: boolean) => {
+      seenDry.push(dryRun);
+      return true;
+    },
+  };
+  const ready = { repo: getRepo('VastMenuPwa')!, version: '1.6.13-rc1' };
+  const real = { ...MANY_OPTIONS, dryRun: false, dir: '/nonexistent/checkout' };
+  await promoteOne(ready, real, true, deps);
+  await promoteOne(ready, { ...real, dryRun: true }, false, deps);
+  assert.deepEqual(seenDry, [true, false]);
+});
+
+// A backend repo has no develop: no trial, and it still deploys beside the others.
+test('a repo with no develop is not trial-promoted and still deploys in a multi-repo release', async () => {
+  const calls: Array<[string, boolean]> = [];
+  const outcomes = await releaseMany(targetsFor(['VastPay-BackEnd', 'VastPayPwa']), MANY_OPTIONS, {
+    check: allReady.check,
+    promote: async (p, _o, dryRun) => {
+      calls.push([p.repo.name, dryRun]);
+      return p;
+    },
+    deploy: async (repo, _env, version) => released(repo, version),
+  });
+  assert.deepEqual(calls, [
+    ['VastPayPwa', true],
+    ['VastPay-BackEnd', false],
+    ['VastPayPwa', false],
+  ]);
+  assert.deepEqual(outcomes.map((o) => o.status), ['released', 'released']);
+});
+
+// A real run's trial must not print "dry run — no merge performed": its lines
+// are held back, and shown only when the trial refuses (they carry the conflicts).
+test("a real run's trial prints nothing unless it refuses", async () => {
+  const printed: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => void printed.push(args.join(' '));
+  try {
+    await releaseMany(targetsFor(['VastPayPwa', 'VastMenuPwa']), MANY_OPTIONS, {
+      check: allReady.check,
+      promote: async (p, _o, dryRun) => {
+        if (!dryRun) return p;
+        console.log(`trial ${p.repo.name}`);
+        return p.repo.name === 'VastMenuPwa'
+          ? { repo: p.repo.name, version: '—', status: 'failed', detail: 'promotion refused — conflicts:' }
+          : p;
+      },
+      deploy: async () => assert.fail('nothing deploys'),
+    });
+  } finally {
+    console.log = original;
+  }
+  assert.ok(!printed.includes('trial VastPayPwa'), 'a passing trial is silent');
+  assert.ok(printed.includes('trial VastMenuPwa'), "a refusing trial's lines are shown");
 });
 
 // A dry run reports every refusal and says what the real run would do.

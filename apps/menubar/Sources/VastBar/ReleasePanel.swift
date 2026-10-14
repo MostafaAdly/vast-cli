@@ -24,7 +24,7 @@ struct ReleasePanel: View {
 
     private var startable: Bool {
         guard let p = preview, p.command == dryRun else { return false }
-        return p.summary.plans.contains(where: \.ok) && !p.summary.cliFailed
+        return p.summary.releasable
     }
 
     var body: some View {
@@ -39,6 +39,12 @@ struct ReleasePanel: View {
                             FailureBox(lines: p.stderr.split(whereSeparator: \.isNewline).suffix(8).map(String.init), command: p.command)
                         }
                         ForEach(p.summary.plans, id: \.repo) { PlanRow(plan: $0, skip: p.summary.willSkip($0.repo)) }
+                        if p.summary.plans.count > 1, p.summary.plans.contains(where: { !$0.ok }) {
+                            Text("Nothing is released while a repo is refused. Fix it, or leave it out.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.problem)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         if offersFixVersion || fixVersion {
                             Toggle("Use the first version above production (--fix-version)", isOn: $fixVersion)
                                 .font(.system(size: 12))

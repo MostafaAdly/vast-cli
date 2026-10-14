@@ -9,8 +9,9 @@
  * Several repos at once behave like one terminal per repo: each is promoted in
  * turn — seconds of local git — and then every deploy runs concurrently, so the
  * whole thing takes about one build rather than one per repo. Every repo is
- * checked before any is touched, and one that cannot go ahead stops the whole
- * release: it ships all of the repos named, or none of them.
+ * checked before any is touched, and one that is refused stops the whole
+ * release before anything is promoted or deployed. A repo with nothing to
+ * deploy (not cloned in a sweep, no workflow) is skipped, not refused.
  *
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one — and its deploy is blocked
@@ -351,11 +352,22 @@ export async function releaseMany(
   const checked: Array<Deployable | DeployOutcome> = [];
   for (const repo of targets) {
     let c = await safely(repo, () => check(repo, options));
-    if (trial && !isOutcome(c) && needsPromotion(repo)) {
+    if (trial && !isOutcome(c)) {
       const ready = c;
-      c = await safely(repo, () => promoteStep(ready, options, true));
+      if (options.dryRun) {
+        // A dry run's trial is its promotion, so its output is the preview.
+        c = await safely(repo, () => promoteStep(ready, options, true));
+      } else if (needsPromotion(repo)) {
+        // A real run promotes again in step 3, which prints the real lines.
+        // The trial's own lines ("dry run — no merge performed") would read
+        // as a forgotten --dry-run, so they are shown only for a refusal,
+        // where they carry the conflict list.
+        const { value, lines } = await withConsoleLogHeld(() => safely(repo, () => promoteStep(ready, options, true)));
+        if (refused(value)) for (const line of lines) console.log(...line);
+        c = value;
+      }
     }
-    if (refused(c)) log.error(`${repo.name} cannot be released: ${c.detail}`);
+    if (refused(c)) log.error(`${repo.name} cannot be released: ${c.detail.replace(/:$/, '')}`);
     checked.push(c);
   }
 
@@ -385,8 +397,9 @@ export async function releaseMany(
       announce(repo, p);
       planned.push(p);
       if (!refused(p)) continue;
-      const rest = checked.slice(i + 1);
-      rest.forEach((r, j) => events.emit(planEvent(targets[i + 1 + j], r)));
+      // The rest were never promoted: their plans say so, not the trial's "will merge".
+      const rest = checked.slice(i + 1).map((r) => (isOutcome(r) ? r : { ...r, promotion: undefined }));
+      rest.forEach((r, j) => announce(targets[i + 1 + j], r));
       const promoted = planned
         .filter((q): q is Deployable => !isOutcome(q) && q.promotion?.result === 'merged')
         .map((q) => q.repo.name);
@@ -422,9 +435,28 @@ export async function releaseMany(
 }
 
 /**
+ * Runs `step` with console.log held back, returning what it would have printed.
+ * The check pass is sequential, so nothing else logs meanwhile; whatever
+ * console.log was (stderr in --json mode) is restored, even on a throw.
+ */
+async function withConsoleLogHeld<T>(step: () => Promise<T>): Promise<{ value: T; lines: unknown[][] }> {
+  const original = console.log;
+  const lines: unknown[][] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(args);
+  };
+  try {
+    return { value: await step(), lines };
+  } finally {
+    console.log = original;
+  }
+}
+
+/**
  * The outcomes of a release that stopped before deploying: each refusal as it
  * was, every other ready repo skipped with the reason, and a done for each of
- * those (a refusal or a skip already had its done when it was announced).
+ * those. Every result must already be announced, so a refusal or a skip has
+ * had its done.
  */
 function stopped(
   results: Array<Deployable | DeployOutcome>,
@@ -595,8 +627,9 @@ that updates in place (one line per change when output is piped).
 
 Several repos are all or nothing. Every repo is checked first (its version
 against production, and a trial merge of develop into staging), and if any one
-cannot be released the whole release stops before anything is promoted or
-deployed. Fix that repo, or leave it out, and run it again.
+is refused the whole release stops before anything is promoted or deployed.
+Fix that repo, or leave it out, and run it again. A repo with nothing to deploy
+(not cloned in a sweep, no workflow) is skipped and stops nothing.
 
 Release trains (--all is both):
   --frontend   ${trainNames('frontend')}

@@ -206,7 +206,12 @@ in `Vast-deployments`:
   Mostafa chose this on 2026-10-14 after a three-repo release quietly shipped two.
 - Tests of `releaseMany` must pass both `check` and `promote` fakes: a missing one
   falls through to the real `checkOne`/`promoteOne`, which read Vast-deployments and
-  can merge and push in a real checkout.
+  can merge and push in a real checkout. `tests/release.test.ts` also runs with an
+  empty `HOME` and `VAST_CLI_HOME`, so a forgotten fake finds no checkout.
+- The trial promotion is `promote()` with `dryRun: true`, passed by `promoteOne`'s own
+  argument, never `options.dryRun` (a test pins it): otherwise a real release would
+  push during its check. A real run holds the trial's console lines back and shows
+  them only for a refusal.
 
 ## Machine-readable output (--json)
 

@@ -69,6 +69,20 @@ final class RunSummaryTests: XCTestCase {
         XCTAssertFalse(try summary("release-real.ndjson").repos[0].endedUnfinished)
     }
 
+    func testOneRefusedRepoMakesTheWholePreviewUnreleasable() {
+        func preview(_ plans: [(String, Bool)]) -> RunSummary {
+            summarize(
+                [.start(command: "release", args: [], dryRun: true, repos: plans.map(\.0))]
+                    + plans.map { .plan(PlanEvent(repo: $0.0, ok: $0.1, version: "1.0.0", commits: nil, promote: "not run", notice: nil, detail: nil)) }
+                    + [.end(exitCode: plans.allSatisfy(\.1) ? 0 : 1)]
+            )
+        }
+        XCTAssertTrue(preview([("A", true), ("B", true)]).releasable)
+        XCTAssertFalse(preview([("A", false), ("B", true)]).releasable, "the real run would stop on A")
+        XCTAssertFalse(preview([("A", false)]).releasable)
+        XCTAssertFalse(preview([]).releasable)
+    }
+
     func testWillSkipShowsOnlyARealSkipReason() throws {
         let dry = try summary("release-dry-run.ndjson")
         XCTAssertNil(dry.willSkip("VastPayPwaV2"), "\"dry run\" is the preview itself, not a reason")

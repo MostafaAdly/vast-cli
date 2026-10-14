@@ -9,8 +9,9 @@
  * Several repos at once behave like one terminal per repo: each is promoted in
  * turn — seconds of local git — and then every deploy runs concurrently, so the
  * whole thing takes about one build rather than one per repo. Every repo is
- * checked before any is touched, and one that cannot go ahead stops the whole
- * release: it ships all of the repos named, or none of them.
+ * checked before any is touched, and one that is refused stops the whole
+ * release before anything is promoted or deployed. A repo with nothing to
+ * deploy (not cloned in a sweep, no workflow) is skipped, not refused.
  *
  * Staging only. Production has a human review gate in the middle, so it is two
  * commands (promote, then deploy) rather than one — and its deploy is blocked
