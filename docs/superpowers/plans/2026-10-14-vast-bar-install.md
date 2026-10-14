@@ -796,11 +796,11 @@ Xcode. vast upgrade updates it too when it is installed.
 
 - [ ] **Step 3: Verify the CLI surface**
 
-Run: `npm run typecheck && npx tsx src/cli.ts bar --help && npx tsx src/cli.ts bar install --help && npx tsx src/cli.ts bar uninstall --help && npx tsx src/cli.ts --help | grep -n "bar "`
+Run: `npm run typecheck && npm run build && node bin/vast.js bar --help && node bin/vast.js bar install --help && node bin/vast.js bar uninstall --help && node bin/vast.js --help | grep -n "bar "`
 Expected: typecheck clean; each help shows its options (`--version <tag>`, `--if-installed`, `--purge`) and examples; the root help lists `bar`.
 
 
-Run: `npx tsx src/cli.ts bar install; echo "exit $?"`
+Run: `node bin/vast.js bar install; echo "exit $?"`
 Expected on this machine (CLI `2.8.1` from package.json): a download attempt of the `v2.8.1` asset → `Release v2.8.1 has no Vast Bar (it shipped from 2.9.0). Run vast upgrade first.` and `exit 1`, nothing changed in `/Applications`.
 
 - [ ] **Step 4: Full suite and commit**
