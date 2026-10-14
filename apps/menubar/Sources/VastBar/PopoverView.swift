@@ -81,9 +81,18 @@ struct HeaderView: View {
                         }
                     }
                     .frame(width: 18, height: 18)
-                    Button { NSApplication.shared.terminate(nil) } label: { Image(systemName: "power") }
-                        .foregroundStyle(.secondary)
-                        .help("Quit Vast Bar")
+                    Menu {
+                        Toggle("Open at login", isOn: Binding(get: { LoginItem.isEnabled }, set: { LoginItem.set($0) }))
+                        Divider()
+                        Button("Quit Vast Bar") { NSApplication.shared.terminate(nil) }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+                    .help("More")
                 }
                 .buttonStyle(.borderless)
                 HStack(spacing: 6) {
