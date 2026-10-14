@@ -1,0 +1,39 @@
+name: ci
+
+# The checks a release runs, on every PR and on main, so a CLI or Swift
+# toolchain problem shows up here rather than after a tag is pushed.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  app:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/menubar
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: swift --version
+      - run: swift build
+      - run: swift test
