@@ -265,7 +265,12 @@ in `Vast-deployments`:
   app is already at the version, and a failure there only warns. `VAST_BAR_URL`
   overrides the download URL for live checks only — never document it for users.
 - The app never decides anything a release depends on: it runs `vast … --json` through
-  `/bin/zsh -lc` and shows what the CLI says. Every command line comes from `Commands`
+  `/bin/zsh -lc` and shows what the CLI says. Every command gets the PATH of an
+  interactive login zsh (`ShellEnvironment`, resolved once, read between markers, 10 s
+  timeout, falling back to the inherited PATH plus `~/.local/bin`): `zsh -lc` alone never
+  reads `~/.zshrc`, where the installer and nvm put `vast` and `node`, so an app opened from
+  Finder or at login showed "vast not found" (2.9.1, a teammate's machine). Opened from a
+  terminal it had worked only by inheriting that terminal's PATH. Every command line comes from `Commands`
   (quoted with `shellQuote`); repo names come only from `status --json`.
 - Safety it must keep: every action is preview-then-confirm, and the confirm runs
   `preview.command.withoutDryRun` — never a command rebuilt from the toggles. A repo with

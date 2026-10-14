@@ -6,10 +6,14 @@ public struct ShellResult: Equatable, Sendable {
     public let exitCode: Int32
 }
 
-/// Every command runs through the user's login shell: a GUI app does not
-/// inherit the terminal's PATH, and `vast`, `node` and `gh` live on it.
+/// Every command runs through the user's login shell, with the PATH their
+/// terminal has (see ShellEnvironment): a GUI app does not inherit it, and
+/// `vast`, `node` and `gh` live on it.
 public enum Shell {
     public static let shell = "/bin/zsh"
+
+    /// Resolved once, on first use, off the main thread (it runs ~/.zshrc).
+    static let environment: [String: String] = ShellEnvironment.resolved(from: ProcessInfo.processInfo.environment)
 
     public static func run(_ command: VastCommand, timeout: TimeInterval = 180) async -> ShellResult {
         await runLine(command.shellLine, timeout: timeout)
@@ -17,12 +21,14 @@ public enum Shell {
 
     /// Cancelling the calling task terminates the process, so a superseded
     /// preview never keeps running (and fetching) beside its replacement.
-    public static func runLine(_ line: String, timeout: TimeInterval) async -> ShellResult {
+    /// `environment` is for tests; nil is the resolved one.
+    public static func runLine(_ line: String, timeout: TimeInterval, environment: [String: String]? = nil) async -> ShellResult {
         let handle = ProcessHandle()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 DispatchQueue.global().async {
-                    continuation.resume(returning: runBlocking(line, timeout: timeout, handle: handle))
+                    let env = environment ?? Shell.environment
+                    continuation.resume(returning: execute(arguments: ["-lc", line], environment: env, timeout: timeout, handle: handle))
                 }
             }
         } onCancel: {
@@ -30,10 +36,11 @@ public enum Shell {
         }
     }
 
-    private static func runBlocking(_ line: String, timeout: TimeInterval, handle: ProcessHandle) -> ShellResult {
+    static func execute(arguments: [String], environment: [String: String], timeout: TimeInterval, handle: ProcessHandle) -> ShellResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-lc", line]
+        process.arguments = arguments
+        process.environment = environment
         process.standardInput = FileHandle.nullDevice
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -147,7 +154,7 @@ private final class PipeReader: @unchecked Sendable {
 }
 
 /// The running process for a cancellation that may arrive before it starts.
-private final class ProcessHandle: @unchecked Sendable {
+final class ProcessHandle: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
     private var cancelled = false
