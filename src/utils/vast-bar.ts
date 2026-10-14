@@ -167,9 +167,23 @@ export async function installBar(
     const staged = join(dir, STAGED);
     const previous = join(dir, PREVIOUS);
 
-    // A leftover from an earlier run is cleared before anything is quit or
-    // moved. If it can't be, stop here: it must never be mistaken for the copy
-    // this run set aside.
+    // A leftover with no app beside it is the user's only copy, from a swap
+    // interrupted between its renames: put it back as the app first, so a
+    // failure below still leaves a working one. Never delete it.
+    if (!deps.exists(target) && deps.exists(previous)) {
+      try {
+        deps.move(previous, target);
+      } catch (error) {
+        throw new BarError(
+          `An interrupted install left Vast Bar at ${previous} and it could not be put back (${message(error)}): ` +
+            'rename it to "Vast Bar.app", then run vast bar install again.',
+        );
+      }
+    }
+
+    // A leftover beside an installed app is stale: cleared before anything is
+    // quit or moved. If it can't be, stop here: it must never be mistaken for
+    // the copy this run set aside.
     if (deps.exists(previous)) {
       try {
         deps.remove(previous);

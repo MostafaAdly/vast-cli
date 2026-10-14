@@ -237,8 +237,9 @@ in `Vast-deployments`:
   `exists(previous)`: a leftover previous copy is removed before anything is quit, and
   one that cannot be removed refuses the install. Removing it after a good swap, and the
   temp-dir cleanup, are best effort (a leftover is a printed warning, never a failure).
-  A lone `.Vast Bar.previous.app` (an interrupted swap) shows in `vast bar` and is where
-  the next install goes. `vast upgrade` runs the new CLI's `bar install --if-installed`
+  A lone `.Vast Bar.previous.app` (an interrupted swap) is the user's only copy: it shows
+  in `vast bar`, and the next install renames it back to `Vast Bar.app` before anything
+  else (refusing if it can't), so it is never deleted. `vast upgrade` runs the new CLI's `bar install --if-installed`
   only when an app exists in /Applications or ~/Applications; that is a no-op when the
   app is already at the version, and a failure there only warns. `VAST_BAR_URL`
   overrides the download URL for live checks only — never document it for users.

@@ -521,6 +521,30 @@ test('an install after an interrupted one goes back where the app was', async ()
   assert.ok(!mac.files.has(SYSTEM));
 });
 
+// The lone leftover is the user's only copy: it is put back as the app before
+// anything else, never deleted, so a failure later still leaves a working app.
+test('a lone leftover is restored first, so a failed install still leaves the app', async () => {
+  const mac = new FakeMac();
+  mac.files.add(USER_PREVIOUS);
+  failMoves(mac, (from, to) => from === USER_STAGED && to === USER);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), BarError);
+  assert.ok(mac.calls.includes(`move ${USER_PREVIOUS} -> ${USER}`), 'restored before the install');
+  assert.ok(mac.files.has(USER), 'the old app is back in place');
+});
+
+test('a lone leftover that cannot be restored stops the install before anything changes', async () => {
+  const mac = new FakeMac();
+  mac.files.add(USER_PREVIOUS);
+  failMoves(mac, (from, to) => from === USER_PREVIOUS && to === USER);
+  await assert.rejects(installBar({ cliVersion: '2.9.0' }, mac), (e: Error) => {
+    assert.ok(e instanceof BarError);
+    assert.match(e.message, /left .*\.Vast Bar\.previous\.app.*rename it to "Vast Bar\.app"/);
+    return true;
+  });
+  assert.ok(mac.files.has(USER_PREVIOUS), 'the only copy is never deleted');
+  assert.ok(!mac.calls.includes('quit'));
+});
+
 test('--if-installed does nothing when the installed app is already this version', async () => {
   const mac = new FakeMac();
   mac.files.add(SYSTEM);
