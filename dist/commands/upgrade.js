@@ -7,10 +7,12 @@
  */
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 import { vastHome } from '../config/workspace.js';
 import { readState, normalize, isDue, refreshInBackground, isNewer } from '../utils/update-check.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
+import { installedBar } from '../utils/vast-bar.js';
 const INSTALL_URL = 'https://raw.githubusercontent.com/MostafaAdly/vast-cli/main/install.sh';
 /** The release tag this install came from, if it came from a release. */
 export function installedTag() {
@@ -19,6 +21,37 @@ export function installedTag() {
         return null;
     const tag = readFileSync(file, 'utf-8').trim();
     return tag || null;
+}
+/** Above curl's own limit for the app download, so curl's clear message wins a slow download. */
+const BAR_UPDATE_TIMEOUT_MS = 900_000;
+/**
+ * After the installer replaced the CLI, the NEW CLI brings Vast Bar to its own
+ * version. Skipped when no app is installed, so a CLI too old to know `bar`
+ * never warns about an app that was never there. The CLI is already upgraded,
+ * so a failure here is a warning, never a failed upgrade.
+ */
+export function updateBarAfterUpgrade(deps = {
+    platform: process.platform,
+    home: vastHome(),
+    exists: (path) => existsSync(path),
+    run: (file, args, timeoutMs) => {
+        execFileSync(file, args, { stdio: 'inherit', timeout: timeoutMs });
+    },
+    warn: (message) => log.warn(message),
+}) {
+    if (deps.platform !== 'darwin')
+        return;
+    if (!installedBar({ home: homedir(), exists: deps.exists }))
+        return;
+    try {
+        deps.run(process.execPath, [join(deps.home, 'vast.mjs'), 'bar', 'install', '--if-installed'], BAR_UPDATE_TIMEOUT_MS);
+    }
+    catch (error) {
+        // Neutral on purpose: the app may be updated and only failed to open; the
+        // child has already printed the specific message.
+        deps.warn(`Vast Bar update did not finish: ${error instanceof Error ? error.message : String(error)}\n` +
+            '  The CLI upgrade is done. Run vast bar install to retry.');
+    }
 }
 async function executeUpgrade(options) {
     console.log(createHeader('Upgrade', 'Vast CLI'));
@@ -76,6 +109,7 @@ async function executeUpgrade(options) {
             `    curl -fsSL ${INSTALL_URL} | bash`));
         process.exit(1);
     }
+    updateBarAfterUpgrade();
 }
 export function registerUpgradeCommand(program) {
     program
@@ -91,6 +125,7 @@ Examples:
 
 Re-runs the published installer, so an upgrade lands exactly what a fresh
 install would. If you installed from a git clone, use git pull instead.
+On macOS it then updates Vast Bar too, if it is installed.
 `)
         .action(executeUpgrade);
 }

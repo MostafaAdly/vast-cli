@@ -1,0 +1,45 @@
+name: ci
+
+# The checks a release runs, on every PR and on main, so a CLI or Swift
+# toolchain problem shows up here rather than after a tag is pushed.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# A new push to the same PR or branch replaces the run still going for the old one.
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a PR supersedes the older run; every push to main is checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  app:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/menubar
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: swift --version
+      - run: swift build
+      - run: swift test

@@ -69,7 +69,11 @@ npm version <patch|minor|major> && git push --follow-tags
 ```
 
 CI then runs the suite and typecheck, verifies the bundle executes, refuses if
-the tag and `package.json` disagree, and attaches `vast.mjs` to a new release.
+the tag and `package.json` disagree, and attaches `vast.mjs` and `VastBar.zip`
+to a new release. The workflow has three jobs: `cli` (Ubuntu), `app` (macOS 15)
+and `publish`, which needs both. `VastBar.zip` is never renamed, like `vast.mjs`.
+The app's version comes from `package.json`, so a tag/plist mismatch fails the
+`app` job.
 
 - GitHub's releases API caches "latest" for ~60 seconds — `vast upgrade`
   immediately after publishing may install the previous version. Wait it out.
@@ -213,6 +217,52 @@ in `Vast-deployments`:
   `ok: false`.
 - Exit codes are the same with and without `--json`. `--json` never prompts; anything
   added later that would ask must instead fail that repo with a detail naming the input.
+
+## Vast Bar (apps/menubar)
+
+- A Swift package, Apple frameworks only, macOS 13+. `VastBarCore` holds every rule
+  (parsing, run summaries, icon/card state, command building, quoting, the run store) and
+  is tested with `cd apps/menubar && swift test` against **synthetic** fixtures — never
+  paste real CLI output into them (it carries real names and emails; the repo is public).
+  `VastBar` is thin SwiftUI that renders Core's state. `apps/menubar/build.sh` builds,
+  ad-hoc signs and installs to /Applications (`--no-install` to only build).
+- `vast bar install` (`src/commands/bar.ts`, `src/utils/vast-bar.ts`) downloads the
+  release's `VastBar.zip` with curl (so it is not quarantined), verifies bundle id,
+  version and signature before touching anything, and swaps it in place; the old copy
+  comes back if the swap fails. The new app is staged inside the install folder
+  (`.Vast Bar.new.app`) so the swap is same-folder renames, never a copy; an unwritable
+  folder is refused before the app is quit, and an app that will not quit is never
+  swapped or removed. A failed restore keeps `.Vast Bar.previous.app` and names it.
+  Whether to restore is decided by a `movedAside` flag this run sets, never by
+  `exists(previous)`: a leftover previous copy is removed before anything is quit, and
+  one that cannot be removed refuses the install. Removing it after a good swap, and the
+  temp-dir cleanup, are best effort (a leftover is a printed warning, never a failure).
+  A lone `.Vast Bar.previous.app` (an interrupted swap) is the user's only copy: it shows
+  in `vast bar`, and the next install renames it back to `Vast Bar.app` before anything
+  else (refusing if it can't), so it is never deleted. `vast upgrade` runs the new CLI's `bar install --if-installed`
+  only when an app exists in /Applications or ~/Applications; that is a no-op when the
+  app is already at the version, and a failure there only warns. `VAST_BAR_URL`
+  overrides the download URL for live checks only — never document it for users.
+- The app never decides anything a release depends on: it runs `vast … --json` through
+  `/bin/zsh -lc` and shows what the CLI says. Every command line comes from `Commands`
+  (quoted with `shellQuote`); repo names come only from `status --json`.
+- Safety it must keep: every action is preview-then-confirm, and the confirm runs
+  `preview.command.withoutDryRun` — never a command rebuilt from the toggles. A repo with
+  a running (or unclear, pid `-1`) run cannot be started again. "Open dry run in Terminal"
+  uses `safeTerminalLine` (dry run, never `--slack`). No production deploy, no merge, no
+  credentials in the app.
+- The app's minimum CLI is 2.9.0 (`CLICompat.minimum`); the event shapes it decodes are
+  `src/utils/events.ts` — change both together.
+- Staging health is the one thing the app checks itself: plain GETs to the two backends'
+  `/health` (hosts from Vast-deployments' staging `stage.yaml`), listed once in
+  `StagingHealth.endpoints`. A down backend is amber, never red.
+- The look has one rule Mostafa asked for: surfaces stay neutral, colour only as accents
+  and same-hue tints, one filled button per screen. Colours live in `Theme.swift` only.
+  Any scrollable area uses `CappedScroll` — a bare `ScrollView` collapses to zero height
+  in the menu bar window (it shipped blank once).
+- The app icon and the menu bar mark are one drawing, `VastMark.swift`, traced from the
+  brand logo (vastgroup-web-v2 `public/vastgroup-logo-white.svg`). `Resources/AppIcon.icns`
+  is generated and committed; change the mark, then run `apps/menubar/scripts/make-icon.sh`.
 
 ## Slack announcements
 

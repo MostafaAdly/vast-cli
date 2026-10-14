@@ -1,0 +1,4 @@
+{"type":"start","command":"release","args":["release","VastPayPwaV2","--json"],"dryRun":false,"repos":["VastPayPwaV2"],"at":"2026-10-11T09:00:00.000Z"}
+{"type":"plan","repo":"VastPayPwaV2","ok":true,"version":"2.1.18-rc6","commits":5,"promote":"merged","notice":null,"detail":null,"at":"2026-10-11T09:00:05.000Z"}
+{"type":"dispatched","repo":"VastPayPwaV2","version":"2.1.18-rc6","runId":42,"runUrl":"https://github.com/example/VastPayPwaV2/actions/runs/42","at":"2026-10-11T09:00:08.000Z"}
+{"type":"run","repo":"VastPayPwaV2","status":"in_pro

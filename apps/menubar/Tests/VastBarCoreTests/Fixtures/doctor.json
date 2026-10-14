@@ -1,0 +1,10 @@
+{
+  "generatedAt": "2026-10-11T09:00:01.500Z",
+  "checks": [
+    { "group": "Tools", "label": "node", "status": "ok", "detail": "v22.0.0" },
+    { "group": "vast-cli", "label": "vast-cli", "status": "ok", "detail": "2.9.0, up to date" },
+    { "group": "ArgoCD", "label": "ArgoCD staging", "status": "fail", "detail": "token expired — run `vast argocd login`" },
+    { "group": "Repos", "label": "VastPayPwaV2", "status": "ok", "detail": "next 2.1.18-rc6" },
+    { "group": "Repos", "label": "VastMenuPwa", "status": "warn", "detail": "next 1.6.12-rc1 is not above production 1.6.12 — release it with --fix-version (→ 1.6.13-rc1)" }
+  ]
+}

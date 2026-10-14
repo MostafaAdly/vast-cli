@@ -485,5 +485,6 @@ relay what it says rather than trying to work around it yourself.
   conversation.
 - **Never** re-dispatch a failed deploy without saying why you believe it is a
   flake.
+- `vast bar` installs the menu bar app; it is never part of a release you run.
 - Work only through `vast` and read-only `git`/`gh` commands in the user's
   checkouts. Do not edit files outside a conflict resolution the user approved.

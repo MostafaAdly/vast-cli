@@ -1,8 +1,9 @@
 name: release
 
 # Publishing is `npm version <patch|minor|major> && git push --follow-tags`.
-# This builds the bundle that install.sh downloads, so a forgotten local build
-# can never ship stale code to the team.
+# This builds the bundle that install.sh downloads and the Vast Bar app that
+# `vast bar install` downloads, so a forgotten local build can never ship
+# stale code to the team. Either build failing means no release at all.
 
 on:
   push:
@@ -13,7 +14,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  cli:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -47,8 +48,70 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vast-mjs
+          path: build/vast.mjs
+          if-no-files-found: error
+
+  app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      # build.sh reads the version from package.json with node.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: swift --version
+
+      - name: Test the app
+        run: swift test
+        working-directory: apps/menubar
+
+      - name: Build the app (arm64 + x86_64)
+        run: apps/menubar/build.sh --no-install --universal
+
+      - name: Verify and zip the app
+        run: |
+          APP="apps/menubar/build/Vast Bar.app"
+          codesign --verify --deep --strict "$APP"
+          archs="$(lipo -archs "$APP/Contents/MacOS/VastBar")"
+          case " $archs " in
+            *" arm64 "*) ;;
+            *) echo "missing arm64: $archs"; exit 1 ;;
+          esac
+          case " $archs " in
+            *" x86_64 "*) ;;
+            *) echo "missing x86_64: $archs"; exit 1 ;;
+          esac
+          version="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
+          if [ "v$version" != "${GITHUB_REF_NAME}" ]; then
+            echo "The app is $version but the tag is ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+          ditto -c -k --keepParent "$APP" VastBar.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vast-bar-zip
+          path: VastBar.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [cli, app]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: build/vast.mjs
+          files: |
+            assets/vast.mjs
+            assets/VastBar.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

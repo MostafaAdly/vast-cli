@@ -1,0 +1,32 @@
+{
+  "to": "production",
+  "generatedAt": "2026-10-11T09:00:02.000Z",
+  "parity": false,
+  "repos": [
+    {
+      "repo": "VastPayPwaV2", "displayName": "Vastpay Pwa V2",
+      "repoUrl": "https://github.com/example/VastPayPwaV2",
+      "compareUrl": "https://github.com/example/VastPayPwaV2/compare/production...staging",
+      "forward": {
+        "source": "staging", "target": "production",
+        "inFlight": [],
+        "waiting": [
+          { "number": 11, "title": "Fix a thing", "url": "https://github.com/example/VastPayPwaV2/pull/11", "branch": "fix/thing",
+            "contributors": [{ "name": "Dev One", "login": "dev-one", "emails": ["dev@example.com"] }],
+            "tickets": [], "phrase": null, "landedAt": "2026-10-01T10:00:00.000Z", "ported": false, "detailsUnavailable": false },
+          { "number": 12, "title": "Add a thing", "url": "https://github.com/example/VastPayPwaV2/pull/12", "branch": "feat/thing",
+            "contributors": [], "tickets": ["86abc"], "phrase": "adds a thing", "landedAt": "2026-10-02T10:00:00.000Z", "ported": false, "detailsUnavailable": false }
+        ],
+        "direct": [{ "sha": "abc1234", "subject": "tweak", "landedAt": "2026-10-03T10:00:00.000Z", "ported": false, "inFlight": null }]
+      },
+      "reverse": null, "notes": [], "problem": null
+    },
+    {
+      "repo": "VastMenuPwa", "displayName": "Vastmenu Pwa",
+      "repoUrl": "https://github.com/example/VastMenuPwa",
+      "compareUrl": "https://github.com/example/VastMenuPwa/compare/production...staging",
+      "forward": null, "reverse": null, "notes": [],
+      "problem": { "kind": "error", "message": "fetch failed" }
+    }
+  ]
+}

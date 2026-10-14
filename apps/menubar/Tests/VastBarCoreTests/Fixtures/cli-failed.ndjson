@@ -1,0 +1,2 @@
+{"type":"start","command":"release","args":["release","VastPayPwaV2","--json"],"dryRun":false,"repos":["VastPayPwaV2"],"at":"2026-10-11T09:00:00.000Z"}
+{"type":"end","exitCode":1,"at":"2026-10-11T09:00:00.500Z"}

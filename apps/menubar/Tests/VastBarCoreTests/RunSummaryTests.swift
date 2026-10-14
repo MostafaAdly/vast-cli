@@ -1,0 +1,131 @@
+import XCTest
+@testable import VastBarCore
+
+final class RunSummaryTests: XCTestCase {
+    private func summary(_ name: String) throws -> RunSummary {
+        summarize(NDJSON.events(from: try fixtureText(name)))
+    }
+
+    func testRealReleaseWalksEveryPhaseToReleased() throws {
+        let s = try summary("release-real.ndjson")
+        XCTAssertTrue(s.isFinished)
+        XCTAssertEqual(s.exitCode, 0)
+        XCTAssertFalse(s.anyFailed)
+        XCTAssertFalse(s.cliFailed)
+        XCTAssertEqual(s.repos.map(\.repo), ["VastPayPwaV2"])
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "released"))
+        XCTAssertEqual(s.repos[0].runUrl, "https://github.com/example/VastPayPwaV2/actions/runs/42")
+        XCTAssertEqual(s.repos[0].version, "2.1.18-rc6")
+    }
+
+    func testPartialRunIsStillBuilding() throws {
+        let s = try summary("release-partial.ndjson")
+        XCTAssertFalse(s.isFinished)
+        XCTAssertEqual(s.repos[0].phase, .building(elapsedMs: 0))
+    }
+
+    func testDryRunKeepsPlansAndRefusals() throws {
+        let s = try summary("release-dry-run.ndjson")
+        XCTAssertTrue(s.dryRun)
+        XCTAssertEqual(s.plans.map(\.repo), ["VastPayPwaV2", "VastMenuPwa"])
+        XCTAssertEqual(s.plans.map(\.ok), [true, false])
+        XCTAssertTrue(s.anyFailed)
+        XCTAssertEqual(s.repos.map(\.repo), ["VastPayPwaV2", "VastMenuPwa"])
+    }
+
+    func testEndWithoutDoneIsACliFailure() throws {
+        let s = try summary("cli-failed.ndjson")
+        XCTAssertTrue(s.isFinished)
+        XCTAssertTrue(s.cliFailed)
+    }
+
+    func testEndWithoutDoneKeepsCliFailedAndFailsTheRepo() throws {
+        let s = try summary("cli-failed.ndjson")
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "failed"))
+        XCTAssertEqual(s.repos[0].detail, "ended without finishing")
+        XCTAssertTrue(s.cliFailed, "no repo finished by a real done")
+    }
+
+    func testARepoLeftUnfinishedAtEndIsFailed() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A", "B"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .plan(PlanEvent(repo: "B", ok: true, version: "2.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "released", detail: "deployed")),
+            .end(exitCode: 1),
+        ])
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "released"))
+        XCTAssertEqual(s.repos[1].phase, .finished(status: "failed"))
+        XCTAssertEqual(s.repos[1].detail, "ended without finishing")
+        XCTAssertTrue(s.anyFailed)
+        XCTAssertFalse(s.cliFailed, "A finished by a real done")
+        XCTAssertFalse(s.repos[0].endedUnfinished, "A ended by its own done")
+        XCTAssertTrue(s.repos[1].endedUnfinished, "B's failure was synthesised at end")
+    }
+
+    func testACliFailureMarksTheRepoEndedUnfinished() throws {
+        let s = try summary("cli-failed.ndjson")
+        XCTAssertTrue(s.repos[0].endedUnfinished)
+        XCTAssertFalse(try summary("release-real.ndjson").repos[0].endedUnfinished)
+    }
+
+    func testWillSkipShowsOnlyARealSkipReason() throws {
+        let dry = try summary("release-dry-run.ndjson")
+        XCTAssertNil(dry.willSkip("VastPayPwaV2"), "\"dry run\" is the preview itself, not a reason")
+        XCTAssertNil(dry.willSkip("VastMenuPwa"), "failed, not skipped")
+        XCTAssertNil(dry.willSkip("Nope"))
+        let skipped = summarize([
+            .start(command: "release", args: [], dryRun: true, repos: ["A"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: nil, promote: "not run", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "skipped", detail: "not cloned")),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(skipped.willSkip("A"), "not cloned")
+    }
+
+    func testADispatchedRepoLeftUnfinishedAtAZeroEndIsFailed() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A"]),
+            .dispatched(repo: "A", version: "1.0.0", runId: 1, runUrl: "https://example.com/runs/1"),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(s.repos[0].phase, .finished(status: "failed"))
+        XCTAssertFalse(s.cliFailed)
+    }
+
+    func testAnUntouchedRepoAtAZeroEndIsLeftAlone() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A", "B"]),
+            .plan(PlanEvent(repo: "A", ok: true, version: "1.0.0", commits: 1, promote: "merged", notice: nil, detail: nil)),
+            .done(DoneEvent(repo: "A", version: "1.0.0", status: "released", detail: "deployed")),
+            .end(exitCode: 0),
+        ])
+        XCTAssertEqual(s.repos[1].phase, .preparing)
+        XCTAssertFalse(s.anyFailed)
+    }
+
+    func testPromotePreviewCarriesThePR() throws {
+        let s = try summary("promote-dry-run.ndjson")
+        XCTAssertEqual(s.command, "promote")
+        XCTAssertEqual(s.prs.first?.version, "2.1.18")
+        XCTAssertFalse(s.cliFailed)
+    }
+
+    func testRolloutPhaseShowsState() {
+        let s = summarize([
+            .start(command: "release", args: [], dryRun: false, repos: ["A"]),
+            .rollout(repo: "A", state: "OutOfSync/Progressing", reason: nil, elapsedMs: 5000),
+        ])
+        XCTAssertEqual(s.repos[0].phase, .rollingOut(state: "OutOfSync/Progressing", elapsedMs: 5000))
+    }
+
+    func testRunIDsSortByTimeAndRecordsRoundTrip() throws {
+        let a = newRunID(now: Date(timeIntervalSince1970: 1_000))
+        let b = newRunID(now: Date(timeIntervalSince1970: 2_000))
+        XCTAssertLessThan(a, b)
+        let r = RunRecord(id: a, pid: 7, args: ["release", "A", "--json"], startedAt: Date(timeIntervalSince1970: 1_000), dismissed: false)
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try d.decode(RunRecord.self, from: e.encode(r)), r)
+    }
+}
