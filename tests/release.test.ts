@@ -2,18 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSweep,
+  planEvent,
   pollIntervalFor,
   prepareOne,
   pollTimingFor,
   releaseMany,
   releaseTargets,
+  runRelease,
   validateReleaseOptions,
   type ReleaseOptions,
   type Sweep,
 } from '../src/commands/release.js';
-import { notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
+import { deployMany, notClonedOutcome, type Deployable, type DeployOutcome } from '../src/commands/deploy.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
+import { streamToEnd, type VastEvent } from '../src/utils/events.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
 function sweep(over: Partial<Sweep> = {}): Sweep {
@@ -475,4 +478,213 @@ test('--fix-version cannot be combined with --target-version', () => {
     validateReleaseOptions(['VastPayPwa'], { ...opts({ targetVersion: '1.0.0-rc1' }), fixVersion: true }) ?? '',
     /mutually exclusive/,
   );
+});
+
+test('deployMany emits done for every repo it deploys, even one that throws', async () => {
+  const seen: VastEvent[] = [];
+  const [a, b] = targetsFor(['VastMenuPwa', 'VastMenu-DashBoard']);
+  const outcomes = await deployMany([{ repo: a, version: '1.0.0-rc1' }, { repo: b, version: '2.0.0-rc1' }], 'staging', false, {
+    board: () => ({ update: () => {} }),
+    events: { emit: (e) => seen.push(e) },
+    deploy: async (repo, _env, version) => {
+      if (repo.name === 'VastMenu-DashBoard') throw new Error('boom');
+      return released(repo, version);
+    },
+  });
+  assert.deepEqual(outcomes.map((o) => o.status), ['released', 'failed']);
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'done').map((e) => (e.type === 'done' ? `${e.repo}:${e.status}` : '')).sort(),
+    ['VastMenu-DashBoard:failed', 'VastMenuPwa:released'],
+  );
+});
+
+function recorder(): { events: { emit: (e: VastEvent) => void }; seen: VastEvent[] } {
+  const seen: VastEvent[] = [];
+  return { events: { emit: (e) => seen.push(e) }, seen };
+}
+
+test('a refused repo still reports its plan and its done', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastPayPwa', 'VastMenuPwa']), MANY_OPTIONS, {
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events,
+  });
+  const forPwa = seen.filter((e) => 'repo' in e && e.repo === 'VastPayPwa').map((e) => e.type);
+  assert.deepEqual(forPwa, ['plan', 'done']);
+  const plan = seen.find((e) => e.type === 'plan' && e.repo === 'VastPayPwa');
+  assert.deepEqual(plan, {
+    type: 'plan',
+    repo: 'VastPayPwa',
+    ok: false,
+    version: '—',
+    commits: null,
+    promote: 'not run',
+    notice: null,
+    detail: 'promotion refused',
+  });
+});
+
+test('a promoted repo reports plan, promoted, then its deploy', async () => {
+  const { events, seen } = recorder();
+  await releaseMany(targetsFor(['VastMenuPwa']), MANY_OPTIONS, {
+    prepare: async (repo) => ({ repo, version: '1.6.13-rc1', promotion: { commits: 4, result: 'merged' } }),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events,
+  });
+  assert.deepEqual(seen.map((e) => e.type), ['plan', 'promoted', 'done']);
+  assert.deepEqual(seen[1], { type: 'promoted', repo: 'VastMenuPwa', commits: 4 });
+});
+
+test('a plan names the guard notice and the promotion state', () => {
+  const repo = getRepo('VastMenuPwa')!;
+  assert.deepEqual(
+    planEvent(repo, {
+      repo,
+      version: '1.6.13-rc1',
+      note: 'auto-corrected past production',
+      notice: { tone: 'warn', text: '1.6.10-rc16 is not above production 1.6.12 — using 1.6.13-rc1' },
+      promotion: { commits: 2, result: 'would merge' },
+    }),
+    {
+      type: 'plan',
+      repo: 'VastMenuPwa',
+      ok: true,
+      version: '1.6.13-rc1',
+      commits: 2,
+      promote: 'will merge',
+      notice: '1.6.10-rc16 is not above production 1.6.12 — using 1.6.13-rc1',
+      detail: 'auto-corrected past production',
+    },
+  );
+  const backend = getRepo('VastPay-BackEnd')!;
+  assert.equal((planEvent(backend, { repo: backend, version: '4.5.11-rc31' }) as { promote: string }).promote, 'no develop');
+});
+
+test('runRelease brackets the stream with start and end, and returns the exit code', async () => {
+  const { events, seen } = recorder();
+  const code = await runRelease(['VastMenuPwa'], { ...MANY_OPTIONS, dryRun: true }, events, ['release', 'VastMenuPwa', '--dry-run', '--json'], {
+    prepare: async (repo) => ({ repo, version: '1.6.13-rc1' }),
+    deploy: async (repo, _env, version) => ({ repo: repo.name, version, status: 'skipped', detail: 'dry run' }),
+    board: () => ({ update: () => {} }),
+  });
+  assert.equal(code, 0);
+  assert.equal(seen[0].type, 'start');
+  assert.deepEqual(seen[0], {
+    type: 'start',
+    command: 'release',
+    args: ['release', 'VastMenuPwa', '--dry-run', '--json'],
+    dryRun: true,
+    repos: ['VastMenuPwa'],
+  });
+  assert.equal(seen.at(-1)?.type, 'done');
+});
+
+test('an unknown repository is exit code 1 with no repo events', async () => {
+  const { events, seen } = recorder();
+  const code = await runRelease(['Nope'], MANY_OPTIONS, events, ['release', 'Nope'], {});
+  assert.equal(code, 1);
+  assert.deepEqual(seen, []);
+});
+
+// --- a throw never cuts the stream ---
+
+test('a prepare that throws fails only its repo: plan and done for both, then end', async () => {
+  const { events, seen } = recorder();
+  const code = await streamToEnd(events, () =>
+    runRelease(['VastPayPwa', 'VastMenuPwa'], MANY_OPTIONS, events, ['release', 'VastPayPwa', 'VastMenuPwa', '--json'], {
+      prepare: async (repo) => {
+        if (repo.name === 'VastPayPwa') throw new Error('Command failed: git fetch --prune origin\nfatal: unable to access');
+        return { repo, version: '1.6.13-rc1' };
+      },
+      deploy: async (repo, _env, version) => released(repo, version),
+      board: () => ({ update: () => {} }),
+    }),
+  );
+  assert.equal(code, 1);
+  assert.deepEqual(
+    seen.map((e) => ('repo' in e ? `${e.type}:${e.repo}` : e.type)),
+    ['start', 'plan:VastPayPwa', 'done:VastPayPwa', 'plan:VastMenuPwa', 'done:VastMenuPwa', 'end'],
+  );
+  const done = seen[2];
+  assert.ok(done.type === 'done');
+  assert.equal(done.status, 'failed');
+  assert.equal(done.detail, 'Command failed: git fetch --prune origin', 'the first line only');
+  assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
+});
+
+test('prepareOne turns a promotion that throws into a failed outcome for that repo', async () => {
+  const out = await prepareOne(getRepo('VastMenuPwa')!, PREP_OPTIONS, {
+    stagingTag: async () => '1.6.13-rc1',
+    readProduction: async () => '1.6.12',
+    promote: async () => {
+      throw new Error('Command failed: git push origin staging\n! [rejected] staging -> staging (fetch first)');
+    },
+  });
+  assert.deepEqual(out, {
+    repo: 'VastMenuPwa',
+    version: '—',
+    status: 'failed',
+    detail: 'promotion failed — Command failed: git push origin staging',
+  });
+});
+
+test('a board that throws still gives the planned repo its done, then end with exit code 1', async () => {
+  const { events, seen } = recorder();
+  const code = await streamToEnd(events, () =>
+    runRelease(['VastMenuPwa'], MANY_OPTIONS, events, [], {
+      prepare: async (repo) => ({ repo, version: '1.6.13-rc1' }),
+      deploy: async (repo, _env, version) => released(repo, version),
+      board: () => {
+        throw new Error('no terminal');
+      },
+    }),
+  );
+  assert.equal(code, 1);
+  assert.deepEqual(seen.map((e) => e.type), ['start', 'plan', 'done', 'end']);
+  assert.deepEqual(seen.at(-1), { type: 'end', exitCode: 1 });
+});
+
+test('a sink that throws on every event cannot lose any repo of a release', async () => {
+  const outcomes = await releaseMany(targetsFor(FOUR), MANY_OPTIONS, {
+    prepare: async (repo) => alternatingPrepare(repo),
+    deploy: async (repo, _env, version) => released(repo, version),
+    board: () => ({ update: () => {} }),
+    events: {
+      emit: () => {
+        throw new Error('EPIPE');
+      },
+    },
+  });
+  assert.deepEqual(outcomes.map((o) => o.status), ['failed', 'released', 'failed', 'released']);
+});
+
+test('a benign skip plans ok; only a failure is a refusal', () => {
+  const repo = getRepo('VastPayPwa')!;
+  const skipped = planEvent(repo, notClonedOutcome('VastPayPwa', true));
+  assert.ok(skipped.type === 'plan' && skipped.ok === true);
+  const failed = planEvent(repo, notClonedOutcome('VastPayPwa', false));
+  assert.ok(failed.type === 'plan' && failed.ok === false);
+});
+
+// In --json mode the board draws on stderr, so stderr — not stdout — decides
+// whether it is live. The test runner's stdout is a pipe either way.
+test('the board is live when the stream it draws on is a terminal', async () => {
+  const [a] = targetsFor(['VastMenuPwa']);
+  const heartbeats: number[] = [];
+  const written: string[] = [];
+  for (const isTTY of [true, false]) {
+    await deployMany([{ repo: a, version: '1.0.0-rc1' }], 'staging', true, {
+      stream: { isTTY, columns: 80, write: (chunk: string) => written.push(chunk) },
+      deploy: async (repo, _env, version, _dryRun, _slot, timing) => {
+        heartbeats.push(timing.heartbeatMs);
+        return released(repo, version);
+      },
+    });
+  }
+  assert.deepEqual(heartbeats, [pollTimingFor(1, true).heartbeatMs, pollTimingFor(1, false).heartbeatMs]);
+  assert.notEqual(heartbeats[0], heartbeats[1]);
+  assert.ok(written.includes('\n'), 'the live board reserved its row on that stream');
 });

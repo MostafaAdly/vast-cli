@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  deployMany,
   deployOne,
   deployTargets,
   notClonedOutcome,
@@ -19,6 +20,7 @@ import {
   type RolloutResult,
 } from '../src/utils/argocd.js';
 import type { StatusBoard } from '../src/utils/status-board.js';
+import type { VastEvent } from '../src/utils/events.js';
 
 /** The sweep flags, so a test only has to name the one it cares about. */
 function sweep(over: Partial<Sweep> = {}): Sweep {
@@ -546,4 +548,114 @@ test('with ArgoCD disabled the deploy runs and no ArgoCD call is made', async ()
   assert.match(outcome.detail, /ArgoCD disabled/);
   assert.match(outcome.detail, /vast argocd enable/);
   assert.match(lines.at(-1) ?? '', /rollout not confirmed \(ArgoCD disabled\)/);
+});
+
+function recordingEvents(): { events: { emit: (e: VastEvent) => void }; seen: VastEvent[] } {
+  const seen: VastEvent[] = [];
+  return { events: { emit: (e) => seen.push(e) }, seen };
+}
+
+test('a deploy streams dispatched, run progress and its rollout', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    getRunStatus: async () => ({ status: 'completed', conclusion: 'success' }),
+  });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(seen[0], {
+    type: 'dispatched',
+    repo: 'VastPayPwa',
+    version: '1.5.7-rc1',
+    runId: 77,
+    runUrl: 'https://github.com/Vast-menu/VastPayPwa/actions/runs/77',
+  });
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'run').map((e) => (e.type === 'run' ? `${e.status}/${e.conclusion}` : '')),
+    ['completed/success'],
+  );
+});
+
+test('a rollout that is not confirmed says why, as an event', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({ argocdEnabled: () => false });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  const rollout = seen.find((e) => e.type === 'rollout');
+  assert.deepEqual(rollout && { ...rollout, elapsedMs: 0 }, {
+    type: 'rollout',
+    repo: 'VastPayPwa',
+    state: 'not confirmed',
+    reason: 'ArgoCD disabled',
+    elapsedMs: 0,
+  });
+});
+
+test('without an ArgoCD token the rollout event says so', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({ readArgocdToken: () => null });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(
+    seen.filter((e) => e.type === 'rollout'),
+    [{ type: 'rollout', repo: 'VastPayPwa', state: 'not confirmed', reason: 'no ArgoCD token', elapsedMs: 0 }],
+  );
+});
+
+test('a rollout that fails is a failed rollout event carrying the reason', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    waitForRollout: async (): Promise<RolloutResult> => ({ ok: false, elapsedMs: 600000, reason: 'timed out after 10m00s' }),
+  });
+  const outcome = await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.equal(outcome.status, 'failed');
+  assert.deepEqual(seen.filter((e) => e.type === 'rollout'), [
+    { type: 'rollout', repo: 'VastPayPwa', state: 'failed', reason: 'timed out after 10m00s', elapsedMs: 600000 },
+  ]);
+});
+
+test('a sign-in wall hit mid-wait reports how long it waited', async () => {
+  const { slot } = recordingSlot();
+  const { events, seen } = recordingEvents();
+  const d = deps({
+    waitForRollout: async (): Promise<RolloutResult> => ({
+      ok: false,
+      elapsedMs: 300,
+      reason: 'argocd api behind sso',
+      ssoWall: true,
+    }),
+  });
+  await deployOne(REPO, 'staging', '1.5.7-rc1', false, { ...slot, events }, undefined, d.deps);
+  assert.deepEqual(seen.find((e) => e.type === 'rollout' && e.state === 'not confirmed'), {
+    type: 'rollout',
+    repo: 'VastPayPwa',
+    state: 'not confirmed',
+    reason: 'ArgoCD API behind a sign-in',
+    elapsedMs: 300,
+  });
+});
+
+test('a sink that throws on done cannot lose a sibling outcome', async () => {
+  const other = getRepo('VastMenuPwa')!;
+  const outcomes = await deployMany(
+    [
+      { repo: REPO, version: '1.5.7-rc1' },
+      { repo: other, version: '2.0.0-rc1' },
+    ],
+    'staging',
+    false,
+    {
+      board: () => ({ update: () => {} }),
+      events: {
+        emit: (e) => {
+          if (e.type === 'done') throw new Error('EPIPE');
+        },
+      },
+      deploy: async (repo, _env, version) => ({ repo: repo.name, version, status: 'released', detail: 'ok' }),
+    },
+  );
+  assert.deepEqual(
+    outcomes.map((o) => `${o.repo}:${o.status}`),
+    ['VastPayPwa:released', 'VastMenuPwa:released'],
+  );
 });

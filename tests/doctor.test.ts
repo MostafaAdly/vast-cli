@@ -9,6 +9,7 @@ import {
 } from '../src/utils/doctor.js';
 import { getRepo, type RepoConfig } from '../src/config/repos.js';
 import { ArgoSsoWallError } from '../src/utils/argocd.js';
+import { doctorJson } from '../src/commands/doctor.js';
 
 const NOW = Date.parse('2026-10-01T12:00:00Z');
 
@@ -183,4 +184,15 @@ test('a check that throws is reported, never crashes the run', async () => {
     }),
   );
   assert.ok(checks.length > 0);
+});
+
+test('doctor JSON is the check list, stamped', () => {
+  const checks = [
+    { group: 'Tools', label: 'gh', status: 'ok' as const, detail: 'authenticated as MostafaAdly' },
+    { group: 'Repos', label: 'VastMenuPwa', status: 'warn' as const, detail: 'next 1.6.10-rc16 is not above production 1.6.12' },
+  ];
+  assert.deepEqual(doctorJson(checks, new Date('2026-10-11T09:00:00.000Z')), {
+    generatedAt: '2026-10-11T09:00:00.000Z',
+    checks,
+  });
 });

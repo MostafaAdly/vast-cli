@@ -19,6 +19,8 @@ import { type BodyMode } from '../utils/changelog.js';
 import { type ShippedPr } from '../utils/shipped.js';
 import { summarizePrs } from '../utils/pr-summary.js';
 import { buildReleaseMessage } from '../utils/release-message.js';
+import { type PromotionReport } from '../utils/promotion-report.js';
+import { type EventSink, type SlackResult } from '../utils/events.js';
 /**
  * Everything the announcement reaches outside itself, in one injectable bag —
  * so the announce step can be tested end to end without a network, a Slack
@@ -48,7 +50,7 @@ export interface AnnounceDeps {
 export declare function announceRelease(repo: RepoConfig, dir: string, kind: ReleaseKind, version: string, url: string | null, opts: {
     dryRun: boolean;
     picks?: ResolvedPick[];
-}, deps?: AnnounceDeps): Promise<void>;
+}, deps?: AnnounceDeps): Promise<SlackResult>;
 /**
  * @returns true when the promotion completed (or would have, under dryRun).
  *
@@ -56,6 +58,22 @@ export declare function announceRelease(repo: RepoConfig, dir: string, kind: Rel
  * read over the API from Vast-deployments — or, while production is not
  * migrated, from the app repo's own Helm on `origin/production`.
  */
-export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string, bodyMode?: BodyMode, pickRefs?: string[], slack?: boolean): Promise<boolean>;
+export declare function promote(repo: RepoConfig, dir: string, to: 'staging' | 'production', dryRun: boolean, kind?: ReleaseKind, targetVersion?: string, bodyMode?: BodyMode, pickRefs?: string[], slack?: boolean, report?: PromotionReport, announceDeps?: AnnounceDeps): Promise<boolean>;
+export interface PromoteCommandOptions {
+    to: string;
+    as?: ReleaseKind;
+    pick?: string[];
+    dir?: string;
+    targetVersion?: string;
+    /** Commander sets this false when --no-changelog is passed. */
+    changelog: boolean;
+    summarize?: boolean;
+    /** Hidden alias for --summarize. */
+    llm?: boolean;
+    slack?: boolean;
+    dryRun: boolean;
+    json?: boolean;
+}
+export declare function runPromote(repoName: string, options: PromoteCommandOptions, events: EventSink, args: string[], announceDeps?: AnnounceDeps): Promise<number>;
 export declare function registerPromoteCommand(program: Command): void;
 //# sourceMappingURL=promote.d.ts.map

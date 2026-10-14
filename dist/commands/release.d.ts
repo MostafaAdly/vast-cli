@@ -19,6 +19,8 @@ import { Command } from 'commander';
 import { type RepoConfig } from '../config/repos.js';
 import type { ReadProduction } from '../utils/version-guard.js';
 import { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type DeployManyDeps, type DeployOutcome, type Sweep } from './deploy.js';
+import { type EventSink, type VastEvent } from '../utils/events.js';
+import { type PromotionReport } from '../utils/promotion-report.js';
 export { isSweep, pollIntervalFor, pollTimingFor, type Deployable, type Sweep };
 export interface ReleaseOptions {
     to: string;
@@ -33,6 +35,7 @@ export interface ReleaseOptions {
     all: boolean;
     frontend: boolean;
     backend: boolean;
+    json?: boolean;
 }
 /**
  * Whether this repo has a develop branch to promote into staging.
@@ -78,10 +81,12 @@ export declare function releaseTargets(names: string[], sweep: Sweep): {
 /** The network and git calls in `prepareOne`, injectable so tests never touch either. */
 export interface PrepareDeps {
     stagingTag?: (repo: RepoConfig) => Promise<string>;
-    promote?: (repo: RepoConfig, dir: string, dryRun: boolean) => Promise<boolean>;
+    promote?: (repo: RepoConfig, dir: string, dryRun: boolean, report: PromotionReport) => Promise<boolean>;
     readProduction?: ReadProduction;
 }
 export declare function prepareOne(repo: RepoConfig, options: ReleaseOptions, deps?: PrepareDeps): Promise<Deployable | DeployOutcome>;
+/** One repo's preparation, as the app's preview reads it. */
+export declare function planEvent(repo: RepoConfig, prepared: Deployable | DeployOutcome): VastEvent;
 /** The two halves of a release, injectable so they can be faked in tests. */
 export interface ReleaseManyDeps extends DeployManyDeps {
     prepare?: (repo: RepoConfig, options: ReleaseOptions) => Promise<Deployable | DeployOutcome>;
@@ -95,5 +100,11 @@ export interface ReleaseManyDeps extends DeployManyDeps {
  * the common case is a second place for the ArgoCD wait to be forgotten.
  */
 export declare function releaseMany(targets: RepoConfig[], options: ReleaseOptions, deps?: ReleaseManyDeps): Promise<DeployOutcome[]>;
+/**
+ * The whole release, as an exit code rather than a process.exit, so it can be
+ * driven by --json and by tests. Every human line still prints; in --json mode
+ * the command boundary has already moved those lines to stderr.
+ */
+export declare function runRelease(repoNames: string[], options: ReleaseOptions, events: EventSink, args: string[], deps?: ReleaseManyDeps): Promise<number>;
 export declare function registerReleaseCommand(program: Command): void;
 //# sourceMappingURL=release.d.ts.map

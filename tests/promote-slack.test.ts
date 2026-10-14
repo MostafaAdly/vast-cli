@@ -412,3 +412,60 @@ test('a dry-run pick hotfix takes no ticket from unpicked staging work', async (
     f.cleanup();
   }
 });
+
+test('a dry-run announcement returns its message, unposted', async () => {
+  const f = fixture();
+  const r = recorder();
+  try {
+    let result: Awaited<ReturnType<typeof announceRelease>> | undefined;
+    await withRecorder(r, async () => {
+      result = await announceRelease(repo, f.dir, 'release', '1.4.0', null, { dryRun: true }, r.deps);
+    });
+    assert.equal(result?.posted, false);
+    assert.equal(result?.error, null);
+    assert.match(result?.text ?? '', /^MSG Vastpay Pwa release\/1\.4\.0 /);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('a posted announcement says so in its result', async () => {
+  const f = fixture();
+  const r = recorder();
+  try {
+    let result: Awaited<ReturnType<typeof announceRelease>> | undefined;
+    await withRecorder(r, async () => {
+      result = await announceRelease(repo, f.dir, 'release', '1.4.0', 'https://github.com/Vast-menu/VastPayPwa/pull/99', { dryRun: false }, r.deps);
+    });
+    assert.equal(result?.posted, true);
+    assert.equal(result?.error, null);
+  } finally {
+    f.cleanup();
+  }
+});
+
+// A Slack failure never fails a promotion, so announceRelease must never throw
+// out of one: an unreachable Slack comes back as an error result instead.
+test('an unreachable Slack returns an error result instead of throwing', async () => {
+  const f = fixture();
+  const r = recorder(
+    {
+      lookupUserByEmail: async () => {
+        throw new Error('getaddrinfo ENOTFOUND slack.com');
+      },
+    },
+    new Error('getaddrinfo ENOTFOUND slack.com'),
+  );
+  try {
+    let result: Awaited<ReturnType<typeof announceRelease>> | undefined;
+    await withRecorder(r, async () => {
+      result = await announceRelease(repo, f.dir, 'release', '1.4.0', 'https://x/1', { dryRun: false }, r.deps);
+    });
+    assert.equal(result?.posted, false);
+    assert.equal(result?.error, 'getaddrinfo ENOTFOUND slack.com');
+    assert.match(result?.text ?? '', /^MSG Vastpay Pwa/);
+    assert.equal(r.posts.length, 0);
+  } finally {
+    f.cleanup();
+  }
+});

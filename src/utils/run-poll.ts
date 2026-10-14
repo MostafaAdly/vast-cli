@@ -23,6 +23,8 @@ export interface PollDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   print: (line: string) => void;
+  /** Called once per status change (including completion), for machine-readable progress. */
+  onStatus?: (status: RunStatus, elapsedMs: number) => void;
 }
 
 export interface PollTiming {
@@ -79,6 +81,7 @@ export async function pollRun(
 ): Promise<PollResult> {
   const start = deps.now();
   let lastStatus: string | null = null;
+  let lastReported: string | null = null;
   let lastPrintedAt = 0;
   let consecutiveErrors = 0;
 
@@ -107,6 +110,11 @@ export async function pollRun(
 
     if (current) {
       const elapsed = deps.now() - start;
+      const key = `${current.status}/${current.conclusion ?? ''}`;
+      if (key !== lastReported) {
+        deps.onStatus?.(current, elapsed);
+        lastReported = key;
+      }
       if (current.status === 'completed') {
         return { ok: current.conclusion === 'success', conclusion: current.conclusion, elapsedMs: elapsed };
       }

@@ -6,7 +6,13 @@
  * checkout-pull-look loop.
  */
 import { Command } from 'commander';
-import { type DeployEnv, type RepoConfig } from '../config/repos.js';
+import { type DeployEnv, type RepoConfig, type ReleaseTeam } from '../config/repos.js';
+export interface Row {
+    name: string;
+    staging: string;
+    production: string;
+    drift: string;
+}
 /**
  * The deployed tag per env, for every repo at once.
  *
@@ -23,5 +29,29 @@ export interface RepoTags {
     production: string;
 }
 export declare function readTags(targets: RepoConfig[], readTag?: TagReader): Promise<Map<string, RepoTags>>;
+export interface StatusCell {
+    tag: string | null;
+    problem: string | null;
+}
+export interface StatusDrift {
+    text: string;
+    /** Commits develop has that staging lacks; null when that cannot be said. */
+    ahead: number | null;
+    problem: string | null;
+}
+export interface StatusJsonRepo {
+    repo: string;
+    displayName: string;
+    releaseTeam: ReleaseTeam | null;
+    staging: StatusCell;
+    production: StatusCell;
+    drift: StatusDrift;
+}
+export interface StatusJson {
+    generatedAt: string;
+    repos: StatusJsonRepo[];
+}
+/** The table, as data: built from the same rows, so the two cannot disagree. */
+export declare function statusJson(targets: RepoConfig[], rows: Row[], generatedAt: Date): StatusJson;
 export declare function registerStatusCommand(program: Command): void;
 //# sourceMappingURL=status.d.ts.map

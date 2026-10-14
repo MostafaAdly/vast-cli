@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import type { DeployOutcome } from '../commands/deploy.js';
+import type { DeployOutcome } from './outcome.js';
 
 export const NOTIFY_AFTER_MS = 60_000;
 
@@ -109,6 +109,8 @@ export function announceDone(
   if (!shouldAnnounce({ dryRun: run.dryRun, elapsedMs: Date.now() - run.startedAt, env: process.env })) return;
   const message = doneMessage(outcomes, env);
   if (!message) return;
-  if (process.stdout.isTTY) process.stdout.write('\x07');
+  // The bell is for a person at a terminal, never data: stderr, so a --json
+  // stdout stays one JSON object per line.
+  if (process.stderr.isTTY) process.stderr.write('\x07');
   desktopNotify(message);
 }

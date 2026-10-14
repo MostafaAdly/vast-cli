@@ -12,6 +12,7 @@ import { repoDir } from '../config/workspace.js';
 import { deployedTag } from '../utils/deployments.js';
 import { fetchBranches, aheadBehind } from '../utils/git.js';
 import { createHeader, createSpinner, log } from '../utils/ui.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 /** The remote-tracking branches this repo's row is built from. */
 function branchesRead(repo) {
     const branches = ['staging', 'production'];
@@ -122,7 +123,44 @@ function inspect(repo, dir, fetchFailed, tags) {
         drift,
     };
 }
+/** The words the table prints instead of a version. In JSON they are problems, never tags. */
+const TAG_PROBLEMS = new Set(['not migrated', 'n/a', '?']);
+function cellOf(value) {
+    return TAG_PROBLEMS.has(value) ? { tag: null, problem: value } : { tag: value, problem: null };
+}
+function driftOf(text) {
+    if (text === 'in sync')
+        return { text, ahead: 0, problem: null };
+    const m = /\+(\d+)$/.exec(text);
+    return m ? { text, ahead: Number(m[1]), problem: null } : { text, ahead: null, problem: text };
+}
+/** The table, as data: built from the same rows, so the two cannot disagree. */
+export function statusJson(targets, rows, generatedAt) {
+    // Paired by name, never by position: a row matched to the wrong target would
+    // silently carry another repo's display name and team.
+    const byName = new Map(targets.map((t) => [t.name, t]));
+    const targetOf = (row) => {
+        const target = byName.get(row.name);
+        if (!target)
+            throw new Error(`status row ${row.name} has no matching repository`);
+        return target;
+    };
+    return {
+        generatedAt: generatedAt.toISOString(),
+        repos: rows.map((r) => ({
+            repo: r.name,
+            displayName: targetOf(r).displayName,
+            releaseTeam: targetOf(r).releaseTeam,
+            staging: cellOf(r.staging),
+            production: cellOf(r.production),
+            drift: driftOf(r.drift),
+        })),
+    };
+}
 async function executeStatus(repoName, options) {
+    // stdout is one JSON document and nothing else: every human line goes to stderr.
+    if (options.json)
+        routeHumanOutputToStderr();
     const targets = repoName
         ? [getRepo(repoName)].filter((r) => Boolean(r))
         : options.all
@@ -140,15 +178,21 @@ async function executeStatus(repoName, options) {
     if (options.fetch) {
         // Only animate on a terminal — piped output would keep the spinner's text
         // as a stray line.
-        const spinner = process.stdout.isTTY
+        const spinner = process.stdout.isTTY && !options.json
             ? createSpinner(`Refreshing ${targets.length} repo(s)...`).start()
             : null;
         fetchFailed = await refreshAll(targets, dirs);
         spinner?.stop();
     }
-    console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
+    if (!options.json) {
+        console.log(createHeader('Release Status', options.fetch ? 'Vast Group' : 'Vast Group (local refs)'));
+    }
     const tags = await readTags(targets);
     const rows = targets.map((r) => inspect(r, dirs.get(r.name) ?? null, fetchFailed.has(r.name), tags.get(r.name)));
+    if (options.json) {
+        process.stdout.write(`${JSON.stringify(statusJson(targets, rows, new Date()), null, 2)}\n`);
+        return;
+    }
     // Widths come from the data, not constants — real tags run long
     // ("1.1.3-rc4-health") and a fixed width silently breaks the columns.
     const col = (header, pick) => Math.max(header.length, ...rows.map((r) => pick(r).length));
@@ -169,10 +213,12 @@ export function registerStatusCommand(program) {
         .option('-a, --all', 'Report on every configured repo', false)
         .option('--no-fetch', 'Skip the git fetch — DRIFT may be stale (tags are always read live)')
         .option('--dir <path>', 'Override the local checkout path')
+        .option('--json', 'Print the table as JSON and nothing else', false)
         .addHelpText('after', `
 Examples:
   $ vast status --all              every repo, one screen
   $ vast status VastPayPwa         one repo
+  $ vast status --all --json       the same, as JSON for scripts and Vast Bar
 
 Reads only — it fetches and reports, and changes nothing.
 

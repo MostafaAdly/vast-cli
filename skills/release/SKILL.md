@@ -107,6 +107,13 @@ repo is not deployed there, `?` that the lookup failed. If **every** repo's colu
 account cannot see `Vast-deployments` — say so and tell them to ask DevOps for access
 rather than treating it as nine separate failures.
 
+When you need the state as data rather than to read it, use `vast status --all --json`
+and `vast doctor --json`; both print JSON only (`doctor --json` still exits 1 when a
+check fails). `vast release … --dry-run --json` and `vast promote … -n --json` stream the
+preview as one JSON object per line (a `plan` per repo, `ok: false` with a `detail` when
+it would be refused). Never add `--json` to a real release or promote you are running for
+the user — they read the board and the summary, which `--json` moves to stderr.
+
 **Reading `vast pending`.** `vast pending <repo>` (or `--all`, `--frontend`, `--backend`)
 is read-only and is the right way to answer "what goes in the next release?" or "what
 is waiting?". Use `--json --short` when you need to reason over it: the model

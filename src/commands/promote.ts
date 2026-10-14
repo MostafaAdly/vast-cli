@@ -32,6 +32,7 @@ import {
   releaseBranchName,
   RELEASE_KINDS,
   type ReleaseKind,
+  type CutResult,
 } from '../utils/release-branch.js';
 import { resolvePicks, type ResolvedPick } from '../utils/picks.js';
 import { nextPatch, stripRc } from '../utils/version.js';
@@ -49,6 +50,10 @@ import { readSlackToken, readSlackChannel, slackUserOverride } from '../config/s
 import { lookupUserByEmail, postMessage } from '../utils/slack.js';
 import { buildReleaseMessage, releaseContributors } from '../utils/release-message.js';
 import { createHeader, createErrorBox, log } from '../utils/ui.js';
+import { newReport, promoteState, type PromotionReport } from '../utils/promotion-report.js';
+import { ndjsonSink, NO_EVENTS, streamToEnd, type EventSink, type SlackResult } from '../utils/events.js';
+import { errorMessage, firstLine, reportUnexpectedError } from '../utils/errors.js';
+import { routeHumanOutputToStderr } from '../utils/json-mode.js';
 
 /**
  * Fast-forward the local branches this promotion reads, and say what came in.
@@ -124,7 +129,7 @@ export async function announceRelease(
   url: string | null,
   opts: { dryRun: boolean; picks?: ResolvedPick[] },
   deps: AnnounceDeps = defaultAnnounceDeps,
-): Promise<void> {
+): Promise<SlackResult> {
   const branch = releaseBranchName(kind, version);
   const picks = opts.picks ?? [];
 
@@ -168,7 +173,7 @@ export async function announceRelease(
     // What is printed is the plain fallback; the post itself is a rich_text
     // bullet, and a reader of the dry run should not expect a typed "•".
     console.log('  (Slack renders this as a bulleted list item with real mentions and ticket links)');
-    return;
+    return { text, posted: false, error: null };
   }
 
   const token = deps.readSlackToken();
@@ -176,17 +181,20 @@ export async function announceRelease(
   if (!token || !channel) {
     console.log(text);
     log.warn('Slack not configured — run vast slack setup');
-    return;
+    return { text, posted: false, error: 'Slack not configured — run vast slack setup' };
   }
 
   try {
     await deps.postMessage(token, channel, text, blocks);
     log.success(`announced in ${channel}`);
+    return { text, posted: true, error: null };
   } catch (error) {
     // Deliberately not a failure: the release PR is already open, and the
     // operator now has the exact text to post by hand.
-    log.error(`could not announce in Slack: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    log.error(`could not announce in Slack: ${message}`);
     console.log(text);
+    return { text, posted: false, error: message };
   }
 }
 
@@ -207,19 +215,43 @@ export async function promote(
   bodyMode: BodyMode = 'changelog',
   pickRefs: string[] = [],
   slack = false,
+  report: PromotionReport = newReport(),
+  announceDeps: AnnounceDeps = defaultAnnounceDeps,
 ): Promise<boolean> {
+  // Every refusal goes through here so the report always knows why it stopped.
+  // The title alone can lose the cause ("cannot derive a release version"), so
+  // the body's first line rides along.
+  const refuse = (title: string, body: string): false => {
+    console.log(createErrorBox(title, body));
+    report.result = 'refused';
+    const cause = body.split('\n').find((line) => line.trim() !== '')?.trim();
+    report.error = cause ? `${title}: ${cause}` : title;
+    return false;
+  };
+
+  // A cut that names a problem is reported as refused, dry run or not: a
+  // preview must not promise a PR the real run would refuse to open. A dry
+  // run still returns true, as it always has — its exit code and its Slack
+  // preview are unchanged; the report is what says it would refuse.
+  const recordCut = (cut: CutResult): boolean => {
+    report.url = cut.url;
+    if (cut.problem !== null || (cut.url === null && !dryRun)) {
+      report.result = 'refused';
+      report.error = cut.problem ?? `could not cut ${report.branch} or open its PR`;
+      return dryRun;
+    }
+    report.result = cut.url !== null ? 'pr opened' : 'would open pr';
+    return true;
+  };
+
   // Deliberately NOT gated on the production lock. Cutting a branch and opening
   // a PR ships nothing; the lock guards the deploy that follows the merge.
   if (!existsSync(join(dir, '.git'))) {
-    console.log(createErrorBox(`${repo.name} is not cloned`, `Expected a checkout at ${dir}`));
-    return false;
+    return refuse(`${repo.name} is not cloned`, `Expected a checkout at ${dir}`);
   }
 
   if (!isClean(dir)) {
-    console.log(
-      createErrorBox(`${repo.name} has uncommitted changes`, 'Commit or stash them before promoting.'),
-    );
-    return false;
+    return refuse(`${repo.name} has uncommitted changes`, 'Commit or stash them before promoting.');
   }
 
   gitFetch(dir);
@@ -231,28 +263,21 @@ export async function promote(
 
   if (to === 'production') {
     if (!repo.deployments.staging) {
-      console.log(
-        createErrorBox(
-          `${repo.name}: no staging deployments file`,
-          'Cannot derive a release version.',
-        ),
+      return refuse(
+        `${repo.name}: no staging deployments file`,
+        'Cannot derive a release version.',
       );
-      return false;
     }
     if (pickRefs.length > 0) {
       const { picks, merges, warnings, errors } = resolvePicks(dir, ORG, repo.name, pickRefs);
       if (errors.length > 0) {
-        console.log(
-          createErrorBox(
-            `${repo.name}: ${errors.length} pick(s) cannot be promoted`,
-            errors.map((e) => `• ${e}`).join('\n'),
-          ),
+        return refuse(
+          `${repo.name}: ${errors.length} pick(s) cannot be promoted`,
+          errors.map((e) => `• ${e}`).join('\n'),
         );
-        return false;
       }
       if (picks.length === 0 && merges.length === 0) {
-        console.log(createErrorBox(`${repo.name}: nothing to pick`, 'Every ref resolved to nothing.'));
-        return false;
+        return refuse(`${repo.name}: nothing to pick`, 'Every ref resolved to nothing.');
       }
       // The one loudly-permitted exception to the staging-only rule: a branch
       // cut from production skipped staging by definition.
@@ -265,28 +290,22 @@ export async function promote(
         version = targetVersion;
       } else {
         if (!repo.deployments.production) {
-          console.log(
-            createErrorBox(
-              `${repo.name}: no production deployments file`,
-              'Pass --target-version explicitly.',
-            ),
+          return refuse(
+            `${repo.name}: no production deployments file`,
+            'Pass --target-version explicitly.',
           );
-          return false;
         }
         try {
           // A selective promotion advances production's OWN tag — staging's
           // version would claim content production did not receive.
           version = nextPatch(await deployedTag(repo, 'production'));
         } catch (error) {
-          console.log(
-            createErrorBox(
-              `${repo.name}: cannot derive a hotfix version`,
-              `${error instanceof Error ? error.message : String(error)}\n\n` +
-                `Re-run with an explicit version:\n` +
-                `    vast promote ${repo.name} --to production --pick ... --target-version X.Y.Z`,
-            ),
+          return refuse(
+            `${repo.name}: cannot derive a hotfix version`,
+            `${error instanceof Error ? error.message : String(error)}\n\n` +
+              `Re-run with an explicit version:\n` +
+              `    vast promote ${repo.name} --to production --pick ... --target-version X.Y.Z`,
           );
-          return false;
         }
       }
 
@@ -296,11 +315,17 @@ export async function promote(
       ]
         .filter(Boolean)
         .join(' + ');
+      report.commits = picks.length + merges.length;
+      report.version = version;
+      report.kind = kind;
+      report.branch = releaseBranchName(kind, version);
       log.info(`${repo.name}: ${what} → production, ${kind} ${version}`);
-      const url = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
+      const cut = cutPickedBranch(dir, repo.name, kind, version, picks, dryRun, bodyMode, merges);
+      const ok = recordCut(cut);
+      const url = cut.url;
       // A dry run never returns a URL, but it still has a message to show.
-      if (slack && (url !== null || dryRun)) {
-        await announceRelease(repo, dir, kind, version, url, { dryRun, picks });
+      if (slack && ok) {
+        report.slack = await announceRelease(repo, dir, kind, version, url, { dryRun, picks }, announceDeps);
       }
       if (url !== null) {
         // Deliberately not a `vast deploy` hint any more: production has not
@@ -312,12 +337,14 @@ export async function promote(
           );
         }
       }
-      return url !== null || dryRun;
+      return ok;
     }
 
     const { ahead } = aheadBehind(dir, 'origin/staging', 'origin/production');
     if (ahead === 0) {
       log.info(`${repo.name}: production already contains staging. Nothing to release.`);
+      report.commits = 0;
+      report.result = 'nothing to promote';
       return true;
     }
     let version: string;
@@ -327,113 +354,138 @@ export async function promote(
       try {
         version = stripRc(await deployedTag(repo, 'staging'));
       } catch (error) {
-        console.log(
-          createErrorBox(
-            `${repo.name}: cannot derive a release version`,
-            `${error instanceof Error ? error.message : String(error)}\n\n` +
-              `Re-run with an explicit version:\n` +
-              `    vast promote ${repo.name} --to production --target-version X.Y.Z`,
-          ),
+        return refuse(
+          `${repo.name}: cannot derive a release version`,
+          `${error instanceof Error ? error.message : String(error)}\n\n` +
+            `Re-run with an explicit version:\n` +
+            `    vast promote ${repo.name} --to production --target-version X.Y.Z`,
         );
-        return false;
       }
     }
 
+    report.commits = ahead;
+    report.version = version;
+    report.kind = kind;
+    report.branch = releaseBranchName(kind, version);
     log.info(`${repo.name}: ${ahead} commit(s) staging → production, ${kind} ${version}`);
-    const url = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
-    if (slack && (url !== null || dryRun)) {
-      await announceRelease(repo, dir, kind, version, url, { dryRun });
+    const cut = cutReleaseBranch(dir, repo.name, kind, version, dryRun, bodyMode);
+    const ok = recordCut(cut);
+    if (slack && ok) {
+      report.slack = await announceRelease(repo, dir, kind, version, cut.url, { dryRun }, announceDeps);
     }
-    return url !== null || dryRun;
+    return ok;
   }
 
   const from = repo.promoteFrom.staging;
   if (!from) {
-    console.log(
-      createErrorBox(
-        `Cannot promote ${repo.name} into staging`,
-        `No promotion source is configured. ${repo.name} has no usable \`develop\` — ` +
-          `human PRs there target \`staging\` directly, so merging \`develop\` would ` +
-          `regress it by hundreds of commits.`,
-      ),
+    return refuse(
+      `Cannot promote ${repo.name} into staging`,
+      `No promotion source is configured. ${repo.name} has no usable \`develop\` — ` +
+        `human PRs there target \`staging\` directly, so merging \`develop\` would ` +
+        `regress it by hundreds of commits.`,
     );
-    return false;
   }
 
   const { ahead } = aheadBehind(dir, `origin/${from}`, 'origin/staging');
   if (ahead === 0) {
     log.info(`${repo.name}: staging already contains ${from}. Nothing to promote.`);
+    report.commits = 0;
+    report.result = 'nothing to promote';
     return true;
   }
 
   const trial = trialMerge(dir, 'origin/staging', `origin/${from}`);
   if (!trial.clean) {
-    console.log(
-      createErrorBox(
-        `${repo.name}: ${from} → staging conflicts`,
-        `${trial.conflicts.length} conflicting file(s):\n` +
-          trial.conflicts.map((f) => `  • ${f}`).join('\n') +
-          `\n\nNothing was changed. Resolve these before promoting.`,
-      ),
+    return refuse(
+      `${repo.name}: ${from} → staging conflicts`,
+      `${trial.conflicts.length} conflicting file(s):\n` +
+        trial.conflicts.map((f) => `  • ${f}`).join('\n') +
+        `\n\nNothing was changed. Resolve these before promoting.`,
     );
-    return false;
   }
 
   log.info(`${repo.name}: ${ahead} commit(s) from ${from} → staging, merge is clean`);
 
   if (dryRun) {
     log.muted('  (dry run — no merge performed)');
+    report.commits = ahead;
+    report.result = 'would merge';
     return true;
   }
 
+  // Counted before the push, so a push that throws still says what it carried.
+  report.commits = ahead;
   mergeAndPush(dir, 'staging', `origin/${from}`);
+  report.result = 'merged';
   log.success(`${repo.name}: ${from} → staging pushed`);
   return true;
 }
 
-async function executePromote(
+export interface PromoteCommandOptions {
+  to: string;
+  as?: ReleaseKind;
+  pick?: string[];
+  dir?: string;
+  targetVersion?: string;
+  /** Commander sets this false when --no-changelog is passed. */
+  changelog: boolean;
+  summarize?: boolean;
+  /** Hidden alias for --summarize. */
+  llm?: boolean;
+  slack?: boolean;
+  dryRun: boolean;
+  json?: boolean;
+}
+
+/**
+ * What a finished promotion means for the stream's `done`, read from the
+ * report rather than from promote's return value: a dry run that would refuse
+ * returns true (exit 0) but its report says refused.
+ */
+function promotionDone(
+  report: PromotionReport,
+  dryRun: boolean,
+): { status: 'released' | 'skipped' | 'failed'; detail: string } {
+  if (report.result === 'refused') return { status: 'failed', detail: report.error ?? 'promotion refused' };
+  if (report.result === 'nothing to promote') return { status: 'skipped', detail: 'nothing to promote' };
+  if (dryRun) return { status: 'skipped', detail: 'dry run' };
+  if (report.result === 'pr opened') return { status: 'released', detail: `PR opened — ${report.url}` };
+  return { status: 'released', detail: 'promoted' };
+}
+
+export async function runPromote(
   repoName: string,
-  options: {
-    to: 'staging' | 'production';
-    as?: ReleaseKind;
-    pick?: string[];
-    dir?: string;
-    targetVersion?: string;
-    /** Commander sets this false when --no-changelog is passed. */
-    changelog: boolean;
-    summarize?: boolean;
-    /** Hidden alias for --summarize. */
-    llm?: boolean;
-    slack?: boolean;
-    dryRun: boolean;
-  },
-): Promise<void> {
+  options: PromoteCommandOptions,
+  events: EventSink,
+  args: string[],
+  announceDeps?: AnnounceDeps,
+): Promise<number> {
   const repo = getRepo(repoName);
   if (!repo) {
     log.error(`Unknown repository: ${repoName}`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.to !== 'staging' && options.to !== 'production') {
     log.error(`Invalid --to value: ${options.to}. Use staging or production.`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.as !== undefined && !RELEASE_KINDS.includes(options.as)) {
     log.error(`Invalid --as value: ${options.as}. Use ${RELEASE_KINDS.join(' or ')}.`);
-    process.exit(1);
+    return 1;
   }
 
   if (options.pick?.length && options.to !== 'production') {
     log.error('--pick is production-only. Staging always promotes all of develop.');
-    process.exit(1);
+    return 1;
   }
 
   // There is nothing to announce about a staging promotion: it opens no PR,
   // and staging moves many times a day.
   if (options.slack && options.to !== 'production') {
     log.error('--slack is production-only. A staging promotion opens no release PR to announce.');
-    process.exit(1);
+    return 1;
   }
 
   // A selective promotion is definitionally a hotfix, so --pick flips the
@@ -455,21 +507,79 @@ async function executePromote(
     console.log(
       createErrorBox(`${repo.name} is not cloned`, 'Run `vast init`, or clone it with `vast clone`.'),
     );
-    process.exit(1);
+    return 1;
   }
 
-  const ok = await promote(
-    repo,
-    dir,
-    options.to,
-    options.dryRun,
-    kind,
-    options.targetVersion,
-    bodyMode,
-    options.pick ?? [],
-    options.slack ?? false,
-  );
-  if (!ok) process.exit(1);
+  events.emit({ type: 'start', command: 'promote', args, dryRun: options.dryRun, repos: [repo.name] });
+
+  const report = newReport();
+  let succeeded: boolean;
+  try {
+    succeeded = await promote(
+      repo,
+      dir,
+      options.to as 'staging' | 'production',
+      options.dryRun,
+      kind,
+      options.targetVersion,
+      bodyMode,
+      options.pick ?? [],
+      options.slack ?? false,
+      report,
+      announceDeps,
+    );
+  } catch (error) {
+    // A throw (a push, a git call, gh) must still end the stream with plan and
+    // done, or the app shows a promotion that never ends. The report keeps any
+    // success it recorded before the throw — a PR already opened stays opened —
+    // otherwise it is still at its default, 'refused'. The whole error is
+    // printed; the stream carries its first line.
+    if (report.result === 'refused') report.error = firstLine(errorMessage(error));
+    succeeded = false;
+    reportUnexpectedError(error);
+  }
+  // The stream reads the report; the exit code stays promote's own answer.
+  const ok = report.result !== 'refused';
+  events.emit({
+    type: 'plan',
+    repo: repo.name,
+    ok,
+    version: report.version ?? '—',
+    commits: report.commits,
+    promote: promoteState(report.result),
+    notice: null,
+    detail: ok ? null : (report.error ?? null),
+  });
+  if (options.to === 'staging' && report.result === 'merged') {
+    events.emit({ type: 'promoted', repo: repo.name, commits: report.commits ?? 0 });
+  }
+  // A refused cut opened no PR and would open none: no `pr` event for it.
+  if (report.branch && report.version && report.result !== 'refused') {
+    events.emit({
+      type: 'pr',
+      repo: repo.name,
+      branch: report.branch,
+      url: report.url ?? null,
+      version: report.version,
+      slack: report.slack ?? null,
+    });
+  }
+  const done = promotionDone(report, options.dryRun);
+  events.emit({ type: 'done', repo: repo.name, version: report.version ?? '—', status: done.status, detail: done.detail });
+  return succeeded ? 0 : 1;
+}
+
+async function executePromote(repoName: string, options: PromoteCommandOptions): Promise<void> {
+  if (!options.json) {
+    const code = await runPromote(repoName, options, NO_EVENTS, process.argv.slice(2));
+    if (code !== 0) process.exit(code);
+    return;
+  }
+  // stdout is a data channel from here on: one JSON object per line, and
+  // `end` is always the last of them, even after a throw.
+  routeHumanOutputToStderr();
+  const events = ndjsonSink();
+  process.exitCode = await streamToEnd(events, () => runPromote(repoName, options, events, process.argv.slice(2)));
 }
 
 export function registerPromoteCommand(program: Command): void {
@@ -490,6 +600,7 @@ export function registerPromoteCommand(program: Command): void {
     .addOption(new Option('--llm').hideHelp())
     .option('--dir <path>', 'Override the local checkout path')
     .option('-n, --dry-run', 'Report what would happen without merging', false)
+    .option('--json', 'Stream the result as JSON lines on stdout (human output goes to stderr)', false)
     .addHelpText(
       'after',
       `
@@ -501,6 +612,7 @@ Examples:
   $ vast promote VastPayPwa --to production --no-changelog   bare PR description
   $ vast promote VastPayPwa --to production --slack     cut the PR, announce it
   $ vast promote VastPayPwa --to production --slack -n  print the message only
+  $ vast promote VastPayPwa --to production -n --json   the PR it would open, as JSON
 
 Slack announcement (--slack, production only):
   Runs after the release PR is open and posts one Slack bullet naming what
