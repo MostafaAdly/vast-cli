@@ -20,6 +20,29 @@ export function installedTag() {
     const tag = readFileSync(file, 'utf-8').trim();
     return tag || null;
 }
+/**
+ * After the installer replaced the CLI, the NEW CLI brings Vast Bar to its own
+ * version (it does nothing when the app is not installed). The CLI is already
+ * upgraded, so a failure here is a warning, never a failed upgrade.
+ */
+export function updateBarAfterUpgrade(deps = {
+    platform: process.platform,
+    home: vastHome(),
+    run: (file, args) => {
+        execFileSync(file, args, { stdio: 'inherit', timeout: 300_000 });
+    },
+    warn: (message) => log.warn(message),
+}) {
+    if (deps.platform !== 'darwin')
+        return;
+    try {
+        deps.run(process.execPath, [join(deps.home, 'vast.mjs'), 'bar', 'install', '--if-installed']);
+    }
+    catch (error) {
+        deps.warn(`Vast Bar was not updated: ${error instanceof Error ? error.message : String(error)}\n` +
+            '  The CLI upgrade is done. Run vast bar install to retry.');
+    }
+}
 async function executeUpgrade(options) {
     console.log(createHeader('Upgrade', 'Vast CLI'));
     const installed = installedTag();
@@ -76,6 +99,7 @@ async function executeUpgrade(options) {
             `    curl -fsSL ${INSTALL_URL} | bash`));
         process.exit(1);
     }
+    updateBarAfterUpgrade();
 }
 export function registerUpgradeCommand(program) {
     program
@@ -91,6 +115,7 @@ Examples:
 
 Re-runs the published installer, so an upgrade lands exactly what a fresh
 install would. If you installed from a git clone, use git pull instead.
+On macOS it then updates Vast Bar too, if it is installed.
 `)
         .action(executeUpgrade);
 }

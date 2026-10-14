@@ -46,6 +46,9 @@ Missing some?
 vast clone --team frontend    # or backend, infra, all
 ```
 
+On macOS, add the menu bar app with `vast bar install` — see
+[Vast Bar](#vast-bar-menu-bar-app).
+
 <details>
 <summary>Install options and what it touches</summary>
 
@@ -112,6 +115,10 @@ vast upgrade           # install the latest release
 vast upgrade --check   # say what is available, change nothing
 ```
 
+On macOS, if Vast Bar is installed, `vast upgrade` updates it to the new version too. If
+that part fails it prints a warning and the CLI upgrade still succeeds; run
+`vast bar install` to retry.
+
 The CLI checks for new releases once a day, in a detached background process, and shows
 a one-line hint on your next command. It never delays anything.
 
@@ -147,7 +154,8 @@ worked examples.
 |---|---|
 | `vast init` | Find your checkouts and remember where they are |
 | `vast clone` | Clone the repos your team needs |
-| `vast upgrade` | Update to the latest release |
+| `vast upgrade` | Update to the latest release (and Vast Bar too, on macOS, if it is installed) |
+| `vast bar` | Install, update or remove Vast Bar, the macOS menu bar app |
 | `vast status` | Deployed versions and branch drift |
 | `vast pending` | What staging has that production lacks (or develop vs staging), by PR — `--parity` both ways |
 | `vast doctor` | Check that a release will work from this machine — tools, ArgoCD, every repo's workflow and versions, Slack |
@@ -603,16 +611,15 @@ plain words. Doctor's machine-wide warnings and failures sit at the bottom.
 
 ### Setting it up
 
-It is built on your own Mac from this repo — there is no download yet (signing and an
-installer are a later step). You need macOS 13 or newer and Xcode 16 or newer (built and
-tested with Xcode 26.2).
+You need macOS 13 or newer. There is nothing to build: the app comes from the same release
+as your CLI, so no Xcode, no clone and no Apple Developer account.
 
 1. **Get the CLI working first.** Vast Bar runs `vast … --json` through your login shell
    (`/bin/zsh -lc`), so it sees exactly what your terminal sees and never decides anything
-   itself. It needs vast **2.9.0** or newer:
+   itself. It needs vast **2.9.0** or newer. Install it as described in
+   [Install](#install) (or run `vast upgrade` if you already have it), then:
 
    ```bash
-   vast upgrade
    vast init
    vast doctor
    ```
@@ -621,27 +628,58 @@ tested with Xcode 26.2).
    login` is needed for releases to confirm their rollout, and `vast slack setup` only if
    you want promote to post. The app never asks for either.
 
-2. **Build and install it** from a clone of this repo:
+2. **Install the app:**
 
    ```bash
-   git clone https://github.com/MostafaAdly/vast-cli.git
-   cd vast-cli
-   apps/menubar/build.sh
-   open "/Applications/Vast Bar.app"
+   vast bar install
    ```
 
-   `build.sh` builds the app, signs it for this Mac only, and installs it to
-   `/Applications` (`--no-install` to just build). An app built on another Mac and copied
-   over will be blocked by Gatekeeper — build it on yours. To update, `git pull` and run
-   `build.sh` again.
+   It downloads the Vast Bar that matches your CLI's version, checks it is the right app
+   (bundle id, version, signature) before touching anything, puts it in `/Applications`
+   (or `~/Applications` if that is not writable — it never uses `sudo`), and opens it. An
+   existing copy is replaced in place and reopened only if it was running. No Gatekeeper
+   warning appears, because the download is not quarantined; an organisation security tool
+   that blocks unsigned apps can still block it, and that is outside the CLI's control.
 
-3. **Start it at login** (optional): System Settings → General → Login Items → **+** →
-   Vast Bar.
+3. **Start it at login** (optional): in the app, open the **…** menu in the header and
+   choose **Open at login** (a checkmark means it is on). Choose it again to turn it off.
+
+Day to day:
+
+```bash
+vast bar                      # what is installed, and whether it matches this CLI
+vast upgrade                  # updates the CLI, and Vast Bar with it
+vast bar install              # update the app on its own, or reinstall it
+vast bar uninstall            # quit it and remove it
+vast bar uninstall --purge    # ...and its run logs too
+```
+
+`vast bar install --version <tag>` installs the app from that release instead. A release
+older than 2.9.0 has no app, and a development build of the CLI (a version like
+`2.9.0-dev`) has no release at all, so `vast bar install` refuses with a message saying
+which.
 
 The first time you use "Open dry run in Terminal", macOS asks to let Vast Bar control
 Terminal. That is the only permission it ever needs. It refreshes when you open it and
-every five minutes. To remove it, quit it from the power button and delete
-`/Applications/Vast Bar.app`; its run logs are in `~/Library/Application Support/Vast Bar/`.
+every five minutes. Its run logs are in `~/Library/Application Support/Vast Bar/`;
+`vast bar uninstall --purge` deletes them with the app.
+
+#### Building it yourself
+
+For development builds of the app only, you need Xcode 16 or newer (built and tested with
+Xcode 26.2):
+
+```bash
+git clone https://github.com/MostafaAdly/vast-cli.git
+cd vast-cli
+apps/menubar/build.sh
+open "/Applications/Vast Bar.app"
+```
+
+`build.sh` builds the app, signs it for this Mac only, and installs it to `/Applications`
+(`--no-install` to just build). An app built on another Mac and copied over will be
+blocked by Gatekeeper — build it on yours. To update, `git pull` and run `build.sh` again.
+`vast bar install` refuses on a development build of the CLI because no release matches it.
 
 ### Using it
 
@@ -816,7 +854,7 @@ Still stuck? `vast <command> --help` carries worked examples for every command.
 ## Development
 
 ```bash
-npm test          # node:test suite (282 tests)
+npm test          # node:test suite (718 tests)
 npm run typecheck # tsc --noEmit
 npm run build     # regenerate src/version.ts, then tsc
 npm run bundle    # single-file ESM bundle for a release
@@ -833,8 +871,8 @@ npm version <patch|minor|major> && git push --follow-tags
 ```
 
 The tag triggers CI, which runs the suite and typecheck **before** building, verifies the
-bundle executes, checks the tag matches `package.json`, and attaches `vast.mjs` to a new
-release. A tag whose tests fail produces no release — better none than one that installs a
+bundle executes, checks the tag matches `package.json`, builds Vast Bar on a macOS runner,
+and attaches `vast.mjs` and `VastBar.zip` to a new release. A tag whose tests fail produces no release — better none than one that installs a
 broken CLI over everyone's working copy.
 
 `src/version.ts` is generated from `package.json` and staged automatically by the `version`

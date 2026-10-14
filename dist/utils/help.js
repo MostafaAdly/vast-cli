@@ -21,6 +21,7 @@ const SETUP = [
     { left: 'clone', right: 'Clone the repos your team needs' },
     { left: 'argocd', right: 'Log in to ArgoCD so deploys can be confirmed' },
     { left: 'upgrade', right: 'Update to the latest release' },
+    { left: 'bar', right: 'Install or update Vast Bar, the macOS menu bar app' },
 ];
 const INSPECT = [
     { left: 'status', right: 'Deployed versions and branch drift, all repos' },

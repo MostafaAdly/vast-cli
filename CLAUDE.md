@@ -69,7 +69,11 @@ npm version <patch|minor|major> && git push --follow-tags
 ```
 
 CI then runs the suite and typecheck, verifies the bundle executes, refuses if
-the tag and `package.json` disagree, and attaches `vast.mjs` to a new release.
+the tag and `package.json` disagree, and attaches `vast.mjs` and `VastBar.zip`
+to a new release. The workflow has three jobs: `cli` (Ubuntu), `app` (macOS 15)
+and `publish`, which needs both. `VastBar.zip` is never renamed, like `vast.mjs`.
+The app's version comes from `package.json`, so a tag/plist mismatch fails the
+`app` job.
 
 - GitHub's releases API caches "latest" for ~60 seconds — `vast upgrade`
   immediately after publishing may install the previous version. Wait it out.
@@ -222,6 +226,12 @@ in `Vast-deployments`:
   paste real CLI output into them (it carries real names and emails; the repo is public).
   `VastBar` is thin SwiftUI that renders Core's state. `apps/menubar/build.sh` builds,
   ad-hoc signs and installs to /Applications (`--no-install` to only build).
+- `vast bar install` (`src/commands/bar.ts`, `src/utils/vast-bar.ts`) downloads the
+  release's `VastBar.zip` with curl (so it is not quarantined), verifies bundle id,
+  version and signature before touching anything, and swaps it in place; the old copy
+  comes back if the swap fails. `vast upgrade` runs the new CLI's
+  `bar install --if-installed`, and a failure there only warns. `VAST_BAR_URL`
+  overrides the download URL for live checks only — never document it for users.
 - The app never decides anything a release depends on: it runs `vast … --json` through
   `/bin/zsh -lc` and shows what the CLI says. Every command line comes from `Commands`
   (quoted with `shellQuote`); repo names come only from `status --json`.
