@@ -71,7 +71,9 @@ enum Theme {
         switch h {
         case .unknown: return other
         case .up: return production
-        case .down: return problem
+        // Amber, never red: a staging backend that is down is worth a look,
+        // never a failure of ours (the menu bar icon says the same).
+        case .down: return waiting
         }
     }
 }

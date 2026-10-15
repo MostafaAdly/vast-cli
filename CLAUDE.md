@@ -286,6 +286,11 @@ in `Vast-deployments`:
   and same-hue tints, one filled button per screen. Colours live in `Theme.swift` only.
   Any scrollable area uses `CappedScroll` — a bare `ScrollView` collapses to zero height
   in the menu bar window (it shipped blank once).
+- MenuBarExtra grows its window with the content but never shrinks it, so a short view
+  after a tall one floated centred in the old height, far below the menu bar (2.9.2).
+  `FitsMenuBarWindow` (on the root view) measures the content at its rigid height and
+  refits the window with its top edge pinned; the frame math is `fittedWindowFrame` in
+  Core. A down staging backend's chip is amber (`Theme.health`), like the icon, never red.
 - The app icon and the menu bar mark are one drawing, `VastMark.swift`, traced from the
   brand logo (vastgroup-web-v2 `public/vastgroup-logo-white.svg`). `Resources/AppIcon.icns`
   is generated and committed; change the mark, then run `apps/menubar/scripts/make-icon.sh`.

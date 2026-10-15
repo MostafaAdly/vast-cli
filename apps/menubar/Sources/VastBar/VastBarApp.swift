@@ -10,6 +10,7 @@ struct VastBarApp: App {
             PopoverView()
                 .environmentObject(store)
                 .frame(width: 400)
+                .modifier(FitsMenuBarWindow())
         } label: {
             MenuBarIcon(state: store.icon)
         }
