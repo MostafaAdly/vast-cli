@@ -142,7 +142,7 @@ struct HealthChip: View {
         HStack(spacing: 5) {
             Image(systemName: "server.rack").font(.system(size: 9)).foregroundStyle(.secondary)
             Text(name).font(.system(size: 11))
-                .foregroundStyle(state.isDown ? Theme.problem : Color.secondary)
+                .foregroundStyle(state.isDown ? Theme.health(state) : Color.secondary)
             Dot(color: Theme.health(state))
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
